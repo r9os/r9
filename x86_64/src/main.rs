@@ -5,7 +5,7 @@
 #![allow(clippy::upper_case_acronyms)]
 #![forbid(unsafe_op_in_unsafe_fn)]
 
-mod port;
+mod arch;
 mod x86_64;
 
 #[cfg(not(any(test, feature = "cargo-clippy")))]

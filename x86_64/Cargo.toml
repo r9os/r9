@@ -1,0 +1,15 @@
+[package]
+name = "x86_64"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bitstruct = "0.1"
+x86 = "0.48"
+port = { path = "../port" }
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"

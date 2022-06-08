@@ -33,14 +33,10 @@ fn main() {
         .version("0.1.0")
         .author("The r9 Authors")
         .about("Build support for the r9 operating system")
-        .subcommand(
-            clap::Command::new("build")
-                .about("Builds r9")
-                .args(&[
-                    clap::arg!(--release "Build release version").conflicts_with("debug"),
-                    clap::arg!(--debug "Build debug version (default)").conflicts_with("release"),
-                ]),
-        )
+        .subcommand(clap::Command::new("build").about("Builds r9").args(&[
+            clap::arg!(--release "Build release version").conflicts_with("debug"),
+            clap::arg!(--debug "Build debug version (default)").conflicts_with("release"),
+        ]))
         .subcommand(
             clap::Command::new("expand")
                 .about("Expands r9 macros")
@@ -73,14 +69,22 @@ fn main() {
             clap::arg!(--release "Build a release version").conflicts_with("debug"),
             clap::arg!(--debug "Build a debug version").conflicts_with("release"),
         ]))
-        .subcommand(clap::Command::new("qemu").about("Run r9 under QEMU").args(&[
-            clap::arg!(--release "Build a release version").conflicts_with("debug"),
-            clap::arg!(--debug "Build a debug version").conflicts_with("release"),
-        ]))
-        .subcommand(clap::Command::new("qemukvm").about("Run r9 under QEMU with KVM").args(&[
-            clap::arg!(--release "Build a release version").conflicts_with("debug"),
-            clap::arg!(--debug "Build a debug version").conflicts_with("release"),
-        ]))
+        .subcommand(
+            clap::Command::new("qemu")
+                .about("Run r9 under QEMU")
+                .args(&[
+                    clap::arg!(--release "Build a release version").conflicts_with("debug"),
+                    clap::arg!(--debug "Build a debug version").conflicts_with("release"),
+                ]),
+        )
+        .subcommand(
+            clap::Command::new("qemukvm")
+                .about("Run r9 under QEMU with KVM")
+                .args(&[
+                    clap::arg!(--release "Build a release version").conflicts_with("debug"),
+                    clap::arg!(--debug "Build a debug version").conflicts_with("release"),
+                ]),
+        )
         .subcommand(clap::Command::new("clean").about("Cargo clean"))
         .get_matches();
     if let Err(e) = match matches.subcommand() {
@@ -140,13 +144,16 @@ fn objcopy() -> String {
 fn qemu_system_x86_64() -> String {
     env_or("QEMU", "qemu-system-x86_64")
 }
+fn arch() -> String {
+    env_or("ARCH", "x86_64")
+}
 fn target() -> String {
     env_or("TARGET", "x86_64-unknown-none-elf")
 }
 
 fn build(profile: Build) -> Result<()> {
     let mut cmd = Command::new(cargo());
-    cmd.current_dir(workspace());
+    cmd.current_dir(kernelpath());
     cmd.arg("build");
     #[rustfmt::skip]
     cmd.arg("-Z").arg("build-std=core");
@@ -161,7 +168,7 @@ fn build(profile: Build) -> Result<()> {
 
 fn expand(profile: Build) -> Result<()> {
     let mut cmd = Command::new(cargo());
-    cmd.current_dir(workspace());
+    cmd.current_dir(kernelpath());
     cmd.arg("rustc");
     cmd.arg("-Z").arg("build-std=core");
     cmd.arg("--target").arg(format!("lib/{}.json", target()));
@@ -176,7 +183,7 @@ fn expand(profile: Build) -> Result<()> {
 
 fn kasm(profile: Build) -> Result<()> {
     let mut cmd = Command::new(cargo());
-    cmd.current_dir(workspace());
+    cmd.current_dir(kernelpath());
     cmd.arg("build");
     cmd.arg("-Z").arg("build-std=core");
     cmd.arg("--target").arg(format!("lib/{}.json", target()));
@@ -191,17 +198,13 @@ fn kasm(profile: Build) -> Result<()> {
 
 fn dist(profile: Build) -> Result<()> {
     build(profile)?;
-    let status = Command::new(objcopy())
-        .arg("--input-target=elf64-x86-64")
-        .arg("--output-target=elf32-i386")
-        .arg(format!("target/{}/{}/r9", target(), profile.dir()))
-        .arg(format!(
-            "target/{}/{}/r9.elf32",
-            target(),
-            profile.dir()
-        ))
-        .current_dir(workspace())
-        .status()?;
+    let mut cmd = Command::new(objcopy());
+    cmd.arg("--input-target=elf64-x86-64");
+    cmd.arg("--output-target=elf32-i386");
+    cmd.arg(format!("target/{}/{}/x86_64", target(), profile.dir()));
+    cmd.arg(format!("target/{}/{}/r9.elf32", target(), profile.dir()));
+    cmd.current_dir(workspace());
+    let status = cmd.status()?;
     if !status.success() {
         return Err("objcopy failed".into());
     }
@@ -222,7 +225,7 @@ fn test(profile: Build) -> Result<()> {
 
 fn clippy(profile: Build) -> Result<()> {
     let mut cmd = Command::new(cargo());
-    cmd.current_dir(workspace());
+    cmd.current_dir(kernelpath());
     cmd.arg("clippy");
     #[rustfmt::skip]
     cmd.arg("-Z").arg("build-std=core");
@@ -255,11 +258,7 @@ fn run(profile: Build) -> Result<()> {
         //.arg("-device")
         //.arg("ide-hd,drive=sdahci0,bus=ahci0.0")
         .arg("-kernel")
-        .arg(format!(
-            "target/{}/{}/r9.elf32",
-            target(),
-            profile.dir()
-        ))
+        .arg(format!("target/{}/{}/r9.elf32", target(), profile.dir()))
         .current_dir(workspace())
         .status()?;
     if !status.success() {
@@ -281,11 +280,7 @@ fn accelrun(profile: Build) -> Result<()> {
         .arg("-m")
         .arg("8192")
         .arg("-kernel")
-        .arg(format!(
-            "target/{}/{}/r9.elf32",
-            target(),
-            profile.dir()
-        ))
+        .arg(format!("target/{}/{}/r9.elf32", target(), profile.dir()))
         .current_dir(workspace())
         .status()?;
     if !status.success() {
@@ -311,4 +306,11 @@ fn workspace() -> PathBuf {
         .nth(1)
         .unwrap()
         .to_path_buf()
+}
+
+// Returns the path to the kernel package
+fn kernelpath() -> PathBuf {
+    let mut path = workspace();
+    path.push(arch());
+    path
 }

@@ -1,16 +1,6 @@
-[package]
-name = "r9"
-version = "0.1.0"
-edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[dependencies]
-bitstruct = "0.1"
-x86 = "0.48"
-
-[profile.dev]
-panic = "abort"
-
-[profile.release]
-panic = "abort"
+[workspace]
+members = [
+    "x86_64",
+    "port",
+    "xtask"
+]
