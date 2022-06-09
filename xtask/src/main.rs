@@ -37,30 +37,18 @@ fn main() {
             clap::arg!(--release "Build release version").conflicts_with("debug"),
             clap::arg!(--debug "Build debug version (default)").conflicts_with("release"),
         ]))
-        .subcommand(
-            clap::Command::new("expand")
-                .about("Expands r9 macros")
-                .args(&[
-                    clap::arg!(--release "Build release version").conflicts_with("debug"),
-                    clap::arg!(--debug "Build debug version (default)").conflicts_with("release"),
-                ]),
-        )
-        .subcommand(
-            clap::Command::new("kasm")
-                .about("Emits r9 assembler")
-                .args(&[
-                    clap::arg!(--release "Build release version").conflicts_with("debug"),
-                    clap::arg!(--debug "Build debug version (default)").conflicts_with("release"),
-                ]),
-        )
-        .subcommand(
-            clap::Command::new("dist")
-                .about("Builds a multibootable r9 image")
-                .args(&[
-                    clap::arg!(--release "Build a release version").conflicts_with("debug"),
-                    clap::arg!(--debug "Build a debug version").conflicts_with("release"),
-                ]),
-        )
+        .subcommand(clap::Command::new("expand").about("Expands r9 macros").args(&[
+            clap::arg!(--release "Build release version").conflicts_with("debug"),
+            clap::arg!(--debug "Build debug version (default)").conflicts_with("release"),
+        ]))
+        .subcommand(clap::Command::new("kasm").about("Emits r9 assembler").args(&[
+            clap::arg!(--release "Build release version").conflicts_with("debug"),
+            clap::arg!(--debug "Build debug version (default)").conflicts_with("release"),
+        ]))
+        .subcommand(clap::Command::new("dist").about("Builds a multibootable r9 image").args(&[
+            clap::arg!(--release "Build a release version").conflicts_with("debug"),
+            clap::arg!(--debug "Build a debug version").conflicts_with("release"),
+        ]))
         .subcommand(clap::Command::new("test").about("Runs unit tests").args(&[
             clap::arg!(--release "Build a release version").conflicts_with("debug"),
             clap::arg!(--debug "Build a debug version").conflicts_with("release"),
@@ -69,22 +57,14 @@ fn main() {
             clap::arg!(--release "Build a release version").conflicts_with("debug"),
             clap::arg!(--debug "Build a debug version").conflicts_with("release"),
         ]))
-        .subcommand(
-            clap::Command::new("qemu")
-                .about("Run r9 under QEMU")
-                .args(&[
-                    clap::arg!(--release "Build a release version").conflicts_with("debug"),
-                    clap::arg!(--debug "Build a debug version").conflicts_with("release"),
-                ]),
-        )
-        .subcommand(
-            clap::Command::new("qemukvm")
-                .about("Run r9 under QEMU with KVM")
-                .args(&[
-                    clap::arg!(--release "Build a release version").conflicts_with("debug"),
-                    clap::arg!(--debug "Build a debug version").conflicts_with("release"),
-                ]),
-        )
+        .subcommand(clap::Command::new("qemu").about("Run r9 under QEMU").args(&[
+            clap::arg!(--release "Build a release version").conflicts_with("debug"),
+            clap::arg!(--debug "Build a debug version").conflicts_with("release"),
+        ]))
+        .subcommand(clap::Command::new("qemukvm").about("Run r9 under QEMU with KVM").args(&[
+            clap::arg!(--release "Build a release version").conflicts_with("debug"),
+            clap::arg!(--debug "Build a debug version").conflicts_with("release"),
+        ]))
         .subcommand(clap::Command::new("clean").about("Cargo clean"))
         .get_matches();
     if let Err(e) = match matches.subcommand() {
@@ -153,10 +133,12 @@ fn target() -> String {
 
 fn build(profile: Build) -> Result<()> {
     let mut cmd = Command::new(cargo());
-    cmd.current_dir(kernelpath());
+    cmd.current_dir(workspace());
     cmd.arg("build");
     #[rustfmt::skip]
     cmd.arg("-Z").arg("build-std=core");
+    cmd.arg("--workspace");
+    cmd.arg("--exclude").arg("xtask");
     cmd.arg("--target").arg(format!("lib/{}.json", target()));
     profile.add_build_arg(&mut cmd);
     let status = cmd.status()?;
@@ -168,11 +150,13 @@ fn build(profile: Build) -> Result<()> {
 
 fn expand(profile: Build) -> Result<()> {
     let mut cmd = Command::new(cargo());
-    cmd.current_dir(kernelpath());
+    cmd.current_dir(workspace());
     cmd.arg("rustc");
     cmd.arg("-Z").arg("build-std=core");
+    cmd.arg("-p").arg(arch());
     cmd.arg("--target").arg(format!("lib/{}.json", target()));
-    cmd.arg("--").arg("--pretty=expanded");
+    cmd.arg("--");
+    cmd.arg("-Z").arg("unpretty=expanded");
     profile.add_build_arg(&mut cmd);
     let status = cmd.status()?;
     if !status.success() {
@@ -183,9 +167,10 @@ fn expand(profile: Build) -> Result<()> {
 
 fn kasm(profile: Build) -> Result<()> {
     let mut cmd = Command::new(cargo());
-    cmd.current_dir(kernelpath());
-    cmd.arg("build");
+    cmd.current_dir(workspace());
+    cmd.arg("rustc");
     cmd.arg("-Z").arg("build-std=core");
+    cmd.arg("-p").arg(arch());
     cmd.arg("--target").arg(format!("lib/{}.json", target()));
     cmd.arg("--").arg("--emit").arg("asm");
     profile.add_build_arg(&mut cmd);
@@ -225,11 +210,8 @@ fn test(profile: Build) -> Result<()> {
 
 fn clippy(profile: Build) -> Result<()> {
     let mut cmd = Command::new(cargo());
-    cmd.current_dir(kernelpath());
+    cmd.current_dir(workspace());
     cmd.arg("clippy");
-    #[rustfmt::skip]
-    cmd.arg("-Z").arg("build-std=core");
-    cmd.arg("--target").arg(format!("lib/{}.json", target()));
     profile.add_build_arg(&mut cmd);
     let status = cmd.status()?;
     if !status.success() {
@@ -290,10 +272,7 @@ fn accelrun(profile: Build) -> Result<()> {
 }
 
 fn clean() -> Result<()> {
-    let status = Command::new(cargo())
-        .current_dir(workspace())
-        .arg("clean")
-        .status()?;
+    let status = Command::new(cargo()).current_dir(workspace()).arg("clean").status()?;
     if !status.success() {
         return Err("clean failed".into());
     }
@@ -301,16 +280,5 @@ fn clean() -> Result<()> {
 }
 
 fn workspace() -> PathBuf {
-    Path::new(&env!("CARGO_MANIFEST_DIR"))
-        .ancestors()
-        .nth(1)
-        .unwrap()
-        .to_path_buf()
-}
-
-// Returns the path to the kernel package
-fn kernelpath() -> PathBuf {
-    let mut path = workspace();
-    path.push(arch());
-    path
+    Path::new(&env!("CARGO_MANIFEST_DIR")).ancestors().nth(1).unwrap().to_path_buf()
 }

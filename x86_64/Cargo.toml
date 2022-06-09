@@ -7,9 +7,3 @@ edition = "2021"
 bitstruct = "0.1"
 x86 = "0.48"
 port = { path = "../port" }
-
-[profile.dev]
-panic = "abort"
-
-[profile.release]
-panic = "abort"

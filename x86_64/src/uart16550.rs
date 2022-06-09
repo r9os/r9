@@ -2,6 +2,6 @@
 
 pub fn putb(port: u16, b: u8) {
     unsafe {
-        crate::x86_64::outb(port, b);
+        crate::pio::outb(port, b);
     }
 }

@@ -1,9 +1,4 @@
-use core::arch::{asm, global_asm};
-
-global_asm!(include_str!("l.S"), options(att_syntax));
-
-pub mod main;
-pub mod uart16550;
+use core::arch::asm;
 
 pub unsafe fn outb(port: u16, b: u8) {
     unsafe {

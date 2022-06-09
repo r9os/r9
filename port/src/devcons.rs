@@ -20,39 +20,61 @@ pub trait Uart {
     fn putb(&self, b: u8);
 }
 
-pub struct Console<T: Uart> {
-    uart: T,
-}
+pub struct Console;
 
-impl<T: Uart> Console<T> {
-    pub fn new(uart: T) -> Self {
-        Self { uart: uart }
+static CONS: Lock<Option<&'static mut dyn Uart>> = Lock::new("cons", None);
+
+impl Console {
+    pub fn new(uart: &'static mut dyn Uart) -> Self {
+        static mut NODE: LockNode = LockNode::new();
+        let mut cons = CONS.lock(unsafe { &NODE });
+        *cons = Some(uart);
+        Self
     }
 
-    pub fn putb(&mut self, b: u8) {
+    pub fn putb(&mut self, uart: &mut dyn Uart, b: u8) {
         if b == b'\n' {
-            self.uart.putb(b'\r');
+            uart.putb(b'\r');
         } else if b == BACKSPACE {
-            self.uart.putb(b);
-            self.uart.putb(b' ');
+            uart.putb(b);
+            uart.putb(b' ');
         }
-        self.uart.putb(b);
+        uart.putb(b);
     }
 
     pub fn putstr(&mut self, s: &str) {
-        static LOCK: Lock<()> = Lock::new("println", ());
         // XXX: Just for testing.
         static mut NODE: LockNode = LockNode::new();
-        let _guard = LOCK.lock(unsafe { &NODE });
+        let mut uart = CONS.lock(unsafe { &NODE });
         for b in s.bytes() {
-            self.putb(b);
+            self.putb(uart.as_deref_mut().unwrap(), b);
         }
     }
 }
 
-impl<T: Uart> fmt::Write for Console<T> {
+impl fmt::Write for Console {
     fn write_str(&mut self, s: &str) -> fmt::Result {
         self.putstr(s);
         Ok(())
     }
+}
+
+pub fn print(args: fmt::Arguments) {
+    // XXX: Just for testing.
+    use fmt::Write;
+    let mut cons: Console = Console {};
+    cons.write_fmt(args).unwrap();
+}
+
+#[macro_export]
+macro_rules! println {
+    () => ($crate::print!("\n"));
+    ($($arg:tt)*) => ($crate::print!("{}\n", format_args!($($arg)*)));
+}
+
+#[macro_export]
+macro_rules! print {
+    ($($args:tt)*) => {{
+        $crate::devcons::print(format_args!($($args)*))
+    }};
 }

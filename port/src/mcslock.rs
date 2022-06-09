@@ -24,10 +24,7 @@ pub struct LockNode {
 
 impl LockNode {
     pub const fn new() -> LockNode {
-        LockNode {
-            next: AtomicPtr::new(ptr::null_mut()),
-            locked: AtomicBool::new(false),
-        }
+        LockNode { next: AtomicPtr::new(ptr::null_mut()), locked: AtomicBool::new(false) }
     }
 }
 
@@ -39,10 +36,7 @@ pub struct MCSLock {
 
 impl MCSLock {
     pub const fn new(name: &'static str) -> MCSLock {
-        MCSLock {
-            name,
-            queue: AtomicPtr::new(ptr::null_mut()),
-        }
+        MCSLock { name, queue: AtomicPtr::new(ptr::null_mut()) }
     }
 
     pub fn lock<'a>(&self, node: &'a LockNode) -> &'a LockNode {
@@ -91,19 +85,12 @@ unsafe impl<T: ?Sized> Sync for Lock<T> {}
 
 impl<T> Lock<T> {
     pub const fn new(name: &'static str, data: T) -> Lock<T> {
-        Lock {
-            lock: UnsafeCell::new(MCSLock::new(name)),
-            data: UnsafeCell::new(data),
-        }
+        Lock { lock: UnsafeCell::new(MCSLock::new(name)), data: UnsafeCell::new(data) }
     }
 
     pub fn lock<'a>(&'a self, node: &'a LockNode) -> LockGuard<'a, T> {
         let node = unsafe { &mut *self.lock.get() }.lock(node);
-        LockGuard {
-            lock: &self.lock,
-            node,
-            data: unsafe { &mut *self.data.get() },
-        }
+        LockGuard { lock: &self.lock, node, data: unsafe { &mut *self.data.get() } }
     }
 }
 
