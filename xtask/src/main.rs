@@ -85,7 +85,7 @@ fn main() {
 }
 
 fn build_type(matches: &clap::ArgMatches) -> Build {
-    if matches.is_present("release") {
+    if matches.contains_id("release") {
         return Build::Release;
     }
     Build::Debug
