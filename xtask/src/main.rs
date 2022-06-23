@@ -136,7 +136,7 @@ fn build(profile: Build) -> Result<()> {
     cmd.current_dir(workspace());
     cmd.arg("build");
     #[rustfmt::skip]
-    cmd.arg("-Z").arg("build-std=core");
+    cmd.arg("-Z").arg("build-std=core,alloc");
     cmd.arg("--workspace");
     cmd.arg("--exclude").arg("xtask");
     cmd.arg("--target").arg(format!("lib/{}.json", target()));
@@ -152,7 +152,7 @@ fn expand(profile: Build) -> Result<()> {
     let mut cmd = Command::new(cargo());
     cmd.current_dir(workspace());
     cmd.arg("rustc");
-    cmd.arg("-Z").arg("build-std=core");
+    cmd.arg("-Z").arg("build-std=core,alloc");
     cmd.arg("-p").arg(arch());
     cmd.arg("--target").arg(format!("lib/{}.json", target()));
     cmd.arg("--");
@@ -169,7 +169,7 @@ fn kasm(profile: Build) -> Result<()> {
     let mut cmd = Command::new(cargo());
     cmd.current_dir(workspace());
     cmd.arg("rustc");
-    cmd.arg("-Z").arg("build-std=core");
+    cmd.arg("-Z").arg("build-std=core,alloc");
     cmd.arg("-p").arg(arch());
     cmd.arg("--target").arg(format!("lib/{}.json", target()));
     cmd.arg("--").arg("--emit").arg("asm");

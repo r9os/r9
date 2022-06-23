@@ -1,3 +1,4 @@
+#![feature(alloc_error_handler)]
 #![feature(asm_const)]
 #![feature(asm_sym)]
 #![cfg_attr(not(any(test, feature = "cargo-clippy")), no_std)]
@@ -23,13 +24,4 @@ pub extern "C" fn main9() {
     loop {}
 }
 
-#[cfg(not(any(test, feature = "cargo-clippy")))]
-mod runtime {
-    use core::panic::PanicInfo;
-
-    #[panic_handler]
-    pub extern "C" fn panic(_info: &PanicInfo) -> ! {
-        #[allow(clippy::empty_loop)]
-        loop {}
-    }
-}
+mod runtime;

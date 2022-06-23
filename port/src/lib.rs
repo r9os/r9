@@ -2,5 +2,6 @@
 #![allow(clippy::upper_case_acronyms)]
 #![forbid(unsafe_op_in_unsafe_fn)]
 
+pub mod dat;
 pub mod devcons;
 pub mod mcslock;
