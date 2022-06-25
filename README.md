@@ -17,3 +17,18 @@ There are other useful `xtask` subcommands; run
 `cargo xtask help` to see what is available.
 
 Right now, r9 is not self-hosting.
+
+## Runtime Dependencies
+
+`cargo xtask dist`, which `cargo xtask qemu` and 
+`cargo xtask qemukvm` depend on, requires `llvm-objcopy`. 
+This is expected to live in the rust toolchain path. If 
+you get `No such file or directory (os error 2)` messages, 
+then install `llvm` separate from the rust toolchain and set:
+```
+OBJCOPY=$(which llvm-objcopy) cargo xtask qemukvm
+```
+
+if `No such file or directory (os error 2)` messages persist, 
+check to ensure `qemu` or `qemu-kvm` is installed and the 
+`qemu-system-x86_64` binary is in your path.
