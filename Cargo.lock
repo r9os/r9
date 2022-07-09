@@ -3,6 +3,14 @@
 version = 3
 
 [[package]]
+name = "aarch64"
+version = "0.1.0"
+dependencies = [
+ "bitstruct",
+ "port",
+]
+
+[[package]]
 name = "atty"
 version = "0.2.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"

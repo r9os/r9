@@ -1,0 +1,8 @@
+[package]
+name = "aarch64"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bitstruct = "0.1"
+port = { path = "../port" }

@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "aarch64",
     "x86_64",
     "port",
     "xtask"

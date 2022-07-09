@@ -18,6 +18,13 @@ There are other useful `xtask` subcommands; run
 
 Right now, r9 is not self-hosting.
 
+### Aarch64
+By default, the x86_64 architecture is built and run.  To run the
+xtask commands for the aarch64 architecture, prepend with
+`ARCH=aarch64 TARGET=aarch64-unknown-none-elf`.  E.g. to build and
+run in qemu simulating a Raspberry Pi 3, run:
+`ARCH=aarch64 TARGET=aarch64-unknown-none-elf cargo xtask qemu`.
+
 ## Runtime Dependencies
 
 `cargo xtask dist`, which `cargo xtask qemu` and 
@@ -29,6 +36,6 @@ then install `llvm` separate from the rust toolchain and set:
 OBJCOPY=$(which llvm-objcopy) cargo xtask qemukvm
 ```
 
-if `No such file or directory (os error 2)` messages persist, 
+If `No such file or directory (os error 2)` messages persist, 
 check to ensure `qemu` or `qemu-kvm` is installed and the 
-`qemu-system-x86_64` binary is in your path.
+`qemu-system-x86_64` binary is in your path (or `qemu-system-aarch64` in the case of aarch64).
