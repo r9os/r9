@@ -60,13 +60,9 @@ const MBOX_EMPTY: u32 = 0x4000_0000;
 
 // Delay for count cycles
 fn delay(count: u32) {
-    unsafe {
-        core::arch::asm!(
-            "1:",
-            "nop",
-            "subs {count}, {count}, 1",
-            "bne 1b",
-            count = in(reg) count);
+    #[cfg(not(test))]
+    for _ in 0..count {
+        core::hint::spin_loop();
     }
 }
 
