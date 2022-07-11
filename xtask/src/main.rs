@@ -1,5 +1,5 @@
 use std::{
-    env,
+    env, fmt,
     path::{Path, PathBuf},
     process::{self, Command},
 };
@@ -13,7 +13,20 @@ enum Profile {
     Release,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Arch {
+    Aarch64,
+    X86_64,
+}
+
+impl fmt::Display for Arch {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
 struct BuildParams {
+    arch: Arch,
     profile: Profile,
     verbose: bool,
 }
@@ -23,7 +36,9 @@ impl BuildParams {
         let profile =
             if matches.contains_id("release") { Profile::Release } else { Profile::Debug };
         let verbose = matches.contains_id("verbose");
-        Self { profile: profile, verbose: verbose }
+        let arch = Arch::Aarch64;
+
+        Self { arch: arch, profile: profile, verbose: verbose }
     }
 
     fn dir(&self) -> &'static str {
@@ -38,9 +53,26 @@ impl BuildParams {
             cmd.arg("--release");
         }
     }
+
+    fn qemu_system(&self) -> String {
+        let defaultqemu = match self.arch {
+            Arch::Aarch64 => "qemu-system-aarch64",
+            Arch::X86_64 => "qemu-system-x86_64",
+        };
+        env_or("QEMU", defaultqemu)
+    }
+
+    fn target(&self) -> String {
+        env_or(
+            "TARGET",
+            format!("{}-unknown-none-elf", self.arch.to_string().to_lowercase()).as_str(),
+        )
+    }
 }
 
 fn main() {
+    let arches = ["aarch64", "x86_64"];
+
     let matches = clap::Command::new("xtask")
         .version("0.1.0")
         .author("The r9 Authors")
@@ -48,21 +80,25 @@ fn main() {
         .subcommand(clap::Command::new("build").about("Builds r9").args(&[
             clap::arg!(--release "Build release version").conflicts_with("debug"),
             clap::arg!(--debug "Build debug version (default)").conflicts_with("release"),
+            clap::arg!(--arch <arch> "Target architecture").value_parser(arches),
             clap::arg!(--verbose "Print commands"),
         ]))
         .subcommand(clap::Command::new("expand").about("Expands r9 macros").args(&[
             clap::arg!(--release "Build release version").conflicts_with("debug"),
             clap::arg!(--debug "Build debug version (default)").conflicts_with("release"),
+            clap::arg!(--arch <arch> "Target architecture").value_parser(arches),
             clap::arg!(--verbose "Print commands"),
         ]))
         .subcommand(clap::Command::new("kasm").about("Emits r9 assembler").args(&[
             clap::arg!(--release "Build release version").conflicts_with("debug"),
             clap::arg!(--debug "Build debug version (default)").conflicts_with("release"),
+            clap::arg!(--arch <arch> "Target architecture").value_parser(arches),
             clap::arg!(--verbose "Print commands"),
         ]))
         .subcommand(clap::Command::new("dist").about("Builds a multibootable r9 image").args(&[
             clap::arg!(--release "Build a release version").conflicts_with("debug"),
             clap::arg!(--debug "Build a debug version").conflicts_with("release"),
+            clap::arg!(--arch <arch> "Target architecture").value_parser(arches),
             clap::arg!(--verbose "Print commands"),
         ]))
         .subcommand(clap::Command::new("test").about("Runs unit tests").args(&[
@@ -78,11 +114,13 @@ fn main() {
         .subcommand(clap::Command::new("qemu").about("Run r9 under QEMU").args(&[
             clap::arg!(--release "Build a release version").conflicts_with("debug"),
             clap::arg!(--debug "Build a debug version").conflicts_with("release"),
+            clap::arg!(--arch <arch> "Target architecture").value_parser(arches),
             clap::arg!(--verbose "Print commands"),
         ]))
         .subcommand(clap::Command::new("qemukvm").about("Run r9 under QEMU with KVM").args(&[
             clap::arg!(--release "Build a release version").conflicts_with("debug"),
             clap::arg!(--debug "Build a debug version").conflicts_with("release"),
+            clap::arg!(--arch <arch> "Target architecture").value_parser(arches),
             clap::arg!(--verbose "Print commands"),
         ]))
         .subcommand(clap::Command::new("clean").about("Cargo clean"))
@@ -113,6 +151,7 @@ fn env_or(var: &str, default: &str) -> String {
 fn cargo() -> String {
     env_or("CARGO", "cargo")
 }
+
 fn objcopy() -> String {
     let llvm_objcopy = {
         let toolchain = env_or("RUSTUP_TOOLCHAIN", "nightly-x86_64-unknown-none");
@@ -135,19 +174,6 @@ fn objcopy() -> String {
     };
     env_or("OBJCOPY", &llvm_objcopy)
 }
-fn qemu_system() -> String {
-    let defaultqemu = match arch().as_str() {
-        "aarch64" => "qemu-system-aarch64",
-        _ => "qemu-system-x86_64",
-    };
-    env_or("QEMU", defaultqemu)
-}
-fn arch() -> String {
-    env_or("ARCH", "x86_64")
-}
-fn target() -> String {
-    env_or("TARGET", "x86_64-unknown-none-elf")
-}
 
 fn build(build_params: &BuildParams) -> Result<()> {
     let mut cmd = Command::new(cargo());
@@ -155,10 +181,10 @@ fn build(build_params: &BuildParams) -> Result<()> {
     cmd.arg("build");
     #[rustfmt::skip]
     cmd.arg("-Z").arg("build-std=core,alloc");
-    cmd.arg("--target").arg(format!("lib/{}.json", target()));
+    cmd.arg("--target").arg(format!("lib/{}.json", build_params.target()));
     cmd.arg("--workspace");
     cmd.arg("--exclude").arg("xtask");
-    exclude_other_arches(&mut cmd);
+    exclude_other_arches(build_params.arch, &mut cmd);
     build_params.add_build_arg(&mut cmd);
     if build_params.verbose {
         println!("Executing {:?}", cmd);
@@ -175,8 +201,8 @@ fn expand(build_params: &BuildParams) -> Result<()> {
     cmd.current_dir(workspace());
     cmd.arg("rustc");
     cmd.arg("-Z").arg("build-std=core,alloc");
-    cmd.arg("-p").arg(arch());
-    cmd.arg("--target").arg(format!("lib/{}.json", target()));
+    cmd.arg("-p").arg(build_params.arch.to_string().to_lowercase());
+    cmd.arg("--target").arg(format!("lib/{}.json", build_params.target()));
     cmd.arg("--");
     cmd.arg("-Z").arg("unpretty=expanded");
     build_params.add_build_arg(&mut cmd);
@@ -195,8 +221,8 @@ fn kasm(build_params: &BuildParams) -> Result<()> {
     cmd.current_dir(workspace());
     cmd.arg("rustc");
     cmd.arg("-Z").arg("build-std=core,alloc");
-    cmd.arg("-p").arg(arch());
-    cmd.arg("--target").arg(format!("lib/{}.json", target()));
+    cmd.arg("-p").arg(build_params.arch.to_string().to_lowercase());
+    cmd.arg("--target").arg(format!("lib/{}.json", build_params.target()));
     cmd.arg("--").arg("--emit").arg("asm");
     build_params.add_build_arg(&mut cmd);
     if build_params.verbose {
@@ -212,12 +238,12 @@ fn kasm(build_params: &BuildParams) -> Result<()> {
 fn dist(build_params: &BuildParams) -> Result<()> {
     build(build_params)?;
 
-    if arch() == "x86_64" {
+    if build_params.arch == Arch::X86_64 {
         let mut cmd = Command::new(objcopy());
         cmd.arg("--input-target=elf64-x86-64");
         cmd.arg("--output-target=elf32-i386");
-        cmd.arg(format!("target/{}/{}/x86_64", target(), build_params.dir()));
-        cmd.arg(format!("target/{}/{}/r9.elf32", target(), build_params.dir()));
+        cmd.arg(format!("target/{}/{}/x86_64", build_params.target(), build_params.dir()));
+        cmd.arg(format!("target/{}/{}/r9.elf32", build_params.target(), build_params.dir()));
         cmd.current_dir(workspace());
         if build_params.verbose {
             println!("Executing {:?}", cmd);
@@ -235,7 +261,6 @@ fn test(build_params: &BuildParams) -> Result<()> {
     cmd.current_dir(workspace());
     cmd.arg("test");
     cmd.arg("--workspace");
-    exclude_other_arches(&mut cmd);
     build_params.add_build_arg(&mut cmd);
     if build_params.verbose {
         println!("Executing {:?}", cmd);
@@ -265,9 +290,26 @@ fn clippy(build_params: &BuildParams) -> Result<()> {
 fn run(build_params: &BuildParams) -> Result<()> {
     dist(build_params)?;
 
-    match arch().as_str() {
-        "x86_64" => {
-            let mut cmd = Command::new(qemu_system());
+    match build_params.arch {
+        Arch::Aarch64 => {
+            let mut cmd = Command::new(build_params.qemu_system());
+            cmd.arg("-nographic");
+            //cmd.arg("-curses");
+            cmd.arg("-M");
+            cmd.arg("raspi3b");
+            cmd.arg("-kernel");
+            cmd.arg(format!("target/{}/{}/aarch64", build_params.target(), build_params.dir()));
+            cmd.current_dir(workspace());
+            if build_params.verbose {
+                println!("Executing {:?}", cmd);
+            }
+            let status = cmd.status()?;
+            if !status.success() {
+                return Err("qemu failed".into());
+            }
+        }
+        Arch::X86_64 => {
+            let mut cmd = Command::new(build_params.qemu_system());
             cmd.arg("-nographic");
             //cmd.arg("-curses");
             cmd.arg("-M");
@@ -285,7 +327,7 @@ fn run(build_params: &BuildParams) -> Result<()> {
             //cmd.arg("-device");
             //cmd.arg("ide-hd,drive=sdahci0,bus=ahci0.0");
             cmd.arg("-kernel");
-            cmd.arg(format!("target/{}/{}/r9.elf32", target(), build_params.dir()));
+            cmd.arg(format!("target/{}/{}/r9.elf32", build_params.target(), build_params.dir()));
             cmd.current_dir(workspace());
             if build_params.verbose {
                 println!("Executing {:?}", cmd);
@@ -294,26 +336,6 @@ fn run(build_params: &BuildParams) -> Result<()> {
             if !status.success() {
                 return Err("qemu failed".into());
             }
-        }
-        "aarch64" => {
-            let mut cmd = Command::new(qemu_system());
-            cmd.arg("-nographic");
-            //cmd.arg("-curses");
-            cmd.arg("-M");
-            cmd.arg("raspi3b");
-            cmd.arg("-kernel");
-            cmd.arg(format!("target/{}/{}/aarch64", target(), build_params.dir()));
-            cmd.current_dir(workspace());
-            if build_params.verbose {
-                println!("Executing {:?}", cmd);
-            }
-            let status = cmd.status()?;
-            if !status.success() {
-                return Err("qemu failed".into());
-            }
-        }
-        _ => {
-            return Err("Unsupported architecture".into());
         }
     };
 
@@ -322,7 +344,7 @@ fn run(build_params: &BuildParams) -> Result<()> {
 
 fn accelrun(build_params: &BuildParams) -> Result<()> {
     dist(build_params)?;
-    let mut cmd = Command::new(qemu_system());
+    let mut cmd = Command::new(build_params.qemu_system());
     cmd.arg("-nographic");
     cmd.arg("-accel");
     cmd.arg("kvm");
@@ -333,7 +355,7 @@ fn accelrun(build_params: &BuildParams) -> Result<()> {
     cmd.arg("-m");
     cmd.arg("8192");
     cmd.arg("-kernel");
-    cmd.arg(format!("target/{}/{}/r9.elf32", target(), build_params.dir()));
+    cmd.arg(format!("target/{}/{}/r9.elf32", build_params.target(), build_params.dir()));
     cmd.current_dir(workspace());
     if build_params.verbose {
         println!("Executing {:?}", cmd);
@@ -358,14 +380,13 @@ fn workspace() -> PathBuf {
 }
 
 // Exclude architectures other than the one being built
-fn exclude_other_arches(cmd: &mut Command) {
-    match arch().as_str() {
-        "x86_64" => {
-            cmd.arg("--exclude").arg("aarch64");
-        }
-        "aarch64" => {
+fn exclude_other_arches(arch: Arch, cmd: &mut Command) {
+    match arch {
+        Arch::Aarch64 => {
             cmd.arg("--exclude").arg("x86_64");
         }
-        _ => {}
+        Arch::X86_64 => {
+            cmd.arg("--exclude").arg("aarch64");
+        }
     }
 }

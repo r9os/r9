@@ -8,6 +8,7 @@
 
 mod devcons;
 
+#[cfg(not(test))]
 core::arch::global_asm!(include_str!("l.S"));
 
 use port::println;

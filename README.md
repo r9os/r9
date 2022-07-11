@@ -9,21 +9,16 @@ Plan 9 source code.
 
 We use `cargo` and the `xtask` pattern to build the kernel.
 
-To build r9, we assume you have cloned the git repository
+To build r9 for x86_64, we assume you have cloned the git repository
 somewhere convenient.  Then simply change into the top-level
-directory and, `cargo xtask build`.
+directory and, `cargo xtask build --arch x86_64`.
+
+To build for aarch64, run `cargo xtask build --arch aarch64` (Currently only Raspberry Pi 3 is supported).
 
 There are other useful `xtask` subcommands; run
 `cargo xtask help` to see what is available.
 
 Right now, r9 is not self-hosting.
-
-### Aarch64
-By default, the x86_64 architecture is built and run.  To run the
-xtask commands for the aarch64 architecture, prepend with
-`ARCH=aarch64 TARGET=aarch64-unknown-none-elf`.  E.g. to build and
-run in qemu simulating a Raspberry Pi 3, run:
-`ARCH=aarch64 TARGET=aarch64-unknown-none-elf cargo xtask qemu`.
 
 ## Runtime Dependencies
 

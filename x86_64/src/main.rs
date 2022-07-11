@@ -10,6 +10,7 @@ mod devcons;
 mod pio;
 mod uart16550;
 
+#[cfg(not(test))]
 core::arch::global_asm!(include_str!("l.S"), options(att_syntax));
 
 use port::println;

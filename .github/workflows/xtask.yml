@@ -16,7 +16,7 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - name: Build
-      run: cargo xtask build --verbose
+      run: cargo xtask build --arch x86_64 --verbose
     - name: Run tests
       run: cargo xtask test --verbose
 
@@ -29,4 +29,4 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - name: Build
-      run: cargo xtask build --verbose
+      run: cargo xtask build --arch aarch64 --verbose
