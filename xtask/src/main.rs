@@ -8,21 +8,33 @@ type DynError = Box<dyn std::error::Error>;
 type Result<T> = std::result::Result<T, DynError>;
 
 #[derive(Clone, Copy)]
-enum Build {
+enum Profile {
     Debug,
     Release,
 }
 
-impl Build {
-    fn dir(self) -> &'static str {
-        match self {
-            Self::Debug => "debug",
-            Self::Release => "release",
+struct BuildParams {
+    profile: Profile,
+    verbose: bool,
+}
+
+impl BuildParams {
+    fn new(matches: &clap::ArgMatches) -> Self {
+        let profile =
+            if matches.contains_id("release") { Profile::Release } else { Profile::Debug };
+        let verbose = matches.contains_id("verbose");
+        Self { profile: profile, verbose: verbose }
+    }
+
+    fn dir(&self) -> &'static str {
+        match self.profile {
+            Profile::Debug => "debug",
+            Profile::Release => "release",
         }
     }
 
-    fn add_build_arg(self, cmd: &mut Command) {
-        if let Self::Release = self {
+    fn add_build_arg(&self, cmd: &mut Command) {
+        if let Profile::Release = self.profile {
             cmd.arg("--release");
         }
     }
@@ -75,32 +87,22 @@ fn main() {
         ]))
         .subcommand(clap::Command::new("clean").about("Cargo clean"))
         .get_matches();
+
     if let Err(e) = match matches.subcommand() {
-        Some(("build", m)) => build(build_type(m), verbose(m)),
-        Some(("expand", m)) => expand(build_type(m), verbose(m)),
-        Some(("kasm", m)) => kasm(build_type(m), verbose(m)),
-        Some(("dist", m)) => dist(build_type(m), verbose(m)),
-        Some(("test", m)) => test(build_type(m), verbose(m)),
-        Some(("clippy", m)) => clippy(build_type(m), verbose(m)),
-        Some(("qemu", m)) => run(build_type(m), verbose(m)),
-        Some(("qemukvm", m)) => accelrun(build_type(m), verbose(m)),
+        Some(("build", m)) => build(&BuildParams::new(&m)),
+        Some(("expand", m)) => expand(&BuildParams::new(&m)),
+        Some(("kasm", m)) => kasm(&BuildParams::new(&m)),
+        Some(("dist", m)) => dist(&BuildParams::new(&m)),
+        Some(("test", m)) => test(&BuildParams::new(&m)),
+        Some(("clippy", m)) => clippy(&BuildParams::new(&m)),
+        Some(("qemu", m)) => run(&BuildParams::new(&m)),
+        Some(("qemukvm", m)) => accelrun(&BuildParams::new(&m)),
         Some(("clean", _)) => clean(),
         _ => Err("bad subcommand".into()),
     } {
         eprintln!("{}", e);
         process::exit(1);
     }
-}
-
-fn build_type(matches: &clap::ArgMatches) -> Build {
-    if matches.contains_id("release") {
-        return Build::Release;
-    }
-    Build::Debug
-}
-
-fn verbose(matches: &clap::ArgMatches) -> bool {
-    matches.contains_id("verbose")
 }
 
 fn env_or(var: &str, default: &str) -> String {
@@ -147,7 +149,7 @@ fn target() -> String {
     env_or("TARGET", "x86_64-unknown-none-elf")
 }
 
-fn build(profile: Build, verbose: bool) -> Result<()> {
+fn build(build_params: &BuildParams) -> Result<()> {
     let mut cmd = Command::new(cargo());
     cmd.current_dir(workspace());
     cmd.arg("build");
@@ -157,8 +159,8 @@ fn build(profile: Build, verbose: bool) -> Result<()> {
     cmd.arg("--workspace");
     cmd.arg("--exclude").arg("xtask");
     exclude_other_arches(&mut cmd);
-    profile.add_build_arg(&mut cmd);
-    if verbose {
+    build_params.add_build_arg(&mut cmd);
+    if build_params.verbose {
         println!("Executing {:?}", cmd);
     }
     let status = cmd.status()?;
@@ -168,7 +170,7 @@ fn build(profile: Build, verbose: bool) -> Result<()> {
     Ok(())
 }
 
-fn expand(profile: Build, verbose: bool) -> Result<()> {
+fn expand(build_params: &BuildParams) -> Result<()> {
     let mut cmd = Command::new(cargo());
     cmd.current_dir(workspace());
     cmd.arg("rustc");
@@ -177,8 +179,8 @@ fn expand(profile: Build, verbose: bool) -> Result<()> {
     cmd.arg("--target").arg(format!("lib/{}.json", target()));
     cmd.arg("--");
     cmd.arg("-Z").arg("unpretty=expanded");
-    profile.add_build_arg(&mut cmd);
-    if verbose {
+    build_params.add_build_arg(&mut cmd);
+    if build_params.verbose {
         println!("Executing {:?}", cmd);
     }
     let status = cmd.status()?;
@@ -188,7 +190,7 @@ fn expand(profile: Build, verbose: bool) -> Result<()> {
     Ok(())
 }
 
-fn kasm(profile: Build, verbose: bool) -> Result<()> {
+fn kasm(build_params: &BuildParams) -> Result<()> {
     let mut cmd = Command::new(cargo());
     cmd.current_dir(workspace());
     cmd.arg("rustc");
@@ -196,8 +198,8 @@ fn kasm(profile: Build, verbose: bool) -> Result<()> {
     cmd.arg("-p").arg(arch());
     cmd.arg("--target").arg(format!("lib/{}.json", target()));
     cmd.arg("--").arg("--emit").arg("asm");
-    profile.add_build_arg(&mut cmd);
-    if verbose {
+    build_params.add_build_arg(&mut cmd);
+    if build_params.verbose {
         println!("Executing {:?}", cmd);
     }
     let status = cmd.status()?;
@@ -207,17 +209,17 @@ fn kasm(profile: Build, verbose: bool) -> Result<()> {
     Ok(())
 }
 
-fn dist(profile: Build, verbose: bool) -> Result<()> {
-    build(profile, verbose)?;
+fn dist(build_params: &BuildParams) -> Result<()> {
+    build(build_params)?;
 
     if arch() == "x86_64" {
         let mut cmd = Command::new(objcopy());
         cmd.arg("--input-target=elf64-x86-64");
         cmd.arg("--output-target=elf32-i386");
-        cmd.arg(format!("target/{}/{}/x86_64", target(), profile.dir()));
-        cmd.arg(format!("target/{}/{}/r9.elf32", target(), profile.dir()));
+        cmd.arg(format!("target/{}/{}/x86_64", target(), build_params.dir()));
+        cmd.arg(format!("target/{}/{}/r9.elf32", target(), build_params.dir()));
         cmd.current_dir(workspace());
-        if verbose {
+        if build_params.verbose {
             println!("Executing {:?}", cmd);
         }
         let status = cmd.status()?;
@@ -228,14 +230,14 @@ fn dist(profile: Build, verbose: bool) -> Result<()> {
     Ok(())
 }
 
-fn test(profile: Build, verbose: bool) -> Result<()> {
+fn test(build_params: &BuildParams) -> Result<()> {
     let mut cmd = Command::new(cargo());
     cmd.current_dir(workspace());
     cmd.arg("test");
     cmd.arg("--workspace");
     exclude_other_arches(&mut cmd);
-    profile.add_build_arg(&mut cmd);
-    if verbose {
+    build_params.add_build_arg(&mut cmd);
+    if build_params.verbose {
         println!("Executing {:?}", cmd);
     }
     let status = cmd.status()?;
@@ -245,12 +247,12 @@ fn test(profile: Build, verbose: bool) -> Result<()> {
     Ok(())
 }
 
-fn clippy(profile: Build, verbose: bool) -> Result<()> {
+fn clippy(build_params: &BuildParams) -> Result<()> {
     let mut cmd = Command::new(cargo());
     cmd.current_dir(workspace());
     cmd.arg("clippy");
-    profile.add_build_arg(&mut cmd);
-    if verbose {
+    build_params.add_build_arg(&mut cmd);
+    if build_params.verbose {
         println!("Executing {:?}", cmd);
     }
     let status = cmd.status()?;
@@ -260,8 +262,8 @@ fn clippy(profile: Build, verbose: bool) -> Result<()> {
     Ok(())
 }
 
-fn run(profile: Build, verbose: bool) -> Result<()> {
-    dist(profile, verbose)?;
+fn run(build_params: &BuildParams) -> Result<()> {
+    dist(build_params)?;
 
     match arch().as_str() {
         "x86_64" => {
@@ -283,9 +285,9 @@ fn run(profile: Build, verbose: bool) -> Result<()> {
             //cmd.arg("-device");
             //cmd.arg("ide-hd,drive=sdahci0,bus=ahci0.0");
             cmd.arg("-kernel");
-            cmd.arg(format!("target/{}/{}/r9.elf32", target(), profile.dir()));
+            cmd.arg(format!("target/{}/{}/r9.elf32", target(), build_params.dir()));
             cmd.current_dir(workspace());
-            if verbose {
+            if build_params.verbose {
                 println!("Executing {:?}", cmd);
             }
             let status = cmd.status()?;
@@ -300,9 +302,9 @@ fn run(profile: Build, verbose: bool) -> Result<()> {
             cmd.arg("-M");
             cmd.arg("raspi3b");
             cmd.arg("-kernel");
-            cmd.arg(format!("target/{}/{}/aarch64", target(), profile.dir()));
+            cmd.arg(format!("target/{}/{}/aarch64", target(), build_params.dir()));
             cmd.current_dir(workspace());
-            if verbose {
+            if build_params.verbose {
                 println!("Executing {:?}", cmd);
             }
             let status = cmd.status()?;
@@ -318,8 +320,8 @@ fn run(profile: Build, verbose: bool) -> Result<()> {
     Ok(())
 }
 
-fn accelrun(profile: Build, verbose: bool) -> Result<()> {
-    dist(profile, verbose)?;
+fn accelrun(build_params: &BuildParams) -> Result<()> {
+    dist(build_params)?;
     let mut cmd = Command::new(qemu_system());
     cmd.arg("-nographic");
     cmd.arg("-accel");
@@ -331,9 +333,9 @@ fn accelrun(profile: Build, verbose: bool) -> Result<()> {
     cmd.arg("-m");
     cmd.arg("8192");
     cmd.arg("-kernel");
-    cmd.arg(format!("target/{}/{}/r9.elf32", target(), profile.dir()));
+    cmd.arg(format!("target/{}/{}/r9.elf32", target(), build_params.dir()));
     cmd.current_dir(workspace());
-    if verbose {
+    if build_params.verbose {
         println!("Executing {:?}", cmd);
     }
     let status = cmd.status()?;
