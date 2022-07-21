@@ -6,9 +6,7 @@ ENTRY(start)
 
 SECTIONS {
 	/*
-	 * start the kernel at 0x0xffff_8000_0020_0000
-	 * This preserves some RAM between 1MiB and the
-	 * start of the kernel for critical structures.
+	 * Raspberry Pi start address is 0x80_0000.
 	 */
 	/* . = 0xffff800000100000; */
 

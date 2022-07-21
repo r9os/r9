@@ -60,7 +60,6 @@ const MBOX_EMPTY: u32 = 0x4000_0000;
 
 // Delay for count cycles
 fn delay(count: u32) {
-    #[cfg(not(test))]
     for _ in 0..count {
         core::hint::spin_loop();
     }

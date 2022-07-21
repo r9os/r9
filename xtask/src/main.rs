@@ -13,7 +13,7 @@ enum Profile {
     Release,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, clap::ValueEnum)]
 enum Arch {
     Aarch64,
     X86_64,
@@ -29,6 +29,7 @@ struct BuildParams {
     arch: Arch,
     profile: Profile,
     verbose: bool,
+    wait_for_gdb: bool,
 }
 
 impl BuildParams {
@@ -36,9 +37,10 @@ impl BuildParams {
         let profile =
             if matches.contains_id("release") { Profile::Release } else { Profile::Debug };
         let verbose = matches.contains_id("verbose");
-        let arch = Arch::Aarch64;
+        let arch = matches.get_one("arch").unwrap_or(&Arch::X86_64);
+        let wait_for_gdb = matches.try_contains_id("gdb").unwrap_or(false);
 
-        Self { arch: arch, profile: profile, verbose: verbose }
+        Self { arch: *arch, profile: profile, verbose: verbose, wait_for_gdb: wait_for_gdb }
     }
 
     fn dir(&self) -> &'static str {
@@ -71,36 +73,46 @@ impl BuildParams {
 }
 
 fn main() {
-    let arches = ["aarch64", "x86_64"];
-
     let matches = clap::Command::new("xtask")
         .version("0.1.0")
         .author("The r9 Authors")
         .about("Build support for the r9 operating system")
-        .subcommand(clap::Command::new("build").about("Builds r9").args(&[
-            clap::arg!(--release "Build release version").conflicts_with("debug"),
-            clap::arg!(--debug "Build debug version (default)").conflicts_with("release"),
-            clap::arg!(--arch <arch> "Target architecture").value_parser(arches),
-            clap::arg!(--verbose "Print commands"),
-        ]))
-        .subcommand(clap::Command::new("expand").about("Expands r9 macros").args(&[
-            clap::arg!(--release "Build release version").conflicts_with("debug"),
-            clap::arg!(--debug "Build debug version (default)").conflicts_with("release"),
-            clap::arg!(--arch <arch> "Target architecture").value_parser(arches),
-            clap::arg!(--verbose "Print commands"),
-        ]))
-        .subcommand(clap::Command::new("kasm").about("Emits r9 assembler").args(&[
-            clap::arg!(--release "Build release version").conflicts_with("debug"),
-            clap::arg!(--debug "Build debug version (default)").conflicts_with("release"),
-            clap::arg!(--arch <arch> "Target architecture").value_parser(arches),
-            clap::arg!(--verbose "Print commands"),
-        ]))
-        .subcommand(clap::Command::new("dist").about("Builds a multibootable r9 image").args(&[
-            clap::arg!(--release "Build a release version").conflicts_with("debug"),
-            clap::arg!(--debug "Build a debug version").conflicts_with("release"),
-            clap::arg!(--arch <arch> "Target architecture").value_parser(arches),
-            clap::arg!(--verbose "Print commands"),
-        ]))
+        .subcommand(
+            clap::Command::new("build").about("Builds r9").args(&[
+                clap::arg!(--release "Build release version").conflicts_with("debug"),
+                clap::arg!(--debug "Build debug version (default)").conflicts_with("release"),
+                clap::arg!(--arch <arch> "Target architecture")
+                    .value_parser(clap::builder::EnumValueParser::<Arch>::new()),
+                clap::arg!(--verbose "Print commands"),
+            ]),
+        )
+        .subcommand(
+            clap::Command::new("expand").about("Expands r9 macros").args(&[
+                clap::arg!(--release "Build release version").conflicts_with("debug"),
+                clap::arg!(--debug "Build debug version (default)").conflicts_with("release"),
+                clap::arg!(--arch <arch> "Target architecture")
+                    .value_parser(clap::builder::EnumValueParser::<Arch>::new()),
+                clap::arg!(--verbose "Print commands"),
+            ]),
+        )
+        .subcommand(
+            clap::Command::new("kasm").about("Emits r9 assembler").args(&[
+                clap::arg!(--release "Build release version").conflicts_with("debug"),
+                clap::arg!(--debug "Build debug version (default)").conflicts_with("release"),
+                clap::arg!(--arch <arch> "Target architecture")
+                    .value_parser(clap::builder::EnumValueParser::<Arch>::new()),
+                clap::arg!(--verbose "Print commands"),
+            ]),
+        )
+        .subcommand(
+            clap::Command::new("dist").about("Builds a multibootable r9 image").args(&[
+                clap::arg!(--release "Build a release version").conflicts_with("debug"),
+                clap::arg!(--debug "Build a debug version").conflicts_with("release"),
+                clap::arg!(--arch <arch> "Target architecture")
+                    .value_parser(clap::builder::EnumValueParser::<Arch>::new()),
+                clap::arg!(--verbose "Print commands"),
+            ]),
+        )
         .subcommand(clap::Command::new("test").about("Runs unit tests").args(&[
             clap::arg!(--release "Build a release version").conflicts_with("debug"),
             clap::arg!(--debug "Build a debug version").conflicts_with("release"),
@@ -111,18 +123,26 @@ fn main() {
             clap::arg!(--debug "Build a debug version").conflicts_with("release"),
             clap::arg!(--verbose "Print commands"),
         ]))
-        .subcommand(clap::Command::new("qemu").about("Run r9 under QEMU").args(&[
-            clap::arg!(--release "Build a release version").conflicts_with("debug"),
-            clap::arg!(--debug "Build a debug version").conflicts_with("release"),
-            clap::arg!(--arch <arch> "Target architecture").value_parser(arches),
-            clap::arg!(--verbose "Print commands"),
-        ]))
-        .subcommand(clap::Command::new("qemukvm").about("Run r9 under QEMU with KVM").args(&[
-            clap::arg!(--release "Build a release version").conflicts_with("debug"),
-            clap::arg!(--debug "Build a debug version").conflicts_with("release"),
-            clap::arg!(--arch <arch> "Target architecture").value_parser(arches),
-            clap::arg!(--verbose "Print commands"),
-        ]))
+        .subcommand(
+            clap::Command::new("qemu").about("Run r9 under QEMU").args(&[
+                clap::arg!(--release "Build a release version").conflicts_with("debug"),
+                clap::arg!(--debug "Build a debug version").conflicts_with("release"),
+                clap::arg!(--arch <arch> "Target architecture")
+                    .value_parser(clap::builder::EnumValueParser::<Arch>::new()),
+                clap::arg!(--gdb "Wait for gdb connection on start"),
+                clap::arg!(--verbose "Print commands"),
+            ]),
+        )
+        .subcommand(
+            clap::Command::new("qemukvm").about("Run r9 under QEMU with KVM").args(&[
+                clap::arg!(--release "Build a release version").conflicts_with("debug"),
+                clap::arg!(--debug "Build a debug version").conflicts_with("release"),
+                clap::arg!(--arch <arch> "Target architecture")
+                    .value_parser(clap::builder::EnumValueParser::<Arch>::new()),
+                clap::arg!(--gdb "Wait for gdb connection on start"),
+                clap::arg!(--verbose "Print commands"),
+            ]),
+        )
         .subcommand(clap::Command::new("clean").about("Cargo clean"))
         .get_matches();
 
@@ -297,6 +317,12 @@ fn run(build_params: &BuildParams) -> Result<()> {
             //cmd.arg("-curses");
             cmd.arg("-M");
             cmd.arg("raspi3b");
+            if build_params.wait_for_gdb {
+                cmd.arg("-s").arg("-S");
+            }
+            // Show exception level change events in stdout
+            cmd.arg("-d");
+            cmd.arg("int");
             cmd.arg("-kernel");
             cmd.arg(format!("target/{}/{}/aarch64", build_params.target(), build_params.dir()));
             cmd.current_dir(workspace());
@@ -320,6 +346,9 @@ fn run(build_params: &BuildParams) -> Result<()> {
             cmd.arg("8");
             cmd.arg("-m");
             cmd.arg("8192");
+            if build_params.wait_for_gdb {
+                cmd.arg("-s").arg("-S");
+            }
             //cmd.arg("-device");
             //cmd.arg("ahci,id=ahci0");
             //cmd.arg("-drive");
@@ -354,6 +383,9 @@ fn accelrun(build_params: &BuildParams) -> Result<()> {
     cmd.arg("8");
     cmd.arg("-m");
     cmd.arg("8192");
+    if build_params.wait_for_gdb {
+        cmd.arg("-s").arg("-S");
+    }
     cmd.arg("-kernel");
     cmd.arg(format!("target/{}/{}/r9.elf32", build_params.target(), build_params.dir()));
     cmd.current_dir(workspace());
