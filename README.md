@@ -11,7 +11,7 @@ We use `cargo` and the `xtask` pattern to build the kernel.
 
 To build r9 for x86_64, we assume you have cloned the git repository
 somewhere convenient.  Then simply change into the top-level
-directory and, `cargo xtask build --arch x86_64`.
+directory and, `cargo xtask build --arch x86-64`.
 
 To build for aarch64, run `cargo xtask build --arch aarch64` (Currently only Raspberry Pi 3 is supported).
 

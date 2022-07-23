@@ -37,7 +37,7 @@ impl BuildParams {
         let profile =
             if matches.contains_id("release") { Profile::Release } else { Profile::Debug };
         let verbose = matches.contains_id("verbose");
-        let arch = matches.get_one("arch").unwrap_or(&Arch::X86_64);
+        let arch = matches.try_get_one("arch").ok().flatten().unwrap_or(&Arch::X86_64);
         let wait_for_gdb = matches.try_contains_id("gdb").unwrap_or(false);
 
         Self { arch: *arch, profile: profile, verbose: verbose, wait_for_gdb: wait_for_gdb }
