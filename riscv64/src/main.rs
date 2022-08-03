@@ -9,11 +9,13 @@
 
 use port::println;
 
-pub const HART_STACK_SIZE: usize = 4 * 4096; // 16KiB
-pub const MAX_HART_NUMBER: usize = 8; // QEMU supports upto 8 cores
-pub const STACK_SIZE: usize = HART_STACK_SIZE * MAX_HART_NUMBER;
+mod devcons;
+mod runtime;
+mod sbi;
+mod uart16550;
 
-static mut BOOT_STACK: [u8; STACK_SIZE] = [0u8; STACK_SIZE];
+#[cfg(not(test))]
+core::arch::global_asm!(include_str!("l.S"));
 
 #[no_mangle]
 pub extern "C" fn main9(hartid: usize, opaque: usize) -> ! {
@@ -26,13 +28,3 @@ pub extern "C" fn main9(hartid: usize, opaque: usize) -> ! {
     #[cfg(test)]
     loop {}
 }
-
-#[cfg(not(test))]
-core::arch::global_asm!(include_str!("l.S"), stack= sym BOOT_STACK, len_per_hart=const HART_STACK_SIZE);
-
-#[macro_use]
-mod devcons;
-mod runtime;
-#[cfg(not(test))]
-mod sbi;
-mod uart16550;

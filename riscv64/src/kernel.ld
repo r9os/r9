@@ -1,46 +1,42 @@
 OUTPUT_ARCH(riscv)
-ENTRY(_start)
+ENTRY(start)
 
-SECTIONS
-{
+SECTIONS {
 	/*
+	 * XXX This needs to change to a virtual address
+	 * once we set up paging.
+	 *
 	 * OpenSBI expects us to start at 0x80200000 
 	 */
-
 	. = 0x80200000;
-
-	.text : {
+	.text : ALIGN(4096) {
 		*(.text.entry)
-		. = ALIGN(4K);
-		*(.text .text.*)
+		*(.text*)
+		. = ALIGN(2097152);
+		PROVIDE(etext = .);
 	}
 
-	. = ALIGN(4K);
-
-	srodata = .;
-	.rodata : {
-		*(.rodata .rodata.*)
-		*(.srodata .srodata.*)
+	.rodata : ALIGN(4096) {
+		*(.rodata*)
+		*(.srodata*)
+		. = ALIGN(2097152);
+		PROVIDE(erodata = .);
 	}
 
-	. = ALIGN(4K);
-	erodata = .;
-	sdata = .;
-	.data : {
-		*(.data .data.*)
-		*(.sdata .sdata.*)
+	.data : ALIGN(4096) {
+		*(.data*)
+		*(.sdata*)
+		. = ALIGN(2097152);
+		PROVIDE(edata = .);
 	}
 
-	. = ALIGN(4K);
-	edata = .;
-	.bss : {
-		sbss = .;
-		*(.bss .bss.*)
-		*(.sbss .sbss.*)
+	.bss : ALIGN(4096) {
+		*(.bss*)
+		*(.sbss*)
+		*(COMMON)
+		. = ALIGN(2097152);
+		PROVIDE(end = .);
 	}
-
-	. = ALIGN(4K);
-	ebss = .;
 
 	/DISCARD/ : {
 		*(.eh_frame)
