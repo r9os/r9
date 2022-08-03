@@ -1,0 +1,9 @@
+[package]
+name = "riscv64"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+riscv = "0.8.0"
+uart_16550 = "0.2.18"
+port = { path = "../port" }

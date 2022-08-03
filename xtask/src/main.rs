@@ -16,6 +16,7 @@ enum Profile {
 #[derive(Clone, Copy, Debug, PartialEq, clap::ValueEnum)]
 enum Arch {
     Aarch64,
+    Riscv64gc,
     X86_64,
 }
 
@@ -59,6 +60,7 @@ impl BuildParams {
     fn qemu_system(&self) -> String {
         let defaultqemu = match self.arch {
             Arch::Aarch64 => "qemu-system-aarch64",
+            Arch::Riscv64gc => "qemu-system-riscv64",
             Arch::X86_64 => "qemu-system-x86_64",
         };
         env_or("QEMU", defaultqemu)
@@ -334,6 +336,31 @@ fn run(build_params: &BuildParams) -> Result<()> {
                 return Err("qemu failed".into());
             }
         }
+        Arch::Riscv64gc => {
+            let mut cmd = Command::new(build_params.qemu_system());
+            cmd.arg("-nographic");
+            //cmd.arg("-curses");
+            // cmd.arg("-bios").arg("none");
+            cmd.arg("-machine").arg("virt");
+            cmd.arg("-cpu").arg("rv64");
+            cmd.arg("-smp").arg("4");
+            cmd.arg("-m").arg("1024M");
+            cmd.arg("-serial").arg("mon:stdio");
+            if build_params.wait_for_gdb {
+                cmd.arg("-s").arg("-S");
+            }
+            cmd.arg("-d").arg("guest_errors,unimp");
+            cmd.arg("-kernel");
+            cmd.arg(format!("target/{}/{}/riscv64", build_params.target(), build_params.dir()));
+            cmd.current_dir(workspace());
+            if build_params.verbose {
+                println!("Executing {:?}", cmd);
+            }
+            let status = cmd.status()?;
+            if !status.success() {
+                return Err("qemu failed".into());
+            }
+        }
         Arch::X86_64 => {
             let mut cmd = Command::new(build_params.qemu_system());
             cmd.arg("-nographic");
@@ -415,10 +442,16 @@ fn workspace() -> PathBuf {
 fn exclude_other_arches(arch: Arch, cmd: &mut Command) {
     match arch {
         Arch::Aarch64 => {
+            cmd.arg("--exclude").arg("riscv64");
+            cmd.arg("--exclude").arg("x86_64");
+        }
+        Arch::Riscv64gc => {
+            cmd.arg("--exclude").arg("aarch64");
             cmd.arg("--exclude").arg("x86_64");
         }
         Arch::X86_64 => {
             cmd.arg("--exclude").arg("aarch64");
+            cmd.arg("--exclude").arg("riscv64");
         }
     }
 }
