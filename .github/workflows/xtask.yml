@@ -40,4 +40,4 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - name: Build
-      run: cargo xtask build --arch riscv64gc --verbose
+      run: cargo xtask build --arch riscv64 --verbose

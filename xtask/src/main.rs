@@ -16,7 +16,7 @@ enum Profile {
 #[derive(Clone, Copy, Debug, PartialEq, clap::ValueEnum)]
 enum Arch {
     Aarch64,
-    Riscv64gc,
+    Riscv64,
     X86_64,
 }
 
@@ -60,7 +60,7 @@ impl BuildParams {
     fn qemu_system(&self) -> String {
         let defaultqemu = match self.arch {
             Arch::Aarch64 => "qemu-system-aarch64",
-            Arch::Riscv64gc => "qemu-system-riscv64",
+            Arch::Riscv64 => "qemu-system-riscv64",
             Arch::X86_64 => "qemu-system-x86_64",
         };
         env_or("QEMU", defaultqemu)
@@ -336,7 +336,7 @@ fn run(build_params: &BuildParams) -> Result<()> {
                 return Err("qemu failed".into());
             }
         }
-        Arch::Riscv64gc => {
+        Arch::Riscv64 => {
             let mut cmd = Command::new(build_params.qemu_system());
             cmd.arg("-nographic");
             //cmd.arg("-curses");
@@ -445,7 +445,7 @@ fn exclude_other_arches(arch: Arch, cmd: &mut Command) {
             cmd.arg("--exclude").arg("riscv64");
             cmd.arg("--exclude").arg("x86_64");
         }
-        Arch::Riscv64gc => {
+        Arch::Riscv64 => {
             cmd.arg("--exclude").arg("aarch64");
             cmd.arg("--exclude").arg("x86_64");
         }
