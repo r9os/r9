@@ -2,7 +2,7 @@
 //!
 //! Chapter 5: Legacy Extensions
 
-#![cfg_attr(not(arch = "riscv64gc"), allow(dead_code))]
+#![cfg_attr(not(target_arch = "riscv64"), allow(dead_code))]
 
 const SBI_SET_TIMER: usize = 0;
 const SBI_CONSOLE_PUTCHAR: usize = 1;
@@ -14,7 +14,7 @@ const _SBI_REMOTE_SFENCE_VMA: usize = 6;
 const _SBI_REMOTE_SFENCE_VMA_ASID: usize = 7;
 const SBI_SHUTDOWN: usize = 8;
 
-#[cfg(arch = "riscv64gc")]
+#[cfg(target_arch = "riscv64")]
 fn sbi_call_legacy(eid: usize, arg0: usize, arg1: usize, arg2: usize) -> usize {
     let ret;
     unsafe {
@@ -29,7 +29,7 @@ fn sbi_call_legacy(eid: usize, arg0: usize, arg1: usize, arg2: usize) -> usize {
     ret
 }
 
-#[cfg(not(arch = "riscv64gc"))]
+#[cfg(not(target_arch = "riscv64"))]
 fn sbi_call_legacy(_eid: usize, _arg0: usize, _arg1: usize, _arg2: usize) -> usize {
     0
 }
