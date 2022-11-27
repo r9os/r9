@@ -260,21 +260,47 @@ fn kasm(build_params: &BuildParams) -> Result<()> {
 fn dist(build_params: &BuildParams) -> Result<()> {
     build(build_params)?;
 
-    if build_params.arch == Arch::X86_64 {
-        let mut cmd = Command::new(objcopy());
-        cmd.arg("--input-target=elf64-x86-64");
-        cmd.arg("--output-target=elf32-i386");
-        cmd.arg(format!("target/{}/{}/x86_64", build_params.target(), build_params.dir()));
-        cmd.arg(format!("target/{}/{}/r9.elf32", build_params.target(), build_params.dir()));
-        cmd.current_dir(workspace());
-        if build_params.verbose {
-            println!("Executing {:?}", cmd);
+    match build_params.arch {
+        Arch::Aarch64 => {
+            // Qemu needs a flat binary in order to handle device tree files correctly
+            let mut cmd = Command::new(objcopy());
+            cmd.arg("-O");
+            cmd.arg("binary");
+            cmd.arg(format!("target/{}/{}/aarch64", build_params.target(), build_params.dir()));
+            cmd.arg(format!(
+                "target/{}/{}/aarch64-qemu",
+                build_params.target(),
+                build_params.dir()
+            ));
+            cmd.current_dir(workspace());
+            if build_params.verbose {
+                println!("Executing {:?}", cmd);
+            }
+            let status = cmd.status()?;
+            if !status.success() {
+                return Err("objcopy failed".into());
+            }
         }
-        let status = cmd.status()?;
-        if !status.success() {
-            return Err("objcopy failed".into());
+        Arch::X86_64 => {
+            let mut cmd = Command::new(objcopy());
+            cmd.arg("--input-target=elf64-x86-64");
+            cmd.arg("--output-target=elf32-i386");
+            cmd.arg(format!("target/{}/{}/x86_64", build_params.target(), build_params.dir()));
+            cmd.arg(format!("target/{}/{}/r9.elf32", build_params.target(), build_params.dir()));
+            cmd.current_dir(workspace());
+            if build_params.verbose {
+                println!("Executing {:?}", cmd);
+            }
+            let status = cmd.status()?;
+            if !status.success() {
+                return Err("objcopy failed".into());
+            }
         }
-    }
+        Arch::Riscv64 => {
+            return Err("unsupported".into());
+        }
+    };
+
     Ok(())
 }
 
@@ -322,11 +348,17 @@ fn run(build_params: &BuildParams) -> Result<()> {
             if build_params.wait_for_gdb {
                 cmd.arg("-s").arg("-S");
             }
+            cmd.arg("-dtb");
+            cmd.arg("lib/bcm2710-rpi-3-b.dtb");
             // Show exception level change events in stdout
             cmd.arg("-d");
             cmd.arg("int");
             cmd.arg("-kernel");
-            cmd.arg(format!("target/{}/{}/aarch64", build_params.target(), build_params.dir()));
+            cmd.arg(format!(
+                "target/{}/{}/aarch64-qemu",
+                build_params.target(),
+                build_params.dir()
+            ));
             cmd.current_dir(workspace());
             if build_params.verbose {
                 println!("Executing {:?}", cmd);

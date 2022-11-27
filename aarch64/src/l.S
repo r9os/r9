@@ -29,6 +29,9 @@ STACKSZ = 4096*4
 .section .boottext, "awx"
 .globl start
 start:
+	// Cache dtb pointer so we can pass to main9 later
+	mov	x30, x0
+
 	// All cores other than 0 should just hang
 	mrs	x0, mpidr_el1
 	and	x0, x0, #0xff
@@ -91,6 +94,7 @@ el1:	// In EL1, so set up the initial stack
 	b.ne	1b
 
 	// Finally jump to rust
+	mov	x0, x30			// DTB pointer
 	bl	main9
 
 .globl dnr
