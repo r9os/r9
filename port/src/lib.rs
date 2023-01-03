@@ -5,5 +5,5 @@
 
 pub mod dat;
 pub mod devcons;
-pub mod devicetree;
+pub mod fdt;
 pub mod mcslock;

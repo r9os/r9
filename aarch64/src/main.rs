@@ -7,7 +7,7 @@
 
 mod devcons;
 
-use port::devicetree::DeviceTree;
+use port::fdt::DeviceTree;
 
 #[cfg(not(test))]
 core::arch::global_asm!(include_str!("l.S"));
@@ -16,7 +16,7 @@ use port::println;
 
 #[no_mangle]
 pub extern "C" fn main9(dtb_ptr: u64) {
-    let dt = DeviceTree::from_u64(dtb_ptr).unwrap();
+    let dt = unsafe { DeviceTree::from_u64(dtb_ptr).unwrap() };
 
     devcons::init(&dt);
     println!();

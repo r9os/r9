@@ -1,6 +1,6 @@
-use port::devicetree::{DeviceTree, Range, RangeMapping, RegBlock, TranslatedReg};
+use port::fdt::{DeviceTree, Range, RangeMapping, RegBlock, TranslatedReg};
 
-static TEST1_DTB: &[u8] = include_bytes!("../lib/test/devicetree/test1.dtb");
+static TEST1_DTB: &[u8] = include_bytes!("../lib/test/fdt/test1.dtb");
 
 #[test]
 fn find_by_path() {

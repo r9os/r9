@@ -1,4 +1,4 @@
-use core::ffi::CStr;
+use core::{ffi::CStr, mem};
 
 #[derive(Debug)]
 pub enum ParseError {
@@ -20,16 +20,11 @@ fn bytes_to_u64(bytes: &[u8]) -> Option<u64> {
 
 /// Extract u32 from bytes, but cast as u64
 fn bytes_to_u32_as_u64(bytes: &[u8]) -> Option<u64> {
-    Some(u32::from_be_bytes(bytes.get(..4)?.try_into().unwrap()) as u64)
+    Some(u32::from_be_bytes(bytes.get(..4)?.try_into().unwrap()).into())
 }
 
 fn align4(n: usize) -> usize {
-    let mut aligned_n = n;
-    let rem = n % 4;
-    if rem > 0 {
-        aligned_n += 4 - rem;
-    }
-    aligned_n
+    n + (0usize.wrapping_sub(n) & 3)
 }
 
 /// DeviceTree is the class entrypoint to the Devicetree operations.
@@ -50,11 +45,12 @@ impl<'a> DeviceTree<'a> {
     }
 
     /// Given a pointer to the dtb as a u64, return a DeviceTree struct.
-    pub fn from_u64(ptr: u64) -> Result<Self> {
+    pub unsafe fn from_u64(ptr: u64) -> Result<Self> {
         let u8ptr = ptr as *const u8;
 
         // Extract the real length from the header
-        let dtb_buf_for_header: &[u8] = unsafe { core::slice::from_raw_parts(u8ptr, 100) };
+        let dtb_buf_for_header: &[u8] =
+            unsafe { core::slice::from_raw_parts(u8ptr, mem::size_of::<FdtHeader>()) };
         let dtb_for_header = FdtHeader::new(dtb_buf_for_header, true)
             .map(|header| Self { data: dtb_buf_for_header, header })?;
         let len = dtb_for_header.header.totalsize as usize;
@@ -64,14 +60,14 @@ impl<'a> DeviceTree<'a> {
         FdtHeader::new(dtb_buf, false).map(|header| Self { data: dtb_buf, header })
     }
 
-    /// Return buffer to structs
+    /// Return slice containing `structs` area in FDT
     fn structs(&self) -> &[u8] {
         let start = self.header.off_dt_struct as usize;
         let size: usize = self.header.size_dt_struct as usize;
         &self.data[start..(start + size)]
     }
 
-    /// Return buffer to strings (all null terminated)
+    /// Return slice containing `strings` area in FDT (all null terminated)
     fn strings(&self) -> &'a [u8] {
         let start = self.header.off_dt_strings as usize;
         let size: usize = self.header.size_dt_strings as usize;
@@ -87,13 +83,10 @@ impl<'a> DeviceTree<'a> {
         let mut i = parent.next_token_start;
         let child_depth = parent.depth + 1;
 
-        core::iter::from_fn(move || loop {
-            if let Some(child) = self.node_from_index(i, child_depth) {
-                i = child.start + child.total_len;
-                return Some(child);
-            } else {
-                return None;
-            }
+        core::iter::from_fn(move || {
+            let child = self.node_from_index(i, child_depth)?;
+            i = child.start + child.total_len;
+            Some(child)
         })
     }
 

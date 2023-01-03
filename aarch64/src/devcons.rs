@@ -5,7 +5,7 @@ use core::mem::MaybeUninit;
 use core::ptr;
 use core::ptr::{read_volatile, write_volatile};
 use port::devcons::{Console, Uart};
-use port::devicetree::{self, RegBlock};
+use port::fdt::{DeviceTree, RegBlock};
 use spin::Once;
 
 static mut UART: MaybeUninit<Pl011Uart> = MaybeUninit::uninit();
@@ -245,7 +245,7 @@ impl Uart for Pl011Uart {
     }
 }
 
-pub fn init(dt: &devicetree::DeviceTree) {
+pub fn init(dt: &DeviceTree) {
     // TODO use aliases?
     let gpio_reg = dt
         .find_compatible("brcm,bcm2835-gpio")
