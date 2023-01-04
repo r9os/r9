@@ -1,4 +1,7 @@
-use core::{ffi::CStr, mem};
+use core::{
+    ffi::CStr,
+    mem::{self, MaybeUninit},
+};
 
 #[derive(Debug)]
 pub enum ParseError {
@@ -10,17 +13,32 @@ pub enum ParseError {
 
 type Result<T> = core::result::Result<T, ParseError>;
 
-fn bytes_to_u32(bytes: &[u8]) -> Option<u32> {
-    Some(u32::from_be_bytes(bytes.get(..4)?.try_into().unwrap()))
+/// Extract u32 from bytes
+fn bytes_to_u32(bytes: &[mem::MaybeUninit<u8>]) -> Option<u32> {
+    let maybe_uninit_bytes = bytes.get(..4)?;
+    let init_bytes = unsafe { MaybeUninit::slice_assume_init_ref(maybe_uninit_bytes) };
+    Some(u32::from_be_bytes(init_bytes.try_into().unwrap()))
 }
 
-fn bytes_to_u64(bytes: &[u8]) -> Option<u64> {
-    Some(u64::from_be_bytes(bytes.get(..8)?.try_into().unwrap()))
+/// Extract u32 from bytes + offset
+fn bytes_to_u32_offset(bytes: &[mem::MaybeUninit<u8>], offset: usize) -> Option<u32> {
+    let maybe_uninit_bytes = bytes.get(offset..offset + 4)?;
+    let init_bytes = unsafe { MaybeUninit::slice_assume_init_ref(maybe_uninit_bytes) };
+    Some(u32::from_be_bytes(init_bytes.try_into().unwrap()))
+}
+
+/// Extract u64 from bytes
+fn bytes_to_u64(bytes: &[mem::MaybeUninit<u8>]) -> Option<u64> {
+    let maybe_uninit_bytes = bytes.get(..8)?;
+    let init_bytes = unsafe { MaybeUninit::slice_assume_init_ref(maybe_uninit_bytes) };
+    Some(u64::from_be_bytes(init_bytes.try_into().unwrap()))
 }
 
 /// Extract u32 from bytes, but cast as u64
-fn bytes_to_u32_as_u64(bytes: &[u8]) -> Option<u64> {
-    Some(u32::from_be_bytes(bytes.get(..4)?.try_into().unwrap()).into())
+fn bytes_to_u32_as_u64(bytes: &[mem::MaybeUninit<u8>]) -> Option<u64> {
+    let maybe_uninit_bytes = bytes.get(..4)?;
+    let init_bytes = unsafe { MaybeUninit::slice_assume_init_ref(maybe_uninit_bytes) };
+    Some(u32::from_be_bytes(init_bytes.try_into().unwrap()).into())
 }
 
 fn align4(n: usize) -> usize {
@@ -33,42 +51,44 @@ fn align4(n: usize) -> usize {
 /// https://www.devicetree.org/specifications/
 #[derive(Debug)]
 pub struct DeviceTree<'a> {
-    data: &'a [u8],    // Reference to the underlying data in memory
-    header: FdtHeader, // Parsed structure of the header
+    data: &'a [mem::MaybeUninit<u8>], // Reference to the underlying data in memory
+    header: FdtHeader,                // Parsed structure of the header
 }
 
 impl<'a> DeviceTree<'a> {
     /// Create new DeviceTree based on memory pointed to by data.
     /// Result is error if the header can't be parsed correctly.
     pub fn new(data: &'a [u8]) -> Result<Self> {
-        FdtHeader::new(data, false).map(|header| Self { data, header })
+        let uninit_data = unsafe { core::mem::transmute(data) };
+        FdtHeader::new(uninit_data, false).map(|header| Self { data: uninit_data, header })
     }
 
     /// Given a pointer to the dtb as a u64, return a DeviceTree struct.
     pub unsafe fn from_u64(ptr: u64) -> Result<Self> {
-        let u8ptr = ptr as *const u8;
+        let u8ptr = ptr as *const mem::MaybeUninit<u8>;
 
         // Extract the real length from the header
-        let dtb_buf_for_header: &[u8] =
+        let dtb_buf_for_header: &[mem::MaybeUninit<u8>] =
             unsafe { core::slice::from_raw_parts(u8ptr, mem::size_of::<FdtHeader>()) };
         let dtb_for_header = FdtHeader::new(dtb_buf_for_header, true)
             .map(|header| Self { data: dtb_buf_for_header, header })?;
         let len = dtb_for_header.header.totalsize as usize;
 
         // Extract the buffer for real
-        let dtb_buf: &[u8] = unsafe { core::slice::from_raw_parts(u8ptr as *const u8, len) };
+        let dtb_buf: &[mem::MaybeUninit<u8>] =
+            unsafe { core::slice::from_raw_parts(u8ptr as *const MaybeUninit<u8>, len) };
         FdtHeader::new(dtb_buf, false).map(|header| Self { data: dtb_buf, header })
     }
 
     /// Return slice containing `structs` area in FDT
-    fn structs(&self) -> &[u8] {
+    fn structs(&self) -> &[mem::MaybeUninit<u8>] {
         let start = self.header.off_dt_struct as usize;
         let size: usize = self.header.size_dt_struct as usize;
         &self.data[start..(start + size)]
     }
 
     /// Return slice containing `strings` area in FDT (all null terminated)
-    fn strings(&self) -> &'a [u8] {
+    fn strings(&self) -> &'a [mem::MaybeUninit<u8>] {
         let start = self.header.off_dt_strings as usize;
         let size: usize = self.header.size_dt_strings as usize;
         &self.data[start..(start + size)]
@@ -127,7 +147,7 @@ impl<'a> DeviceTree<'a> {
         Self::inline_str(self.strings(), prop.name_start)
     }
 
-    pub fn property_value_bytes(&self, prop: &Property) -> Option<&[u8]> {
+    pub fn property_value_bytes(&self, prop: &Property) -> Option<&[mem::MaybeUninit<u8>]> {
         let value_end = prop.value_start + prop.value_len;
         self.structs().get(prop.value_start..value_end)
     }
@@ -311,8 +331,9 @@ impl<'a> DeviceTree<'a> {
     }
 
     fn property_value_contains(&self, prop: &Property, bytes_to_find: &str) -> bool {
-        if let Some(value) = self.property_value_bytes(prop) {
-            return value.split(|b| *b == b'\0').any(|bs| bs == bytes_to_find.as_bytes());
+        if let Some(uninit_value) = self.property_value_bytes(prop) {
+            let init_value = unsafe { MaybeUninit::slice_assume_init_ref(uninit_value) };
+            return init_value.split(|b| *b == b'\0').any(|bs| bs == bytes_to_find.as_bytes());
         }
         return false;
     }
@@ -369,10 +390,11 @@ impl<'a> DeviceTree<'a> {
         })
     }
 
-    fn inline_str(data: &[u8], start: usize) -> Option<&str> {
-        data.get(start..)
-            .map(|bs| CStr::from_bytes_until_nul(bs).ok())
-            .and_then(|s| s?.to_str().ok())
+    fn inline_str(bytes: &[mem::MaybeUninit<u8>], start: usize) -> Option<&str> {
+        let maybe_uninit_bytes = bytes.get(start..)?;
+        let init_bytes = unsafe { MaybeUninit::slice_assume_init_ref(maybe_uninit_bytes) };
+        let cstr = CStr::from_bytes_until_nul(init_bytes).ok()?;
+        cstr.to_str().ok()
     }
 
     fn node_from_index(&self, start: usize, node_depth: usize) -> Option<Node> {
@@ -517,7 +539,7 @@ impl<'a> DeviceTree<'a> {
         })
     }
 
-    fn parse_token(structs: &[u8], i: usize) -> Option<FdtToken> {
+    fn parse_token(structs: &[mem::MaybeUninit<u8>], i: usize) -> Option<FdtToken> {
         let token = structs.get(i..).and_then(|bs| bytes_to_u32(bs));
 
         match token {
@@ -525,7 +547,9 @@ impl<'a> DeviceTree<'a> {
                 // Null terminated string follow token
                 let str_size = structs
                     .get((i + 4)..)
-                    .and_then(|bs| bs.iter().position(|&b| b == 0))
+                    .and_then(|bs| unsafe {
+                        MaybeUninit::slice_assume_init_ref(bs).iter().position(|&b| b == 0)
+                    })
                     .map(|sz| align4(sz + 1))
                     .unwrap_or(0);
                 return Some(FdtToken::FdtBeginNode(FdtBeginNodeContext {
@@ -582,23 +606,19 @@ impl FdtHeader {
     /// otherwise returns an error.
     /// Set ignore_size to true if you're only loading a portion of the buffer
     /// (e.g. in order to work out the size of the buffer before casting to a slice).
-    fn new(data: &[u8], ignore_size: bool) -> Result<Self> {
-        fn read_u32(data: &[u8], offset: usize) -> Option<u32> {
-            Some(u32::from_be_bytes(data.get(offset..offset + 4)?.try_into().unwrap()))
-        }
-
-        fn new_header(data: &[u8]) -> Option<FdtHeader> {
+    fn new(data: &[mem::MaybeUninit<u8>], ignore_size: bool) -> Result<Self> {
+        fn new_header(data: &[mem::MaybeUninit<u8>]) -> Option<FdtHeader> {
             Some(FdtHeader {
-                magic: read_u32(data, 0)?,
-                totalsize: read_u32(data, 4)?,
-                off_dt_struct: read_u32(data, 8)?,
-                off_dt_strings: read_u32(data, 12)?,
-                off_mem_rsvmap: read_u32(data, 16)?,
-                version: read_u32(data, 20)?,
-                last_comp_version: read_u32(data, 24)?,
-                boot_cpuid_phys: read_u32(data, 28)?,
-                size_dt_strings: read_u32(data, 32)?,
-                size_dt_struct: read_u32(data, 36)?,
+                magic: bytes_to_u32_offset(data, 0)?,
+                totalsize: bytes_to_u32_offset(data, 4)?,
+                off_dt_struct: bytes_to_u32_offset(data, 8)?,
+                off_dt_strings: bytes_to_u32_offset(data, 12)?,
+                off_mem_rsvmap: bytes_to_u32_offset(data, 16)?,
+                version: bytes_to_u32_offset(data, 20)?,
+                last_comp_version: bytes_to_u32_offset(data, 24)?,
+                boot_cpuid_phys: bytes_to_u32_offset(data, 28)?,
+                size_dt_strings: bytes_to_u32_offset(data, 32)?,
+                size_dt_struct: bytes_to_u32_offset(data, 36)?,
             })
         }
 
