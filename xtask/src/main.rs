@@ -36,10 +36,10 @@ struct BuildParams {
 impl BuildParams {
     fn new(matches: &clap::ArgMatches) -> Self {
         let profile =
-            if matches.contains_id("release") { Profile::Release } else { Profile::Debug };
-        let verbose = matches.contains_id("verbose");
+            if matches.get_flag("release") { Profile::Release } else { Profile::Debug };
+        let verbose = matches.get_flag("verbose");
         let arch = matches.try_get_one("arch").ok().flatten().unwrap_or(&Arch::X86_64);
-        let wait_for_gdb = matches.try_contains_id("gdb").unwrap_or(false);
+        let wait_for_gdb = matches.try_contains_id("gdb").unwrap_or(false) && matches.get_flag("gdb");
 
         Self { arch: *arch, profile: profile, verbose: verbose, wait_for_gdb: wait_for_gdb }
     }
