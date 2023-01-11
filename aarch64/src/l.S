@@ -16,7 +16,6 @@ STACKSZ = 4096*4
 .equ	SPSR_EL3_D,		(1<<9)	// Debug exception
 
 .equ	HCR_EL2_RW,		(1<<31)
-.equ	HCR_EL2_SWIO,		(1<<1)
 
 .equ	SPSR_EL2_M_EL1H,	(1<<2) | (1<<0)	// Exception level and SP: EL1h
 .equ	SPSR_EL2_F,		(1<<6)	// FIQ

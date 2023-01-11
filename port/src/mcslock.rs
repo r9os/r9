@@ -30,13 +30,13 @@ impl LockNode {
 
 /// An MCS lock.
 pub struct MCSLock {
-    name: &'static str,
+    _name: &'static str,
     queue: AtomicPtr<LockNode>,
 }
 
 impl MCSLock {
     pub const fn new(name: &'static str) -> MCSLock {
-        MCSLock { name, queue: AtomicPtr::new(ptr::null_mut()) }
+        MCSLock { _name: name, queue: AtomicPtr::new(ptr::null_mut()) }
     }
 
     pub fn lock<'a>(&self, node: &'a LockNode) -> &'a LockNode {

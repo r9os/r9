@@ -6,39 +6,39 @@ use core::ptr::NonNull;
 use core::result::Result;
 
 pub struct Chan {
-    offset: u64,
-    devoffset: u64,
-    typ: u16,
-    dev: u32,
-    mode: u16,
-    flag: u16,
-    qid: Qid,
-    fid: u32,
-    iounit: u32,
+    _offset: u64,
+    _devoffset: u64,
+    _typ: u16,
+    _dev: u32,
+    _mode: u16,
+    _flag: u16,
+    _qid: Qid,
+    _fid: u32,
+    _iounit: u32,
     // umh: Option<&Mutex<Mhead>>,
     // umqlock: Obviated by Mutex in umh?
-    umc: Option<NonNull<Chan>>,
-    uri: usize,
-    dri: usize,
+    _umc: Option<NonNull<Chan>>,
+    _uri: usize,
+    _dri: usize,
     // dirrock: Option<&Mutex<*const ()>>,
     // rockqlock: Obviated by Mutex in dirrock?
-    nrock: usize,
-    mrock: usize,
-    ismtpt: bool,
+    _nrock: usize,
+    _mrock: usize,
+    _ismtpt: bool,
     // mcp: *mut Mntcache,
     // mux: *mut Mnt,
-    aux: *mut (),
-    pgrpid: Qid,
-    mid: u32,
+    _aux: *mut (),
+    _pgrpid: Qid,
+    _mid: u32,
     // mchan: Arc<Chan>,
-    mqid: Qid,
+    _mqid: Qid,
     // path: *const Path,
 }
 
 pub struct Device {
-    dc: u32,
-    name: &'static str,
-    attached: bool,
+    _dc: u32,
+    _name: &'static str,
+    _attached: bool,
 }
 
 bitflags! {
@@ -75,22 +75,22 @@ pub trait Dev {
 
 pub struct Block {
     // TODO(cross): block linkage.
-    rp: usize,
-    wp: usize,
-    lim: *const u8,
-    base: *mut u8,
-    flag: u16,
-    checksum: u16,
-    magic: u32,
+    _rp: usize,
+    _wp: usize,
+    _lim: *const u8,
+    _base: *mut u8,
+    _flag: u16,
+    _checksum: u16,
+    _magic: u32,
 }
 
 pub struct Qid {
-    path: u64,
-    vers: u32,
-    typ: u8,
+    _path: u64,
+    _vers: u32,
+    _typ: u8,
 }
 
 pub struct Walkqid {
-    clone: Arc<Chan>,
-    qids: [Qid],
+    _clone: Arc<Chan>,
+    _qids: [Qid],
 }

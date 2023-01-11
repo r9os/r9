@@ -1,6 +1,5 @@
 #![feature(alloc_error_handler)]
 #![feature(asm_const)]
-#![feature(asm_sym)]
 #![cfg_attr(not(any(test, feature = "cargo-clippy")), no_std)]
 #![cfg_attr(not(test), no_main)]
 #![allow(clippy::upper_case_acronyms)]
