@@ -13,6 +13,8 @@ impl Uart for Uart16550 {
 }
 
 pub fn init() {
-    static mut UART: Uart16550 = Uart16550 { port: 0x3f8 };
-    Console::new(unsafe { &mut UART });
+    Console::new(|| {
+        static mut UART: Uart16550 = Uart16550 { port: 0x3f8 };
+        unsafe { &mut UART }
+    });
 }

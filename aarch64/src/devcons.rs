@@ -7,8 +7,6 @@ use core::ptr::{read_volatile, write_volatile};
 use port::devcons::{Console, Uart};
 use port::fdt::{DeviceTree, RegBlock};
 
-static mut UART: MaybeUninit<Pl011Uart> = MaybeUninit::uninit();
-
 // The aarch64 devcons implementation is focussed on Raspberry Pi 3, 4 for now.
 
 // Useful links
@@ -270,6 +268,8 @@ pub fn init(dt: &DeviceTree) {
     Console::new(|| {
         let uart = Pl011Uart { gpio_reg, pl011_reg, mbox_reg };
         uart.init();
+
+        static mut UART: MaybeUninit<Pl011Uart> = MaybeUninit::uninit();
         unsafe {
             UART.write(uart);
             UART.assume_init_mut()
