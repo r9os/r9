@@ -25,10 +25,13 @@ pub struct Console;
 static CONS: Lock<Option<&'static mut dyn Uart>> = Lock::new("cons", None);
 
 impl Console {
-    pub fn new(uart: &'static mut dyn Uart) -> Self {
+    pub fn new<F>(uart_fn: F) -> Self
+    where
+        F: FnOnce() -> &'static mut dyn Uart,
+    {
         static mut NODE: LockNode = LockNode::new();
         let mut cons = CONS.lock(unsafe { &NODE });
-        *cons = Some(uart);
+        *cons = Some(uart_fn());
         Self
     }
 

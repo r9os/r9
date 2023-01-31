@@ -6,10 +6,8 @@ use core::ptr;
 use core::ptr::{read_volatile, write_volatile};
 use port::devcons::{Console, Uart};
 use port::fdt::{DeviceTree, RegBlock};
-use spin::Once;
 
 static mut UART: MaybeUninit<Pl011Uart> = MaybeUninit::uninit();
-static INIT: Once = Once::new();
 
 // The aarch64 devcons implementation is focussed on Raspberry Pi 3, 4 for now.
 
@@ -25,22 +23,22 @@ static INIT: Once = Once::new();
 // - Mailbox
 //     https://github.com/raspberrypi/firmware/wiki/Mailbox-property-interface
 
-// Raspberry Pi has 4 UARTs:
+// Raspberry Pi 3 has 2 UARTs, Raspbery Pi 4 has 4:
 // - UART0 PL011
 // - UART1 miniUART
-// - UART2 PL011
-// - UART3 PL011
-// We'll be using the UART0.
+// - UART2 PL011 (rpi4)
+// - UART3 PL011 (rpi4)
 
 // TODO
 // - Detect board type and set MMIO base address accordingly
 //     https://wiki.osdev.org/Detecting_Raspberry_Pi_Board
 // - Break out mailbox, gpio code
 
+// GPIO registers
 const GPPUD: u64 = 0x94;
 const GPPUDCLK0: u64 = 0x98;
 
-// PL011 UART 0 Registers
+// UART 0 (PL011) registers
 const UART0_DR: u64 = 0x00; // Data register
 const UART0_FR: u64 = 0x18; // Flag register
 const UART0_IBRD: u64 = 0x24; // Integer baud rate divisor
@@ -163,7 +161,7 @@ struct Pl011Uart {
 
 impl Pl011Uart {
     pub fn init(&self) {
-        // Disable uart0
+        // Disable UART0
         write_reg(self.pl011_reg, UART0_CR, 0);
 
         // Turn pull up/down off for pins 14/15 (tx/rx)
@@ -269,12 +267,12 @@ pub fn init(dt: &DeviceTree) {
         .and_then(|reg| reg.regblock())
         .unwrap();
 
-    INIT.call_once(|| {
+    Console::new(|| {
         let uart = Pl011Uart { gpio_reg, pl011_reg, mbox_reg };
+        uart.init();
         unsafe {
-            uart.init();
             UART.write(uart);
-        };
+            UART.assume_init_mut()
+        }
     });
-    Console::new(unsafe { UART.assume_init_mut() });
 }
