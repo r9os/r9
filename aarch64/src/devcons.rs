@@ -1,5 +1,6 @@
 // Racy to start.
 
+use core::arch::aarch64;
 use core::mem;
 use core::mem::MaybeUninit;
 use core::ptr;
@@ -33,8 +34,9 @@ use port::fdt::{DeviceTree, RegBlock};
 // - Break out mailbox, gpio code
 
 // GPIO registers
-const GPPUD: u64 = 0x94;
-const GPPUDCLK0: u64 = 0x98;
+const GPFSEL1: u64 = 0x04; // GPIO function select register 1
+const GPPUD: u64 = 0x94; // GPIO pin pull up/down enable
+const GPPUDCLK0: u64 = 0x98; // GPIO pin pull up/down enable clock 0
 
 // UART 0 (PL011) registers
 const UART0_DR: u64 = 0x00; // Data register
@@ -45,6 +47,19 @@ const UART0_LCRH: u64 = 0x2c; // Line control register
 const UART0_CR: u64 = 0x30; // Control register
 const UART0_IMSC: u64 = 0x38; // Interrupt mask set clear register
 const UART0_ICR: u64 = 0x44; // Interrupt clear register
+
+// AUX registers, offset from aux_reg
+const AUX_ENABLE: u64 = 0x04; // AUX enable register (Mini Uart, SPIs)
+
+// UART1 registers, offset from miniuart_reg
+const AUX_MU_IO: u64 = 0x00; // AUX IO data register
+const AUX_MU_IER: u64 = 0x04; // Mini Uart interrupt enable register
+const AUX_MU_IIR: u64 = 0x08; // Mini Uart interrupt identify register
+const AUX_MU_LCR: u64 = 0x0c; // Mini Uart line control register
+const AUX_MU_MCR: u64 = 0x10; // Mini Uart line control register
+const AUX_MU_LSR: u64 = 0x14; // Mini Uart line status register
+const AUX_MU_CNTL: u64 = 0x20; // Mini Uart control register
+const AUX_MU_BAUD: u64 = 0x28; // Mini Uart baudrate register
 
 const MBOX_READ: u64 = 0x00;
 const MBOX_STATUS: u64 = 0x18;
@@ -66,6 +81,18 @@ fn write_reg(reg: RegBlock, offset: u64, val: u32) {
     let dst = reg.addr + offset;
     assert!(reg.len.map_or(true, |len| offset < len));
     unsafe { write_volatile(dst as *mut u32, val) }
+}
+
+/// Write val|old into the reg RegBlock at offset from reg.addr,
+/// where `old` is the existing value.
+/// Panics if offset is outside any range specified by reg.len.
+pub fn write_or_reg(reg: RegBlock, offset: u64, val: u32) {
+    let dst = reg.addr + offset;
+    assert!(reg.len.map_or(true, |len| offset < len));
+    unsafe {
+        let old = read_volatile(dst as *const u32);
+        write_volatile(dst as *mut u32, val | old)
+    }
 }
 
 /// Read from the reg RegBlock at offset from reg.addr.
@@ -157,8 +184,38 @@ struct Pl011Uart {
     pl011_reg: RegBlock,
 }
 
+/// PL011 is the default in qemu (UART0), but a bit fiddly to use on a real
+/// Raspberry Pi board, as it needs additional configuration in the config
+/// and EEPROM (rpi4) to assign to the serial GPIO pins.
 impl Pl011Uart {
-    pub fn init(&self) {
+    fn new(dt: &DeviceTree) -> Pl011Uart {
+        // TODO use aliases?
+        let gpio_reg = dt
+            .find_compatible("brcm,bcm2835-gpio")
+            .next()
+            .and_then(|uart| dt.property_translated_reg_iter(uart).next())
+            .and_then(|reg| reg.regblock())
+            .unwrap();
+
+        let mbox_reg = dt
+            .find_compatible("brcm,bcm2835-mbox")
+            .next()
+            .and_then(|uart| dt.property_translated_reg_iter(uart).next())
+            .and_then(|reg| reg.regblock())
+            .unwrap();
+
+        // Find a compatible pl011 uart
+        let pl011_reg = dt
+            .find_compatible("arm,pl011")
+            .next()
+            .and_then(|uart| dt.property_translated_reg_iter(uart).next())
+            .and_then(|reg| reg.regblock())
+            .unwrap();
+
+        Pl011Uart { gpio_reg, pl011_reg, mbox_reg }
+    }
+
+    fn init(&self) {
         // Disable UART0
         write_reg(self.pl011_reg, UART0_CR, 0);
 
@@ -241,35 +298,104 @@ impl Uart for Pl011Uart {
     }
 }
 
+/// MiniUart is assigned to UART1 on the Raspberry Pi.  It is easier to use with
+/// real hardware, as it requires no additional configuration.  Conversely, it's
+/// harded to use with QEMU, as it can't be used with the `nographic` switch.
+struct MiniUart {
+    gpio_reg: RegBlock,
+    aux_reg: RegBlock,
+    miniuart_reg: RegBlock,
+}
+
+impl MiniUart {
+    fn new(dt: &DeviceTree) -> MiniUart {
+        // TODO use aliases?
+        let gpio_reg = dt
+            .find_compatible("brcm,bcm2835-gpio")
+            .next()
+            .and_then(|uart| dt.property_translated_reg_iter(uart).next())
+            .and_then(|reg| reg.regblock())
+            .unwrap();
+
+        // Find a compatible aux
+        let aux_reg = dt
+            .find_compatible("brcm,bcm2835-aux")
+            .next()
+            .and_then(|uart| dt.property_translated_reg_iter(uart).next())
+            .and_then(|reg| reg.regblock())
+            .unwrap();
+
+        // Find a compatible miniuart
+        let miniuart_reg = dt
+            .find_compatible("brcm,bcm2835-aux-uart")
+            .next()
+            .and_then(|uart| dt.property_translated_reg_iter(uart).next())
+            .and_then(|reg| reg.regblock())
+            .unwrap();
+
+        MiniUart { gpio_reg, aux_reg, miniuart_reg }
+    }
+
+    fn init(&self) {
+        // Set GPIO pins 14 and 15 to be used for UART1.  This is done by
+        // setting the appropriate flags in GPFSEL1 to ALT5, which is
+        // represented by the 0b010
+        let mut gpfsel1 = read_reg(self.gpio_reg, GPFSEL1);
+        gpfsel1 &= !((7 << 12) | (7 << 15));
+        gpfsel1 |= (2 << 12) | (2 << 15);
+        write_reg(self.gpio_reg, GPFSEL1, gpfsel1);
+
+        write_reg(self.gpio_reg, GPPUD, 0);
+        delay(150);
+        write_reg(self.gpio_reg, GPPUDCLK0, (1 << 14) | (1 << 15));
+        delay(150);
+        write_reg(self.gpio_reg, GPPUDCLK0, 0);
+
+        // Enable mini uart - required to write to its registers
+        write_or_reg(self.aux_reg, AUX_ENABLE, 1);
+        write_reg(self.miniuart_reg, AUX_MU_CNTL, 0);
+        // 8-bit
+        write_reg(self.miniuart_reg, AUX_MU_LCR, 3);
+        write_reg(self.miniuart_reg, AUX_MU_MCR, 0);
+        // Disable interrupts
+        write_reg(self.miniuart_reg, AUX_MU_IER, 0);
+        // Clear receive/transmit FIFOs
+        write_reg(self.miniuart_reg, AUX_MU_IIR, 0xc6);
+
+        // We want 115200 baud.  This is calculated as:
+        //   system_clock_freq / (8 * (baudrate_reg + 1))
+        // For now we're making assumptions about the clock frequency
+        // TODO Get the clock freq via the mailbox, and update if it changes.
+        // let arm_clock_rate = 500000000.0;
+        // let baud_rate_reg = arm_clock_rate / (8.0 * 115200.0) + 1.0;
+        //write_reg(self.miniuart_reg, AUX_MU_BAUD, baud_rate_reg as u32);
+        write_reg(self.miniuart_reg, AUX_MU_BAUD, 270);
+
+        // Finally enable transmit
+        write_reg(self.miniuart_reg, AUX_MU_CNTL, 3);
+    }
+}
+
+impl Uart for MiniUart {
+    fn putb(&self, b: u8) {
+        // Wait for UART to become ready to transmit
+        while read_reg(self.miniuart_reg, AUX_MU_LSR) & (1 << 5) == 0 {
+            unsafe {
+                aarch64::__nop();
+            }
+        }
+        write_reg(self.miniuart_reg, AUX_MU_IO, b as u32);
+    }
+}
+
 pub fn init(dt: &DeviceTree) {
-    // TODO use aliases?
-    let gpio_reg = dt
-        .find_compatible("brcm,bcm2835-gpio")
-        .next()
-        .and_then(|uart| dt.property_translated_reg_iter(uart).next())
-        .and_then(|reg| reg.regblock())
-        .unwrap();
-
-    let mbox_reg = dt
-        .find_compatible("brcm,bcm2835-mbox")
-        .next()
-        .and_then(|uart| dt.property_translated_reg_iter(uart).next())
-        .and_then(|reg| reg.regblock())
-        .unwrap();
-
-    // Find a compatible pl011 uart
-    let pl011_reg = dt
-        .find_compatible("arm,pl011")
-        .next()
-        .and_then(|uart| dt.property_translated_reg_iter(uart).next())
-        .and_then(|reg| reg.regblock())
-        .unwrap();
-
-    Console::new(|| {
-        let uart = Pl011Uart { gpio_reg, pl011_reg, mbox_reg };
+    // Create early console because aarch64 can't use locks until MMU is set up
+    Console::new_early(|| {
+        // let uart = Pl011Uart::new(dt);
+        let uart = MiniUart::new(dt);
         uart.init();
 
-        static mut UART: MaybeUninit<Pl011Uart> = MaybeUninit::uninit();
+        static mut UART: MaybeUninit<MiniUart> = MaybeUninit::uninit();
         unsafe {
             UART.write(uart);
             UART.assume_init_mut()

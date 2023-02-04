@@ -35,11 +35,11 @@ struct BuildParams {
 
 impl BuildParams {
     fn new(matches: &clap::ArgMatches) -> Self {
-        let profile =
-            if matches.get_flag("release") { Profile::Release } else { Profile::Debug };
+        let profile = if matches.get_flag("release") { Profile::Release } else { Profile::Debug };
         let verbose = matches.get_flag("verbose");
         let arch = matches.try_get_one("arch").ok().flatten().unwrap_or(&Arch::X86_64);
-        let wait_for_gdb = matches.try_contains_id("gdb").unwrap_or(false) && matches.get_flag("gdb");
+        let wait_for_gdb =
+            matches.try_contains_id("gdb").unwrap_or(false) && matches.get_flag("gdb");
 
         Self { arch: *arch, profile: profile, verbose: verbose, wait_for_gdb: wait_for_gdb }
     }
@@ -280,6 +280,25 @@ fn dist(build_params: &BuildParams) -> Result<()> {
             if !status.success() {
                 return Err("objcopy failed".into());
             }
+
+            // Compress the binary.  We do this because they're much faster when used
+            // for netbooting and qemu also accepts them.
+            let mut cmd = Command::new("gzip");
+            cmd.arg("-k");
+            cmd.arg("-f");
+            cmd.arg(format!(
+                "target/{}/{}/aarch64-qemu",
+                build_params.target(),
+                build_params.dir()
+            ));
+            cmd.current_dir(workspace());
+            if build_params.verbose {
+                println!("Executing {:?}", cmd);
+            }
+            let status = cmd.status()?;
+            if !status.success() {
+                return Err("gzip failed".into());
+            }
         }
         Arch::X86_64 => {
             let mut cmd = Command::new(objcopy());
@@ -341,8 +360,17 @@ fn run(build_params: &BuildParams) -> Result<()> {
     match build_params.arch {
         Arch::Aarch64 => {
             let mut cmd = Command::new(build_params.qemu_system());
-            cmd.arg("-nographic");
-            //cmd.arg("-curses");
+
+            // TODO Choose UART at cmdline
+            // If using UART0 (PL011), this enables serial
+            //cmd.arg("-nographic");
+
+            // If using UART1 (MiniUART), this enables serial
+            cmd.arg("-serial");
+            cmd.arg("null");
+            cmd.arg("-serial");
+            cmd.arg("stdio");
+
             cmd.arg("-M");
             cmd.arg("raspi3b");
             if build_params.wait_for_gdb {
@@ -355,7 +383,7 @@ fn run(build_params: &BuildParams) -> Result<()> {
             cmd.arg("int");
             cmd.arg("-kernel");
             cmd.arg(format!(
-                "target/{}/{}/aarch64-qemu",
+                "target/{}/{}/aarch64-qemu.gz",
                 build_params.target(),
                 build_params.dir()
             ));
