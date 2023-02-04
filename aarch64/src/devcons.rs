@@ -1,6 +1,5 @@
 // Racy to start.
 
-use core::arch::aarch64;
 use core::mem;
 use core::mem::MaybeUninit;
 use core::ptr;
@@ -380,9 +379,7 @@ impl Uart for MiniUart {
     fn putb(&self, b: u8) {
         // Wait for UART to become ready to transmit
         while read_reg(self.miniuart_reg, AUX_MU_LSR) & (1 << 5) == 0 {
-            unsafe {
-                aarch64::__nop();
-            }
+            core::hint::spin_loop();
         }
         write_reg(self.miniuart_reg, AUX_MU_IO, b as u32);
     }
