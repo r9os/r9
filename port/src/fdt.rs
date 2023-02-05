@@ -128,11 +128,11 @@ impl<'a> DeviceTree<'a> {
                 }
             }
             // Must be the parent
-            return Some(node);
+            Some(node)
         }
 
         let root = self.root();
-        return root.and_then(|n| find_parent(self, n, child));
+        root.and_then(|n| find_parent(self, n, child))
     }
 
     pub fn node_name(&self, node: &Node) -> Option<&str> {
@@ -140,7 +140,7 @@ impl<'a> DeviceTree<'a> {
     }
 
     pub fn property(&self, node: &Node, prop_name: &str) -> Option<Property> {
-        self.properties(node).filter(|p| self.property_name(p) == Some(prop_name)).next()
+        self.properties(node).find(|p| self.property_name(p) == Some(prop_name))
     }
 
     pub fn property_name(&self, prop: &Property) -> Option<&str> {
@@ -209,8 +209,8 @@ impl<'a> DeviceTree<'a> {
                 return None;
             }
 
-            let address_size = (address_cells * 4) as usize;
-            let len_size = (size_cells * 4) as usize;
+            let address_size = address_cells * 4;
+            let len_size = size_cells * 4;
 
             // End if not enough bytes to parse address and len
             let remaining = value_end - value_i;
@@ -224,7 +224,7 @@ impl<'a> DeviceTree<'a> {
             let len = if size_cells > 0 { self.consume_cells(value_i, size_cells) } else { None };
             value_i += len_size;
 
-            return Some(RegBlock { addr, len });
+            Some(RegBlock { addr, len })
         })
     }
 
@@ -263,9 +263,9 @@ impl<'a> DeviceTree<'a> {
                 return None;
             }
 
-            let address_size = (address_cells * 4) as usize;
-            let parent_address_size = (parent_address_cells * 4) as usize;
-            let len_size = (size_cells * 4) as usize;
+            let address_size = address_cells * 4;
+            let parent_address_size = parent_address_cells * 4;
+            let len_size = size_cells * 4;
 
             // End if not enough bytes to parse 2x address and len
             let remaining = value_end - value_i;
@@ -282,7 +282,7 @@ impl<'a> DeviceTree<'a> {
             let len = self.consume_cells(value_i, size_cells)?;
             value_i += len_size;
 
-            return Some(Range::Translated(RangeMapping { child_bus_addr, parent_bus_addr, len }));
+            Some(Range::Translated(RangeMapping { child_bus_addr, parent_bus_addr, len }))
         })
     }
 
@@ -326,7 +326,7 @@ impl<'a> DeviceTree<'a> {
                     }
                 }
             }
-            return None;
+            None
         })
     }
 
@@ -335,7 +335,7 @@ impl<'a> DeviceTree<'a> {
             let init_value = unsafe { MaybeUninit::slice_assume_init_ref(uninit_value) };
             return init_value.split(|b| *b == b'\0').any(|bs| bs == bytes_to_find.as_bytes());
         }
-        return false;
+        false
     }
 
     /// Return the node specified by the path, or None
@@ -365,16 +365,14 @@ impl<'a> DeviceTree<'a> {
                 }
             }
 
-            return None;
+            None
         }
 
         // Prime the recursion with the first element of the path
         let mut path_iter = path.split_terminator('/');
         let next_path_element = path_iter.next();
 
-        return self
-            .root()
-            .and_then(|node| find_subpath(self, &mut path_iter, &node, next_path_element));
+        self.root().and_then(|node| find_subpath(self, &mut path_iter, &node, next_path_element))
     }
 
     /// Return the first node matching the compatible string 'comp'
@@ -383,10 +381,10 @@ impl<'a> DeviceTree<'a> {
         // property.  The 'compatible' property contains a list of null terminated strings.  If we find a matching
         // string, then return the node, otherwise return None.
         self.nodes().filter(|n| {
-            if let Some(comp_prop) = self.property(&n, "compatible") {
+            if let Some(comp_prop) = self.property(n, "compatible") {
                 return self.property_value_contains(&comp_prop, comp);
             }
-            return false;
+            false
         })
     }
 
@@ -410,7 +408,7 @@ impl<'a> DeviceTree<'a> {
             let token = Self::parse_token(structs, i);
 
             match token {
-                Some(FdtToken::FdtBeginNode(ctx)) => {
+                Some(FdtToken::BeginNode(ctx)) => {
                     if depth == node_depth {
                         // Found the actual start of the next node
                         begin_node_ctx.replace(ctx);
@@ -419,7 +417,7 @@ impl<'a> DeviceTree<'a> {
                     depth += 1;
                     i += ctx.total_len;
                 }
-                Some(FdtToken::FdtEndNode(ctx)) => {
+                Some(FdtToken::EndNode(ctx)) => {
                     depth -= 1;
                     if depth == node_depth {
                         return begin_node_ctx.map(|begin_ctx| Node {
@@ -432,10 +430,10 @@ impl<'a> DeviceTree<'a> {
                     }
                     i += ctx.total_len;
                 }
-                Some(FdtToken::FdtProp(ctx)) => {
+                Some(FdtToken::Prop(ctx)) => {
                     i += ctx.total_len;
                 }
-                Some(FdtToken::FdtNop(ctx) | FdtToken::FdtEnd(ctx)) => {
+                Some(FdtToken::Nop(ctx) | FdtToken::End(ctx)) => {
                     i += ctx.total_len;
                 }
                 None => return None, // Shouldn't get here normally, so just None
@@ -465,7 +463,7 @@ impl<'a> DeviceTree<'a> {
                 let token = Self::parse_token(structs, i);
                 if let Some(token) = token {
                     match token {
-                        FdtToken::FdtBeginNode(ctx) => {
+                        FdtToken::BeginNode(ctx) => {
                             if begin_node_ctx.is_none() {
                                 begin_node_ctx.replace(ctx);
                                 node_depth = depth;
@@ -475,7 +473,7 @@ impl<'a> DeviceTree<'a> {
                             i += ctx.total_len;
                         }
 
-                        FdtToken::FdtEndNode(ctx) => {
+                        FdtToken::EndNode(ctx) => {
                             if begin_node_ctx.is_some() && (depth - 1) == node_depth {
                                 // Reset i for the next node iteration
                                 i = next_token_start;
@@ -492,10 +490,10 @@ impl<'a> DeviceTree<'a> {
                             depth -= 1;
                             i += ctx.total_len;
                         }
-                        FdtToken::FdtProp(ctx) => {
+                        FdtToken::Prop(ctx) => {
                             i += ctx.total_len;
                         }
-                        FdtToken::FdtNop(ctx) | FdtToken::FdtEnd(ctx) => {
+                        FdtToken::Nop(ctx) | FdtToken::End(ctx) => {
                             i += ctx.total_len;
                         }
                     }
@@ -519,7 +517,7 @@ impl<'a> DeviceTree<'a> {
 
                 // Node properties come before any children
                 match token {
-                    Some(FdtToken::FdtProp(ctx)) => {
+                    Some(FdtToken::Prop(ctx)) => {
                         i += ctx.total_len;
                         return Some(Property {
                             start: ctx.start,
@@ -529,7 +527,7 @@ impl<'a> DeviceTree<'a> {
                             total_len: ctx.total_len,
                         });
                     }
-                    Some(FdtToken::FdtNop(ctx)) => {
+                    Some(FdtToken::Nop(ctx)) => {
                         i += ctx.total_len;
                     }
                     _ => return None,
@@ -552,35 +550,27 @@ impl<'a> DeviceTree<'a> {
                     })
                     .map(|sz| align4(sz + 1))
                     .unwrap_or(0);
-                return Some(FdtToken::FdtBeginNode(FdtBeginNodeContext {
+                Some(FdtToken::BeginNode(FdtBeginNodeContext {
                     start: i,
                     name_start: i + 4,
                     total_len: 4 + str_size,
-                }));
+                }))
             }
-            Some(0x2) => {
-                return Some(FdtToken::FdtEndNode(FdtTokenContext { start: i, total_len: 4 }));
-            }
+            Some(0x2) => Some(FdtToken::EndNode(FdtTokenContext { start: i, total_len: 4 })),
             Some(0x3) => {
                 let len = structs.get((i + 4)..).and_then(|bs| bytes_to_u32(bs)).unwrap_or(0);
                 let nameoff = structs.get((i + 8)..).and_then(|bs| bytes_to_u32(bs)).unwrap_or(0);
-                return Some(FdtToken::FdtProp(FdtPropContext {
+                Some(FdtToken::Prop(FdtPropContext {
                     start: i,
                     name_start: nameoff as usize,
                     value_start: i + 12,
                     value_len: len as usize,
                     total_len: 12 + align4(len as usize),
-                }));
+                }))
             }
-            Some(0x4) => {
-                return Some(FdtToken::FdtNop(FdtTokenContext { start: i, total_len: 4 }));
-            }
-            Some(0x9) => {
-                return Some(FdtToken::FdtEnd(FdtTokenContext { start: i, total_len: 4 }));
-            }
-            _ => {
-                return None;
-            }
+            Some(0x4) => Some(FdtToken::Nop(FdtTokenContext { start: i, total_len: 4 })),
+            Some(0x9) => Some(FdtToken::End(FdtTokenContext { start: i, total_len: 4 })),
+            _ => None,
         }
     }
 }
@@ -636,11 +626,11 @@ impl FdtHeader {
 /// to those in the specification.
 #[derive(Debug, Copy, Clone)]
 enum FdtToken {
-    FdtBeginNode(FdtBeginNodeContext), // Start of a new node
-    FdtEndNode(FdtTokenContext),       // End of current node
-    FdtProp(FdtPropContext),           // New property in current node
-    FdtNop(FdtTokenContext),           // To be ignored
-    FdtEnd(FdtTokenContext),           // End of FDT structure
+    BeginNode(FdtBeginNodeContext), // Start of a new node
+    EndNode(FdtTokenContext),       // End of current node
+    Prop(FdtPropContext),           // New property in current node
+    Nop(FdtTokenContext),           // To be ignored
+    End(FdtTokenContext),           // End of FDT structure
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -744,7 +734,7 @@ impl Range {
                     let addr = r.addr - map.child_bus_addr + map.parent_bus_addr;
                     return Some(RegBlock { addr, len: r.len });
                 }
-                return None;
+                None
             }
         }
     }

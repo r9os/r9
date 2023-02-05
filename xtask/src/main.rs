@@ -22,7 +22,7 @@ enum Arch {
 
 impl fmt::Display for Arch {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 
@@ -41,7 +41,7 @@ impl BuildParams {
         let wait_for_gdb =
             matches.try_contains_id("gdb").unwrap_or(false) && matches.get_flag("gdb");
 
-        Self { arch: *arch, profile: profile, verbose: verbose, wait_for_gdb: wait_for_gdb }
+        Self { arch: *arch, profile, verbose, wait_for_gdb }
     }
 
     fn dir(&self) -> &'static str {
@@ -149,18 +149,18 @@ fn main() {
         .get_matches();
 
     if let Err(e) = match matches.subcommand() {
-        Some(("build", m)) => build(&BuildParams::new(&m)),
-        Some(("expand", m)) => expand(&BuildParams::new(&m)),
-        Some(("kasm", m)) => kasm(&BuildParams::new(&m)),
-        Some(("dist", m)) => dist(&BuildParams::new(&m)),
-        Some(("test", m)) => test(&BuildParams::new(&m)),
-        Some(("clippy", m)) => clippy(&BuildParams::new(&m)),
-        Some(("qemu", m)) => run(&BuildParams::new(&m)),
-        Some(("qemukvm", m)) => accelrun(&BuildParams::new(&m)),
+        Some(("build", m)) => build(&BuildParams::new(m)),
+        Some(("expand", m)) => expand(&BuildParams::new(m)),
+        Some(("kasm", m)) => kasm(&BuildParams::new(m)),
+        Some(("dist", m)) => dist(&BuildParams::new(m)),
+        Some(("test", m)) => test(&BuildParams::new(m)),
+        Some(("clippy", m)) => clippy(&BuildParams::new(m)),
+        Some(("qemu", m)) => run(&BuildParams::new(m)),
+        Some(("qemukvm", m)) => accelrun(&BuildParams::new(m)),
         Some(("clean", _)) => clean(),
         _ => Err("bad subcommand".into()),
     } {
-        eprintln!("{}", e);
+        eprintln!("{e}");
         process::exit(1);
     }
 }
@@ -209,7 +209,7 @@ fn build(build_params: &BuildParams) -> Result<()> {
     exclude_other_arches(build_params.arch, &mut cmd);
     build_params.add_build_arg(&mut cmd);
     if build_params.verbose {
-        println!("Executing {:?}", cmd);
+        println!("Executing {cmd:?}");
     }
     let status = cmd.status()?;
     if !status.success() {
@@ -229,7 +229,7 @@ fn expand(build_params: &BuildParams) -> Result<()> {
     cmd.arg("-Z").arg("unpretty=expanded");
     build_params.add_build_arg(&mut cmd);
     if build_params.verbose {
-        println!("Executing {:?}", cmd);
+        println!("Executing {cmd:?}");
     }
     let status = cmd.status()?;
     if !status.success() {
@@ -248,7 +248,7 @@ fn kasm(build_params: &BuildParams) -> Result<()> {
     cmd.arg("--").arg("--emit").arg("asm");
     build_params.add_build_arg(&mut cmd);
     if build_params.verbose {
-        println!("Executing {:?}", cmd);
+        println!("Executing {cmd:?}");
     }
     let status = cmd.status()?;
     if !status.success() {
@@ -274,7 +274,7 @@ fn dist(build_params: &BuildParams) -> Result<()> {
             ));
             cmd.current_dir(workspace());
             if build_params.verbose {
-                println!("Executing {:?}", cmd);
+                println!("Executing {cmd:?}");
             }
             let status = cmd.status()?;
             if !status.success() {
@@ -293,7 +293,7 @@ fn dist(build_params: &BuildParams) -> Result<()> {
             ));
             cmd.current_dir(workspace());
             if build_params.verbose {
-                println!("Executing {:?}", cmd);
+                println!("Executing {cmd:?}");
             }
             let status = cmd.status()?;
             if !status.success() {
@@ -308,7 +308,7 @@ fn dist(build_params: &BuildParams) -> Result<()> {
             cmd.arg(format!("target/{}/{}/r9.elf32", build_params.target(), build_params.dir()));
             cmd.current_dir(workspace());
             if build_params.verbose {
-                println!("Executing {:?}", cmd);
+                println!("Executing {cmd:?}");
             }
             let status = cmd.status()?;
             if !status.success() {
@@ -328,7 +328,7 @@ fn dist(build_params: &BuildParams) -> Result<()> {
             ));
             cmd.current_dir(workspace());
             if build_params.verbose {
-                println!("Executing {:?}", cmd);
+                println!("Executing {cmd:?}");
             }
             let status = cmd.status()?;
             if !status.success() {
@@ -347,7 +347,7 @@ fn test(build_params: &BuildParams) -> Result<()> {
     cmd.arg("--workspace");
     build_params.add_build_arg(&mut cmd);
     if build_params.verbose {
-        println!("Executing {:?}", cmd);
+        println!("Executing {cmd:?}");
     }
     let status = cmd.status()?;
     if !status.success() {
@@ -362,7 +362,7 @@ fn clippy(build_params: &BuildParams) -> Result<()> {
     cmd.arg("clippy");
     build_params.add_build_arg(&mut cmd);
     if build_params.verbose {
-        println!("Executing {:?}", cmd);
+        println!("Executing {cmd:?}");
     }
     let status = cmd.status()?;
     if !status.success() {
@@ -406,7 +406,7 @@ fn run(build_params: &BuildParams) -> Result<()> {
             ));
             cmd.current_dir(workspace());
             if build_params.verbose {
-                println!("Executing {:?}", cmd);
+                println!("Executing {cmd:?}");
             }
             let status = cmd.status()?;
             if !status.success() {
@@ -431,7 +431,7 @@ fn run(build_params: &BuildParams) -> Result<()> {
             cmd.arg(format!("target/{}/{}/riscv64", build_params.target(), build_params.dir()));
             cmd.current_dir(workspace());
             if build_params.verbose {
-                println!("Executing {:?}", cmd);
+                println!("Executing {cmd:?}");
             }
             let status = cmd.status()?;
             if !status.success() {
@@ -463,7 +463,7 @@ fn run(build_params: &BuildParams) -> Result<()> {
             cmd.arg(format!("target/{}/{}/r9.elf32", build_params.target(), build_params.dir()));
             cmd.current_dir(workspace());
             if build_params.verbose {
-                println!("Executing {:?}", cmd);
+                println!("Executing {cmd:?}");
             }
             let status = cmd.status()?;
             if !status.success() {
@@ -494,7 +494,7 @@ fn accelrun(build_params: &BuildParams) -> Result<()> {
     cmd.arg(format!("target/{}/{}/r9.elf32", build_params.target(), build_params.dir()));
     cmd.current_dir(workspace());
     if build_params.verbose {
-        println!("Executing {:?}", cmd);
+        println!("Executing {cmd:?}");
     }
     let status = cmd.status()?;
     if !status.success() {

@@ -161,9 +161,9 @@ impl SetClockRate {
                 tag_id0: TagId::GetClockRate as u32,
                 tag_buffer_size0: 12,
                 tag_code0: 0,
-                clock_id: clock_id,
-                rate_hz: rate_hz,
-                skip_setting_turbo: skip_setting_turbo,
+                clock_id,
+                rate_hz,
+                skip_setting_turbo,
                 end_tag: 0,
             },
         }
