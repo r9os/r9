@@ -316,7 +316,24 @@ fn dist(build_params: &BuildParams) -> Result<()> {
             }
         }
         Arch::Riscv64 => {
-            return Err("unsupported".into());
+            // Qemu needs a flat binary in order to handle device tree files correctly
+            let mut cmd = Command::new(objcopy());
+            cmd.arg("-O");
+            cmd.arg("binary");
+            cmd.arg(format!("target/{}/{}/riscv64", build_params.target(), build_params.dir()));
+            cmd.arg(format!(
+                "target/{}/{}/riscv64-qemu",
+                build_params.target(),
+                build_params.dir()
+            ));
+            cmd.current_dir(workspace());
+            if build_params.verbose {
+                println!("Executing {:?}", cmd);
+            }
+            let status = cmd.status()?;
+            if !status.success() {
+                return Err("objcopy failed".into());
+            }
         }
     };
 

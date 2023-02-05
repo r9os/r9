@@ -3,9 +3,10 @@ use core::fmt::Error;
 use core::fmt::Write;
 
 use port::devcons::Uart;
+use port::fdt::RegBlock;
 
 pub struct Uart16550 {
-    base_address: usize,
+    pub ns16550a_reg: RegBlock,
 }
 
 impl Write for Uart16550 {
@@ -19,7 +20,7 @@ impl Write for Uart16550 {
 
 impl Uart for Uart16550 {
     fn putb(&self, b: u8) {
-        let ptr = self.base_address as *mut u8;
+        let ptr = self.ns16550a_reg.addr as *mut u8;
         unsafe {
             ptr.add(0).write_volatile(b);
         }
@@ -27,12 +28,12 @@ impl Uart for Uart16550 {
 }
 
 impl Uart16550 {
-    pub const fn new(base_address: usize) -> Self {
-        Uart16550 { base_address }
+    pub fn new(ns16550a_reg: RegBlock) -> Self {
+        Uart16550 { ns16550a_reg }
     }
 
     pub fn init(&mut self, baud: u32) {
-        let ptr = self.base_address as *mut u8;
+        let ptr = self.ns16550a_reg.addr as *mut u8;
         unsafe {
             let lcr = 3; // word length
             ptr.add(3).write_volatile(lcr); // set word length
@@ -49,14 +50,14 @@ impl Uart16550 {
     }
 
     pub fn put(&mut self, c: u8) {
-        let ptr = self.base_address as *mut u8;
+        let ptr = self.ns16550a_reg.addr as *mut u8;
         unsafe {
             ptr.add(0).write_volatile(c);
         }
     }
 
     pub fn get(&mut self) -> Option<u8> {
-        let ptr = self.base_address as *mut u8;
+        let ptr = self.ns16550a_reg.addr as *mut u8;
         unsafe {
             if ptr.add(5).read_volatile() & 1 == 0 {
                 None
