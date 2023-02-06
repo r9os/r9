@@ -1,8 +1,8 @@
 pub mod allwinner;
 pub mod virt;
 
-#[cfg(feature = "virt")]
+#[cfg(board = "virt")]
 pub use crate::board::virt::*;
 
-#[cfg(feature = "allwinner")]
+#[cfg(board = "allwinner")]
 pub use crate::board::allwinner::*;

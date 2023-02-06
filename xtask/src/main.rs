@@ -31,6 +31,7 @@ struct BuildParams {
     profile: Profile,
     verbose: bool,
     wait_for_gdb: bool,
+    board: String,
     features: String,
 }
 
@@ -41,14 +42,20 @@ impl BuildParams {
         let arch = matches.try_get_one("arch").ok().flatten().unwrap_or(&Arch::X86_64);
         let wait_for_gdb =
             matches.try_contains_id("gdb").unwrap_or(false) && matches.get_flag("gdb");
-        let features: String = matches
-            .try_get_one::<String>("features")
+        let board: String = matches
+            .try_get_one::<String>("board")
             .ok()
             .flatten()
             .unwrap_or(&"virt".to_string())
             .clone();
+        let features: String = matches
+            .try_get_one::<String>("features")
+            .ok()
+            .flatten()
+            .unwrap_or(&"default".to_string())
+            .clone();
 
-        Self { arch: *arch, profile, verbose, wait_for_gdb, features }
+        Self { arch: *arch, profile, verbose, wait_for_gdb, board, features }
     }
 
     fn dir(&self) -> &'static str {
@@ -61,6 +68,10 @@ impl BuildParams {
     fn add_build_arg(&self, cmd: &mut Command) {
         if let Profile::Release = self.profile {
             cmd.arg("--release");
+        }
+        if !self.board.is_empty() {
+            cmd.arg("--config")
+                .arg(format!("build.rustflags='--cfg board=\"{}\"'", self.board.clone()));
         }
         if !self.features.is_empty() {
             cmd.arg("--no-default-features");
@@ -97,6 +108,9 @@ fn main() {
                 clap::arg!(--arch <arch> "Target architecture")
                     .value_parser(clap::builder::EnumValueParser::<Arch>::new()),
                 clap::arg!(--verbose "Print commands"),
+                clap::arg!(--board <board> "Mainboard to build")
+                    .required(false)
+                    .value_parser(clap::value_parser!(String)),
                 clap::arg!(--features <features> "Set compile features")
                     .required(false)
                     .value_parser(clap::value_parser!(String)),
@@ -137,11 +151,19 @@ fn main() {
             clap::arg!(--debug "Build a debug version").conflicts_with("release"),
             clap::arg!(--verbose "Print commands"),
         ]))
-        .subcommand(clap::Command::new("clippy").about("Runs clippy").args(&[
-            clap::arg!(--release "Build a release version").conflicts_with("debug"),
-            clap::arg!(--debug "Build a debug version").conflicts_with("release"),
-            clap::arg!(--verbose "Print commands"),
-        ]))
+        .subcommand(
+            clap::Command::new("clippy").about("Runs clippy").args(&[
+                clap::arg!(--release "Build a release version").conflicts_with("debug"),
+                clap::arg!(--debug "Build a debug version").conflicts_with("release"),
+                clap::arg!(--verbose "Print commands"),
+                clap::arg!(--board <board> "Mainboard to build")
+                    .required(false)
+                    .value_parser(clap::value_parser!(String)),
+                clap::arg!(--features <features> "Set compile features")
+                    .required(false)
+                    .value_parser(clap::value_parser!(String)),
+            ]),
+        )
         .subcommand(
             clap::Command::new("qemu").about("Run r9 under QEMU").args(&[
                 clap::arg!(--release "Build a release version").conflicts_with("debug"),
@@ -150,6 +172,9 @@ fn main() {
                     .value_parser(clap::builder::EnumValueParser::<Arch>::new()),
                 clap::arg!(--gdb "Wait for gdb connection on start"),
                 clap::arg!(--verbose "Print commands"),
+                clap::arg!(--board <board> "Mainboard to build")
+                    .required(false)
+                    .value_parser(clap::value_parser!(String)),
                 clap::arg!(--features <features> "Set compile features")
                     .required(false)
                     .value_parser(clap::value_parser!(String)),
@@ -163,6 +188,9 @@ fn main() {
                     .value_parser(clap::builder::EnumValueParser::<Arch>::new()),
                 clap::arg!(--gdb "Wait for gdb connection on start"),
                 clap::arg!(--verbose "Print commands"),
+                clap::arg!(--board <board> "Mainboard to build")
+                    .required(false)
+                    .value_parser(clap::value_parser!(String)),
                 clap::arg!(--features <features> "Set compile features")
                     .required(false)
                     .value_parser(clap::value_parser!(String)),
