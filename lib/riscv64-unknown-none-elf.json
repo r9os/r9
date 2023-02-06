@@ -17,7 +17,6 @@
 	"target-pointer-width": "64",
 	"pre-link-args": {
 		"ld.lld": [
-			"-Triscv64/src/kernel.ld",
 			"-nostdlib"
 		]
 	}

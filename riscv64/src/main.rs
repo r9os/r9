@@ -6,13 +6,15 @@
 #![allow(clippy::upper_case_acronyms)]
 #![forbid(unsafe_op_in_unsafe_fn)]
 
-use port::fdt::DeviceTree;
-use port::println;
-
-mod devcons;
+mod board;
 mod runtime;
 mod sbi;
 mod uart16550;
+
+use port::fdt::DeviceTree;
+use port::println;
+
+use crate::board::devcons;
 
 #[cfg(not(test))]
 core::arch::global_asm!(include_str!("l.S"));
