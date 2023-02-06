@@ -52,7 +52,7 @@ impl BuildParams {
             .try_get_one::<String>("features")
             .ok()
             .flatten()
-            .unwrap_or(&"default".to_string())
+            .unwrap_or(&"".to_string())
             .clone();
 
         Self { arch: *arch, profile, verbose, wait_for_gdb, board, features }
