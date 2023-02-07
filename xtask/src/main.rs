@@ -396,8 +396,7 @@ fn test(build_params: &BuildParams) -> Result<()> {
     cmd.current_dir(workspace());
     cmd.arg("test");
     cmd.arg("--workspace");
-    cmd.arg("--exclude");
-    cmd.arg("riscv64");
+    cmd.arg("--features").arg("test");
     build_params.add_build_arg(&mut cmd);
     if build_params.verbose {
         println!("Executing {cmd:?}");
