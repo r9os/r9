@@ -31,7 +31,7 @@ struct BuildParams {
     profile: Profile,
     verbose: bool,
     wait_for_gdb: bool,
-    board: String,
+    platform: String,
     features: String,
 }
 
@@ -42,11 +42,11 @@ impl BuildParams {
         let arch = matches.try_get_one("arch").ok().flatten().unwrap_or(&Arch::X86_64);
         let wait_for_gdb =
             matches.try_contains_id("gdb").unwrap_or(false) && matches.get_flag("gdb");
-        let board: String = matches
-            .try_get_one::<String>("board")
+        let platform: String = matches
+            .try_get_one::<String>("platform")
             .ok()
             .flatten()
-            .unwrap_or(&"virt".to_string())
+            .unwrap_or(&"".to_string())
             .clone();
         let features: String = matches
             .try_get_one::<String>("features")
@@ -55,7 +55,7 @@ impl BuildParams {
             .unwrap_or(&"".to_string())
             .clone();
 
-        Self { arch: *arch, profile, verbose, wait_for_gdb, board, features }
+        Self { arch: *arch, profile, verbose, wait_for_gdb, platform, features }
     }
 
     fn dir(&self) -> &'static str {
@@ -69,10 +69,25 @@ impl BuildParams {
         if let Profile::Release = self.profile {
             cmd.arg("--release");
         }
-        if !self.board.is_empty() {
+        if !self.platform.is_empty() {
             cmd.arg("--config")
-                .arg(format!("build.rustflags='--cfg board=\"{}\"'", self.board.clone()));
+                .arg(format!("build.rustflags='--cfg platform=\"{}\"'", self.platform));
+
+            match self.arch {
+                Arch::Aarch64 | Arch::Riscv64 => {
+                    cmd.arg("--config");
+                    cmd.arg(format!(
+                        "link.args='-T{}/src/platform/{}/kernel.ld'",
+                        self.arch, self.platform
+                    ));
+                }
+                _ => {}
+            }
+        } else {
+            cmd.arg("--config");
+            cmd.arg(format!("link.args='-T{}/src/platform/virt/kernel.ld'", self.arch));
         }
+
         if !self.features.is_empty() {
             cmd.arg("--no-default-features");
             cmd.arg("--features").arg(self.features.clone());
@@ -108,7 +123,7 @@ fn main() {
                 clap::arg!(--arch <arch> "Target architecture")
                     .value_parser(clap::builder::EnumValueParser::<Arch>::new()),
                 clap::arg!(--verbose "Print commands"),
-                clap::arg!(--board <board> "Mainboard to build")
+                clap::arg!(--platform <platform> "Mainplatform to build")
                     .required(false)
                     .value_parser(clap::value_parser!(String)),
                 clap::arg!(--features <features> "Set compile features")
@@ -156,7 +171,7 @@ fn main() {
                 clap::arg!(--release "Build a release version").conflicts_with("debug"),
                 clap::arg!(--debug "Build a debug version").conflicts_with("release"),
                 clap::arg!(--verbose "Print commands"),
-                clap::arg!(--board <board> "Mainboard to build")
+                clap::arg!(--platform <platform> "Mainplatform to build")
                     .required(false)
                     .value_parser(clap::value_parser!(String)),
                 clap::arg!(--features <features> "Set compile features")
@@ -172,7 +187,7 @@ fn main() {
                     .value_parser(clap::builder::EnumValueParser::<Arch>::new()),
                 clap::arg!(--gdb "Wait for gdb connection on start"),
                 clap::arg!(--verbose "Print commands"),
-                clap::arg!(--board <board> "Mainboard to build")
+                clap::arg!(--platform <platform> "Mainplatform to build")
                     .required(false)
                     .value_parser(clap::value_parser!(String)),
                 clap::arg!(--features <features> "Set compile features")
@@ -188,7 +203,7 @@ fn main() {
                     .value_parser(clap::builder::EnumValueParser::<Arch>::new()),
                 clap::arg!(--gdb "Wait for gdb connection on start"),
                 clap::arg!(--verbose "Print commands"),
-                clap::arg!(--board <board> "Mainboard to build")
+                clap::arg!(--platform <platform> "Mainplatform to build")
                     .required(false)
                     .value_parser(clap::value_parser!(String)),
                 clap::arg!(--features <features> "Set compile features")
@@ -396,7 +411,6 @@ fn test(build_params: &BuildParams) -> Result<()> {
     cmd.current_dir(workspace());
     cmd.arg("test");
     cmd.arg("--workspace");
-    cmd.arg("--features").arg("test");
     build_params.add_build_arg(&mut cmd);
     if build_params.verbose {
         println!("Executing {cmd:?}");

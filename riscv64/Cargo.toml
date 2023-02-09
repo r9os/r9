@@ -3,8 +3,5 @@ name = "riscv64"
 version = "0.1.0"
 edition = "2021"
 
-[features]
-test = []
-
 [dependencies]
 port = { path = "../port" }
