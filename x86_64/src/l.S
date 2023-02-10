@@ -36,75 +36,34 @@
 
 .set PTSZ,			4096
 .set PGSZ,			4096
-.set MACHSTKSZ,			(8 * PGSZ)
+.set MACHSTKSZ,			(8*PGSZ)
 
 .set KZERO,			0xffff800000000000
-.set MiB,			(1 << 20)
+.set MiB,			(1<<20)
 .set KSYS,			(KZERO+MiB+PGSZ)
 .set KTZERO,			(KZERO+2*MiB)
 
-/* Cr0 */
-.set Pe, 0x00000001 /* Protected Mode Enable */
-.set Mp, 0x00000002 /* Monitor Coprocessor */
-.set Em, 0x00000004 /* Emulate Coprocessor */
-.set Ts, 0x00000008 /* Task Switched */
-.set Et, 0x00000010 /* Extension Type */
-.set Ne, 0x00000020 /* Numeric Error  */
-.set Wp, 0x00010000 /* Write Protect */
-.set Am, 0x00040000 /* Alignment Mask */
-.set Nw, 0x20000000 /* Not Writethrough */
-.set Cd, 0x40000000 /* Cache Disable */
-.set Pg, 0x80000000 /* Paging Enable */
+.set Cr0PE,			(1<<0)		// Protected Mode Enable
+.set Cr0MP,			(1<<1)		// Monitor Coprocessor
+.set Cr0TS,			(1<<7)		// Task Switched
+.set Cr0WP,			(1<<16)		// Write Protect
+.set Cr0NW,			(1<<29)		// Not Writethrough
+.set Cr0CD,			(1<<30)		// Cache Disable
+.set Cr0PG,			(1<<31)		// Paging Enable
 
-/* Cr3 */
-.set Pwt, 0x00000008 /* Page-Level Writethrough */
-.set Pcd, 0x00000010 /* Page-Level Cache Disable */
+.set Cr4PSE,			(1<<4)		// Page-Size Extensions
+.set Cr4PAE,			(1<<5)		// Physical Address Extension
+.set Cr4PGE,			(1<<7)		// Page-Global Enable
 
-/* Cr4 */
-.set Vme, 0x00000001        /* Virtual-8086 Mode Extensions */
-.set Pvi, 0x00000002        /* Protected Mode Virtual Interrupts */
-.set Tsd, 0x00000004        /* Time-Stamp Disable */
-.set De, 0x00000008         /* Debugging Extensions */
-.set Pse, 0x00000010        /* Page-Size Extensions */
-.set Pae, 0x00000020        /* Physical Address Extension */
-.set Mce, 0x00000040        /* Machine Check Enable */
-.set Pge, 0x00000080        /* Page-Global Enable */
-.set Pce, 0x00000100        /* Performance Monitoring Counter Enable */
-.set Osfxsr, 0x00000200     /* FXSAVE/FXRSTOR Support */
-.set Osxmmexcpt, 0x00000400 /* Unmasked Exception Support */
+.set IA32_EFER,			0xc0000080	// Extended Feature Enable
 
-/* MSRs */
-.set Efer, 0xc0000080         /* Extended Feature Enable */
-.set Star, 0xc0000081         /* Legacy Target IP and [CS]S */
-.set Lstar, 0xc0000082        /* Long Mode Target IP */
-.set Cstar, 0xc0000083        /* Compatibility Target IP */
-.set Sfmask, 0xc0000084       /* SYSCALL Flags Mask */
-.set FSbase, 0xc0000100       /* 64-bit FS Base Address */
-.set GSbase, 0xc0000101       /* 64-bit GS Base Address */
-.set KernelGSbase, 0xc0000102 /* SWAPGS instruction */
+.set EferSCE,			(1<<0)		// System Call Extension
+.set EferLME,			(1<<8)		// Long Mode Enable
+.set EferNXE,			(1<<11)		// No-Execute Enable
 
-/* Efer */
-.set Sce, 0x00000001   /* System Call Extension */
-.set Lme, 0x00000100   /* Long Mode Enable */
-.set Lma, 0x00000400   /* Long Mode Active */
-.set Nxe, 0x00000800   /* No-Execute Enable */
-.set Svme, 0x00001000  /* SVM Extension Enable */
-.set Ffxsr, 0x00004000 /* Fast FXSAVE/FXRSTOR */
-
-/* PML4E/PDPE/PDE/PTE */
-.set PteP, 0x0000000000000001     /* Present */
-.set PteRW, 0x0000000000000002    /* Read/Write */
-.set PteU, 0x0000000000000004     /* User/Supervisor */
-.set PtePWT, 0x0000000000000008   /* Page-Level Write Through */
-.set PtePCD, 0x0000000000000010   /* Page Level Cache Disable */
-.set PteA, 0x0000000000000020     /* Accessed */
-.set PteD, 0x0000000000000040     /* Dirty */
-.set PtePS, 0x0000000000000080    /* Page Size */
-.set Pte4KPAT, PtePS              /* PTE PAT */
-.set PteG, 0x0000000000000100     /* Global */
-.set Pte2MPAT, 0x0000000000001000 /* PDE PAT */
-.set Pte1GPAT, Pte2MPAT           /* PDPE PAT */
-.set PteNX, 0x8000000000000000ULL /* No Execute */
+.set PteP,			(1<<0)		// Present
+.set PteRW,			(1<<1)		// Read/Write
+.set PtePS,			(1<<7)		// Page Size
 
 .align 4
 .section .boottext, "awx"
@@ -195,7 +154,8 @@ start:
 	// %eax now points to the page after the EPML2s, which is the real
 	// self-referential PML4.
 	// Map the first 192 entries for the upper portion of the address
-	// to PML3s; this is the primordial root of sharing for the kernel.
+	// space to PML3s; this is the primordial root of sharing for the
+	// kernel.
 	movl	%eax, %edx
 	addl	$(PTSZ|PteRW|PteP), %edx	// PML3[0] at PML4 + PTSZ
 	movl	$256, %ecx
@@ -213,19 +173,19 @@ start:
 	// make an inter-segment jump to the Long Mode code.
 	// It`s all in 32-bit mode until the jump is made.
 	movl	%cr4, %eax
-	andl	$~Pse, %eax			// Page Size
-	orl	$(Pge|Pae), %eax		// Page Global, Phys. Address
+	andl	$~Cr4PSE, %eax			// Page Size
+	orl	$(Cr4PGE|Cr4PAE), %eax		// Page Global, Phys. Address
 	movl	%eax, %cr4
 
-	movl	$Efer, %ecx			// Extended Feature Enable
+	movl	$IA32_EFER, %ecx		// Extended Feature Enable
 	rdmsr
-	orl	$Lme, %eax			// Long Mode Enable
-	orl	$Nxe, %eax			// Long Mode Enable
+	// Enable long mode, NX bit in PTEs and SYSCALL/SYSREG.
+	orl	$(EferSCE|EferLME|EferNXE), %eax
 	wrmsr
 
 	movl	%cr0, %edx
-	andl	$~(Cd|Nw|Ts|Mp), %edx
-	orl	$(Pg|Wp), %edx			// Paging Enable
+	andl	$~(Cr0CD|Cr0NW|Cr0TS|Cr0MP), %edx
+	orl	$(Cr0PG|Cr0WP), %edx		// Paging Enable
 	movl	%edx, %cr0
 
 	// Load the 64-bit GDT
@@ -339,7 +299,7 @@ b1978:
 	lgdtl	(APENTRY+(apgdtdesc-b1978))
 
 	movl	%cr0, %eax
-	orl	$Pe, %eax
+	orl	$Cr0PE, %eax
 	movl	%eax, %cr0
 
 	ljmpl   $GdtCODE32, $(b1982-KZERO)
@@ -384,19 +344,18 @@ b1982:
 
 	// Enable and activate Long Mode.
 	movl	%cr4, %eax
-	andl	$~Pse, %eax			// Page Size
-	orl	$(Pge|Pae), %eax		// Page Global, Phys. Address
+	andl	$~Cr4PSE, %eax			// Page Size
+	orl	$(Cr4PGE|Cr4PAE), %eax		// Page Global, Phys. Address
 	movl	%eax, %cr4
 
-	movl	$Efer, %ecx			// Extended Feature Enable
+	movl	$IA32_EFER, %ecx		// Extended Feature Enable
 	rdmsr
-	orl	$Lme, %eax			// Long Mode Enable
-	orl	$Nxe, %eax			// Long Mode Enable
-	wrmsr
+	orl	$(EferSCE|EferLME|EferNXE), %eax
+	wrmsr					// Long Mode Enable
 
 	movl	%cr0, %edx
-	andl	$~(Cd|Nw|Ts|Mp), %edx
-	orl	$(Pg|Wp), %edx			// Paging Enable
+	andl	$~(Cr0CD|Cr0NW|Cr0TS|Cr0MP), %edx
+	orl	$(Cr0PG|Cr0WP), %edx		// Paging Enable
 	movl	%edx, %cr0
 
 	ljmp	$GdtCODE64, $(1f-KZERO)
