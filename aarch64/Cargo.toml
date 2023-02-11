@@ -6,3 +6,4 @@ edition = "2021"
 [dependencies]
 bitstruct = "0.1"
 port = { path = "../port" }
+num_enum = { version = "0.5", default-features = false }

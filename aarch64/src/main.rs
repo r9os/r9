@@ -7,16 +7,19 @@
 #![forbid(unsafe_op_in_unsafe_fn)]
 
 mod devcons;
+mod registers;
+mod trap;
 
 use port::fdt::DeviceTree;
+use port::println;
 
 #[cfg(not(test))]
 core::arch::global_asm!(include_str!("l.S"));
 
-use port::println;
-
 #[no_mangle]
 pub extern "C" fn main9(dtb_ptr: u64) {
+    trap::init();
+
     let dt = unsafe { DeviceTree::from_u64(dtb_ptr).unwrap() };
     devcons::init(&dt);
 
@@ -26,6 +29,7 @@ pub extern "C" fn main9(dtb_ptr: u64) {
 
     // Assume we've got MMU set up, so drop early console for the locking console
     port::devcons::drop_early_console();
+
     println!("looping now");
 
     #[allow(clippy::empty_loop)]
