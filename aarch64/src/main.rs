@@ -7,8 +7,12 @@
 #![forbid(unsafe_op_in_unsafe_fn)]
 
 mod devcons;
+mod io;
+mod mailbox;
 mod registers;
 mod trap;
+mod uartmini;
+mod uartpl011;
 
 use core::ffi::c_void;
 use core::ptr;
