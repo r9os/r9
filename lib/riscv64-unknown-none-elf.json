@@ -13,7 +13,7 @@
 	"llvm-target": "riscv64",
 	"max-atomic-width": 64,
 	"panic-strategy": "abort",
-	"relocation-model": "static",
+	"relocation-model": "pie",
 	"target-pointer-width": "64",
 	"pre-link-args": {
 		"ld.lld": [

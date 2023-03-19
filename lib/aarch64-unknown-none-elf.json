@@ -9,7 +9,7 @@
 	"llvm-target": "aarch64-unknown-none",
 	"max-atomic-width": 128,
 	"panic-strategy": "abort",
-	"relocation-model": "static",
+	"relocation-model": "pie",
 	"target-pointer-width": "64",
 	"pre-link-args": {
 		"ld.lld": [

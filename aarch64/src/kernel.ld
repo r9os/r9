@@ -5,35 +5,33 @@
 ENTRY(start)
 
 SECTIONS {
-	/*
-	 * Raspberry Pi start address is 0x80_0000.
-	 */
-	/* . = 0xffff800000100000; */
+	/* Entrypoint for Raspberry Pi will be at 0x80000 */
+	. = 0xffff800000100000 - 0x80000;
 
-	. = 0x80000;
-
-	PROVIDE(boottext = .);
+	boottext = .;
 	.text.boot : ALIGN(4096) {
 		*(.boottext .bootdata)
 		. = ALIGN(4096);
-		PROVIDE(eboottext = .);
+		eboottext = .;
 		. = ALIGN(2097152);
-		PROVIDE(esys = .);
+		esys = .;
 	}
 
-	PROVIDE(text = .);
+	text = .;
 	.text : ALIGN(4096) {
 		*(.text* .stub .gnu.linkonce.t.*)
 		. = ALIGN(2097152);	
-		PROVIDE(etext = .);
+		etext = .;
 	}
 
+	rodata = .;
 	.rodata : ALIGN(4096) {
 		*(.rodata* .gnu.linkonce.r.*)
 		. = ALIGN(2097152);
-		PROVIDE(erodata = .);
+		erodata = .;
 	}
 
+	data = .;
 	.data : ALIGN(4096) {
 		*(.data*)
 	}
@@ -43,15 +41,15 @@ SECTIONS {
 	.got.plt : ALIGN(4096) {
 		*(.got.plt)
 	}
-	PROVIDE(edata = .);
+	edata = .;
 
-	PROVIDE(bss = .);
+	bss = .;
 	.bss : ALIGN(4096) {
 		*(.bss*)
 		*(COMMON)
 		. = ALIGN(2097152);
 	}
-	PROVIDE(end = .);
+	end = .;
 
 	/DISCARD/ : {
 		*(.eh_frame .note.GNU-stack)
