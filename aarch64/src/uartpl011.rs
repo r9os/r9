@@ -1,18 +1,14 @@
 use crate::io::{delay, read_reg, write_reg, GpioPull};
-use crate::mailbox::{
-    ChannelId, SetClockRate, MBOX_EMPTY, MBOX_FULL, MBOX_READ, MBOX_STATUS, MBOX_WRITE,
-};
+use crate::mailbox::{self, Mailbox};
 use crate::registers::{
     GPPUD, GPPUDCLK0, UART0_CR, UART0_DR, UART0_FBRD, UART0_FR, UART0_IBRD, UART0_ICR, UART0_IMSC,
     UART0_LCRH,
 };
-use core::ptr;
 use port::devcons::Uart;
 use port::fdt::{DeviceTree, RegBlock};
 
-struct Pl011Uart {
+pub struct Pl011Uart {
     gpio_reg: RegBlock,
-    mbox_reg: RegBlock,
     pl011_reg: RegBlock,
 }
 
@@ -20,17 +16,10 @@ struct Pl011Uart {
 /// Raspberry Pi board, as it needs additional configuration in the config
 /// and EEPROM (rpi4) to assign to the serial GPIO pins.
 impl Pl011Uart {
-    fn new(dt: &DeviceTree) -> Pl011Uart {
+    pub fn new(dt: &DeviceTree) -> Pl011Uart {
         // TODO use aliases?
         let gpio_reg = dt
             .find_compatible("brcm,bcm2835-gpio")
-            .next()
-            .and_then(|uart| dt.property_translated_reg_iter(uart).next())
-            .and_then(|reg| reg.regblock())
-            .unwrap();
-
-        let mbox_reg = dt
-            .find_compatible("brcm,bcm2835-mbox")
             .next()
             .and_then(|uart| dt.property_translated_reg_iter(uart).next())
             .and_then(|reg| reg.regblock())
@@ -44,10 +33,10 @@ impl Pl011Uart {
             .and_then(|reg| reg.regblock())
             .unwrap();
 
-        Pl011Uart { gpio_reg, pl011_reg, mbox_reg }
+        Pl011Uart { gpio_reg, pl011_reg }
     }
 
-    fn init(&self) {
+    pub fn init(&self, mailbox: &Mailbox) {
         // Disable UART0
         write_reg(self.pl011_reg, UART0_CR, 0);
 
@@ -58,27 +47,10 @@ impl Pl011Uart {
         // Clear interrupts
         write_reg(self.pl011_reg, UART0_ICR, 0x7ff);
 
-        // Read status register until full flag not set
-        while (read_reg(self.mbox_reg, MBOX_STATUS) & MBOX_FULL) != 0 {}
-
         // Set the uart clock rate to 3MHz
         let uart_clock_rate_hz = 3_000_000;
-        let set_clock_rate_req = SetClockRate::new(2, uart_clock_rate_hz, 0);
-        let channel = ChannelId::ArmToVc;
-
-        // Write the request address combined with the channel to the write register
-        let uart_mbox_u32 = ptr::addr_of!(set_clock_rate_req) as u32;
-        let r = (uart_mbox_u32 & !0xF) | (channel as u32);
-        write_reg(self.mbox_reg, MBOX_WRITE, r);
-
-        // Wait for response
-        loop {
-            while (read_reg(self.mbox_reg, MBOX_STATUS) & MBOX_EMPTY) != 0 {}
-            let response = read_reg(self.mbox_reg, MBOX_READ);
-            if response == r {
-                break;
-            }
-        }
+        let mut req = mailbox::new_set_clock_rate_msg(2, uart_clock_rate_hz, 0);
+        mailbox.request(&mut req);
 
         // Set the baud rate via the integer and fractional baud rate regs
         let baud_rate = 115200;
