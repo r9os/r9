@@ -16,6 +16,7 @@ mod uartpl011;
 
 use core::ffi::c_void;
 use core::ptr;
+use mailbox::Mailbox;
 use port::fdt::DeviceTree;
 use port::println;
 
@@ -67,12 +68,25 @@ fn print_binary_sections() {
     println!("  total:\t{:#x}-{:#x} ({:#x})", bootcode_start, bss_end, total_size);
 }
 
+fn print_physical_memory_map(mailbox: &Mailbox) {
+    let mut req = mailbox::new_get_arm_memory_msg();
+    mailbox.request(&mut req);
+    let start = unsafe { req.response.tags.body.base_addr };
+    let size = unsafe { req.response.tags.body.size };
+    let end = start + size;
+
+    println!("Physical memory map:");
+    println!("  Memory:\t{:#018x}-{:#018x} ({:#x})", start, end, size);
+}
+
 #[no_mangle]
 pub extern "C" fn main9(dtb_ptr: u64) {
     trap::init();
 
     let dt = unsafe { DeviceTree::from_u64(dtb_ptr).unwrap() };
-    devcons::init(&dt);
+    let mailbox = Mailbox::new(&dt);
+
+    devcons::init(&dt, &mailbox);
 
     println!();
     println!("r9 from the Internet");
@@ -80,7 +94,9 @@ pub extern "C" fn main9(dtb_ptr: u64) {
     print_binary_sections();
 
     // Assume we've got MMU set up, so drop early console for the locking console
-    port::devcons::drop_early_console();
+    //port::devcons::drop_early_console();
+
+    print_physical_memory_map(&mailbox);
 
     println!("looping now");
 
