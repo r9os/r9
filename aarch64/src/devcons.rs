@@ -4,7 +4,6 @@ use core::mem::MaybeUninit;
 use port::devcons::Console;
 use port::fdt::DeviceTree;
 
-use crate::mailbox::Mailbox;
 use crate::uartpl011::Pl011Uart;
 
 // The aarch64 devcons implementation is focussed on Raspberry Pi 3, 4 for now.
@@ -32,12 +31,12 @@ use crate::uartpl011::Pl011Uart;
 //     https://wiki.osdev.org/Detecting_Raspberry_Pi_Board
 // - Break out mailbox, gpio code
 
-pub fn init(dt: &DeviceTree, mailbox: &Mailbox) {
+pub fn init(dt: &DeviceTree) {
     // Create early console because aarch64 can't use locks until MMU is set up
     Console::new_early(|| {
         let uart = Pl011Uart::new(dt);
         // let uart = MiniUart::new(dt);
-        uart.init(mailbox);
+        uart.init();
 
         static mut UART: MaybeUninit<Pl011Uart> = MaybeUninit::uninit();
         unsafe {
