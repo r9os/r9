@@ -1,7 +1,9 @@
 use crate::io::{read_reg, write_reg};
 use core::mem;
+use core::mem::MaybeUninit;
 use core::ptr;
 use port::fdt::{DeviceTree, RegBlock};
+use port::mcslock::{Lock, LockNode};
 
 pub const MBOX_READ: u64 = 0x00;
 pub const MBOX_STATUS: u64 = 0x18;
@@ -10,12 +12,29 @@ pub const MBOX_WRITE: u64 = 0x20;
 pub const MBOX_FULL: u32 = 0x8000_0000;
 pub const MBOX_EMPTY: u32 = 0x4000_0000;
 
+static MAILBOX: Lock<Option<&'static mut Mailbox>> = Lock::new("mailbox", None);
+
+/// Mailbox init.  Mainly initialises a lock to ensure only one mailbox request
+/// can be made at a time.  We have no heap at this point, so creating a mailbox
+/// that can be initialised based off the devicetree is rather convoluted.
+pub fn init(dt: &DeviceTree) {
+    static mut NODE: LockNode = LockNode::new();
+    let mut mailbox = MAILBOX.lock(unsafe { &NODE });
+    *mailbox = Some({
+        static mut MAYBE_MAILBOX: MaybeUninit<Mailbox> = MaybeUninit::uninit();
+        unsafe {
+            MAYBE_MAILBOX.write(Mailbox::new(dt));
+            MAYBE_MAILBOX.assume_init_mut()
+        }
+    });
+}
+
 pub struct Mailbox {
     reg: RegBlock,
 }
 
 impl Mailbox {
-    pub fn new(dt: &DeviceTree) -> Mailbox {
+    fn new(dt: &DeviceTree) -> Mailbox {
         Mailbox {
             reg: dt
                 .find_compatible("brcm,bcm2835-mbox")
@@ -26,7 +45,7 @@ impl Mailbox {
         }
     }
 
-    pub fn request<T, U>(&self, req: &mut Message<T, U>)
+    fn request<T, U>(&self, req: &mut Message<T, U>)
     where
         T: Copy,
         U: Copy,
@@ -49,6 +68,16 @@ impl Mailbox {
             }
         }
     }
+}
+
+pub fn request<T, U>(req: &mut Message<T, U>)
+where
+    T: Copy,
+    U: Copy,
+{
+    static mut NODE: LockNode = LockNode::new();
+    let mut mailbox = MAILBOX.lock(unsafe { &NODE });
+    mailbox.as_deref_mut().unwrap().request(req);
 }
 
 #[repr(u32)]

@@ -36,7 +36,7 @@ impl Pl011Uart {
         Pl011Uart { gpio_reg, pl011_reg }
     }
 
-    pub fn init(&self, mailbox: &Mailbox) {
+    pub fn init(&self) {
         // Disable UART0
         write_reg(self.pl011_reg, UART0_CR, 0);
 
@@ -50,7 +50,7 @@ impl Pl011Uart {
         // Set the uart clock rate to 3MHz
         let uart_clock_rate_hz = 3_000_000;
         let mut req = mailbox::new_set_clock_rate_msg(2, uart_clock_rate_hz, 0);
-        mailbox.request(&mut req);
+        mailbox::request(&mut req);
 
         // Set the baud rate via the integer and fractional baud rate regs
         let baud_rate = 115200;
