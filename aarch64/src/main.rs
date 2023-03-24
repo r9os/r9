@@ -94,7 +94,7 @@ pub extern "C" fn main9(dtb_ptr: u64) {
     print_binary_sections();
 
     // Assume we've got MMU set up, so drop early console for the locking console
-    //port::devcons::drop_early_console();
+    port::devcons::drop_early_console();
 
     print_physical_memory_map();
 
