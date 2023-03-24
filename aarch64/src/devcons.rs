@@ -4,7 +4,7 @@ use core::mem::MaybeUninit;
 use port::devcons::Console;
 use port::fdt::DeviceTree;
 
-use crate::uartpl011::Pl011Uart;
+use crate::uartmini::MiniUart;
 
 // The aarch64 devcons implementation is focussed on Raspberry Pi 3, 4 for now.
 
@@ -34,11 +34,11 @@ use crate::uartpl011::Pl011Uart;
 pub fn init(dt: &DeviceTree) {
     // Create early console because aarch64 can't use locks until MMU is set up
     Console::new_early(|| {
-        let uart = Pl011Uart::new(dt);
-        // let uart = MiniUart::new(dt);
+        // let uart = Pl011Uart::new(dt);
+        let uart = MiniUart::new(dt);
         uart.init();
 
-        static mut UART: MaybeUninit<Pl011Uart> = MaybeUninit::uninit();
+        static mut UART: MaybeUninit<MiniUart> = MaybeUninit::uninit();
         unsafe {
             UART.write(uart);
             UART.assume_init_mut()
