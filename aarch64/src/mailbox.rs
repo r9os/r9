@@ -29,6 +29,8 @@ pub fn init(dt: &DeviceTree) {
     });
 }
 
+/// https://developer.arm.com/documentation/ddi0306/b/CHDGHAIG
+/// https://github.com/raspberrypi/firmware/wiki/Mailbox-property-interface
 pub struct Mailbox {
     reg: RegBlock,
 }
