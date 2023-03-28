@@ -15,12 +15,18 @@ mod uartmini;
 mod uartpl011;
 
 use core::ffi::c_void;
-use core::ptr;
 use port::fdt::DeviceTree;
 use port::println;
 
 #[cfg(not(test))]
 core::arch::global_asm!(include_str!("l.S"));
+
+unsafe fn print_memory_range(name: &str, start: &*const c_void, end: &*const c_void) {
+    let start = start as *const _ as u64;
+    let end = end as *const _ as u64;
+    let size = end - start;
+    println!("  {name}{start:#x}-{end:#x} ({size:#x})");
+}
 
 fn print_binary_sections() {
     extern "C" {
@@ -36,39 +42,19 @@ fn print_binary_sections() {
         static end: *const c_void;
     }
 
-    let bootcode_start: u64 = unsafe { ptr::addr_of!(boottext) as u64 };
-    let bootcode_end: u64 = unsafe { ptr::addr_of!(eboottext) as u64 };
-    let bootcode_size: u64 = bootcode_end - bootcode_start;
-
-    let text_start: u64 = unsafe { ptr::addr_of!(text) as u64 };
-    let text_end: u64 = unsafe { ptr::addr_of!(etext) as u64 };
-    let text_size: u64 = text_end - text_start;
-
-    let rodata_start: u64 = unsafe { ptr::addr_of!(rodata) as u64 };
-    let rodata_end: u64 = unsafe { ptr::addr_of!(erodata) as u64 };
-    let rodata_size: u64 = rodata_end - rodata_start;
-
-    let data_start: u64 = unsafe { ptr::addr_of!(data) as u64 };
-    let data_end: u64 = unsafe { ptr::addr_of!(edata) as u64 };
-    let data_size: u64 = data_end - data_start;
-
-    let bss_start: u64 = unsafe { ptr::addr_of!(bss) as u64 };
-    let bss_end: u64 = unsafe { ptr::addr_of!(end) as u64 };
-    let bss_size: u64 = bss_end - bss_start;
-
-    let total_size: u64 = bss_end - bootcode_start;
-
     println!("Binary sections:");
-    println!("  boottext:\t{:#x}-{:#x} ({:#x})", bootcode_start, bootcode_end, bootcode_size);
-    println!("  text:\t\t{:#x}-{:#x} ({:#x})", text_start, text_end, text_size);
-    println!("  rodata:\t{:#x}-{:#x} ({:#x})", rodata_start, rodata_end, rodata_size);
-    println!("  data:\t\t{:#x}-{:#x} ({:#x})", data_start, data_end, data_size);
-    println!("  bss:\t\t{:#x}-{:#x} ({:#x})", bss_start, bss_end, bss_size);
-    println!("  total:\t{:#x}-{:#x} ({:#x})", bootcode_start, bss_end, total_size);
+    unsafe {
+        print_memory_range("boottext:\t", &boottext, &eboottext);
+        print_memory_range("text:\t\t", &text, &etext);
+        print_memory_range("rodata:\t", &rodata, &erodata);
+        print_memory_range("data:\t\t", &data, &edata);
+        print_memory_range("bss:\t\t", &bss, &end);
+        print_memory_range("total:\t", &boottext, &end);
+    }
 }
 
 fn print_physical_memory_map() {
-    let mailbox::MemoryMsgRes { start, size, end } = mailbox::get_arm_memory();
+    let mailbox::ArmMemory { start, size, end } = mailbox::get_arm_memory();
 
     println!("Physical memory map:");
     println!("  Memory:\t{start:#018x}-{end:#018x} ({size:#x})");
