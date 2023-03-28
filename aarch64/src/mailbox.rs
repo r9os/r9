@@ -1,16 +1,15 @@
 use crate::io::{read_reg, write_reg};
 use core::mem;
 use core::mem::MaybeUninit;
-use core::ptr;
 use port::fdt::{DeviceTree, RegBlock};
 use port::mcslock::{Lock, LockNode};
 
-pub const MBOX_READ: u64 = 0x00;
-pub const MBOX_STATUS: u64 = 0x18;
-pub const MBOX_WRITE: u64 = 0x20;
+const MBOX_READ: u64 = 0x00;
+const MBOX_STATUS: u64 = 0x18;
+const MBOX_WRITE: u64 = 0x20;
 
-pub const MBOX_FULL: u32 = 0x8000_0000;
-pub const MBOX_EMPTY: u32 = 0x4000_0000;
+const MBOX_FULL: u32 = 0x8000_0000;
+const MBOX_EMPTY: u32 = 0x4000_0000;
 
 static MAILBOX: Lock<Option<&'static mut Mailbox>> = Lock::new("mailbox", None);
 
@@ -31,7 +30,7 @@ pub fn init(dt: &DeviceTree) {
 
 /// https://developer.arm.com/documentation/ddi0306/b/CHDGHAIG
 /// https://github.com/raspberrypi/firmware/wiki/Mailbox-property-interface
-pub struct Mailbox {
+struct Mailbox {
     reg: RegBlock,
 }
 
@@ -56,12 +55,13 @@ impl Mailbox {
         while (read_reg(self.reg, MBOX_STATUS) & MBOX_FULL) != 0 {}
 
         // Write the request address combined with the channel to the write register
-        let channel = ChannelId::ArmToVc;
-        let uart_mbox_u32 = ptr::addr_of!(req) as u32;
-        let r = (uart_mbox_u32 & !0xF) | (channel as u32);
+        let channel = ChannelId::ArmToVc as u32;
+        let uart_mbox_u32 = req as *const _ as u32;
+        let r = (uart_mbox_u32 & !0xF) | channel;
         write_reg(self.reg, MBOX_WRITE, r);
 
         // Wait for response
+        // FIXME: two infinite loops - can go awry
         loop {
             while (read_reg(self.reg, MBOX_STATUS) & MBOX_EMPTY) != 0 {}
             let response = read_reg(self.reg, MBOX_READ);
@@ -72,30 +72,14 @@ impl Mailbox {
     }
 }
 
-pub fn request<T, U>(req: &mut Message<T, U>)
-where
-    T: Copy,
-    U: Copy,
-{
-    static mut NODE: LockNode = LockNode::new();
-    let mut mailbox = MAILBOX.lock(unsafe { &NODE });
-    mailbox.as_deref_mut().unwrap().request(req);
-}
-
-#[repr(u32)]
-pub enum TagId {
-    GetArmMemory = 0x10005,
-    SetClockRate = 0x38002,
-}
-
 #[repr(u8)]
-pub enum ChannelId {
+enum ChannelId {
     ArmToVc = 8,
 }
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct Request<T> {
+struct Request<T> {
     size: u32, // size in bytes
     code: u32, // request code (0)
     tags: T,
@@ -103,7 +87,7 @@ pub struct Request<T> {
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct Response<T> {
+struct Response<T> {
     size: u32, // size in bytes
     code: u32, // response code
     pub tags: T,
@@ -111,7 +95,7 @@ pub struct Response<T> {
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct Tag<T> {
+struct Tag<T> {
     tag_id0: u32,
     tag_buffer_size0: u32,
     tag_code0: u32,
@@ -121,14 +105,37 @@ pub struct Tag<T> {
 
 #[repr(C, align(16))]
 #[derive(Clone, Copy)]
-pub union Message<T: Copy, U: Copy> {
+union Message<T: Copy, U: Copy> {
     request: Request<T>,
     pub response: Response<U>,
 }
 
+type MessageWithTags<T, U> = Message<Tag<T>, Tag<U>>;
+
+fn request<T, U>(code: u32, tags: &Tag<T>) -> U
+where
+    T: Copy,
+    U: Copy,
+{
+    let size = mem::size_of::<Message<T, U>>() as u32;
+    let req = Request::<Tag<T>> { size, code, tags: *tags };
+    let mut msg = MessageWithTags { request: req };
+    static mut NODE: LockNode = LockNode::new();
+    let mut mailbox = MAILBOX.lock(unsafe { &NODE });
+    mailbox.as_deref_mut().unwrap().request(&mut msg);
+    let res = unsafe { msg.response };
+    res.tags.body
+}
+
+#[repr(u32)]
+enum TagId {
+    GetArmMemory = 0x10005,
+    SetClockRate = 0x38002,
+}
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct SetClockRateRequestTag {
+struct SetClockRateRequest {
     clock_id: u32,
     rate_hz: u32,
     skip_setting_turbo: u32,
@@ -136,55 +143,53 @@ pub struct SetClockRateRequestTag {
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct SetClockRateResponseTag {
+struct SetClockRateResponse {
     clock_id: u32,
     rate_hz: u32,
 }
 
-pub fn new_set_clock_rate_msg(
-    clock_id: u32,
-    rate_hz: u32,
-    skip_setting_turbo: u32,
-) -> Message<Tag<SetClockRateRequestTag>, Tag<SetClockRateResponseTag>> {
-    Message::<Tag<SetClockRateRequestTag>, Tag<SetClockRateResponseTag>> {
-        request: Request::<Tag<SetClockRateRequestTag>> {
-            size: mem::size_of::<Message<SetClockRateRequestTag, SetClockRateResponseTag>>() as u32,
-            code: 0,
-            tags: Tag::<SetClockRateRequestTag> {
-                tag_id0: TagId::SetClockRate as u32,
-                tag_buffer_size0: 12,
-                tag_code0: 0,
-                body: SetClockRateRequestTag { clock_id, rate_hz, skip_setting_turbo },
-                end_tag: 0,
-            },
-        },
-    }
+pub fn set_clock_rate(clock_id: u32, rate_hz: u32, skip_setting_turbo: u32) {
+    let tags = Tag::<SetClockRateRequest> {
+        tag_id0: TagId::SetClockRate as u32,
+        tag_buffer_size0: 12,
+        tag_code0: 0,
+        body: SetClockRateRequest { clock_id, rate_hz, skip_setting_turbo },
+        end_tag: 0,
+    };
+    let _: SetClockRateResponse = request(0, &tags);
 }
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct GetArmMemoryRequestTag {}
+struct GetArmMemoryRequest {}
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct GetArmMemoryResponseTag {
+struct GetArmMemoryResponse {
     pub base_addr: u32,
     pub size: u32,
 }
 
-pub fn new_get_arm_memory_msg() -> Message<Tag<GetArmMemoryRequestTag>, Tag<GetArmMemoryResponseTag>>
-{
-    Message::<Tag<GetArmMemoryRequestTag>, Tag<GetArmMemoryResponseTag>> {
-        request: Request::<Tag<GetArmMemoryRequestTag>> {
-            size: mem::size_of::<Message<GetArmMemoryRequestTag, GetArmMemoryResponseTag>>() as u32,
-            code: 0,
-            tags: Tag::<GetArmMemoryRequestTag> {
-                tag_id0: TagId::GetArmMemory as u32,
-                tag_buffer_size0: 12,
-                tag_code0: 0,
-                body: GetArmMemoryRequestTag {},
-                end_tag: 0,
-            },
-        },
-    }
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct ArmMemory {
+    pub start: u32,
+    pub size: u32,
+    pub end: u32,
+}
+
+pub fn get_arm_memory() -> ArmMemory {
+    let tags = Tag::<GetArmMemoryRequest> {
+        tag_id0: TagId::GetArmMemory as u32,
+        tag_buffer_size0: 12,
+        tag_code0: 0,
+        body: GetArmMemoryRequest {},
+        end_tag: 0,
+    };
+    let res: GetArmMemoryResponse = request(0, &tags);
+    let start = res.base_addr;
+    let size = res.size;
+    let end = start + size;
+
+    ArmMemory { start, size, end }
 }

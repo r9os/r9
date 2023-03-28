@@ -16,7 +16,6 @@ mod uartpl011;
 
 use core::ffi::c_void;
 use core::ptr;
-use mailbox::Mailbox;
 use port::fdt::DeviceTree;
 use port::println;
 
@@ -69,15 +68,10 @@ fn print_binary_sections() {
 }
 
 fn print_physical_memory_map() {
-    let mut req = mailbox::new_get_arm_memory_msg();
-    mailbox::request(&mut req);
-
-    let start = unsafe { req.response.tags.body.base_addr };
-    let size = unsafe { req.response.tags.body.size };
-    let end = start + size;
+    let mailbox::MemoryMsgRes { start, size, end } = mailbox::get_arm_memory();
 
     println!("Physical memory map:");
-    println!("  Memory:\t{:#018x}-{:#018x} ({:#x})", start, end, size);
+    println!("  Memory:\t{start:#018x}-{end:#018x} ({size:#x})");
 }
 
 #[no_mangle]
