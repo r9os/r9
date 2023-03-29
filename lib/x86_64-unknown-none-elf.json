@@ -17,7 +17,6 @@
 	"frame-pointer": "always",
 	"pre-link-args": {
 		"ld.lld": [
-			"-Tx86_64/src/kernel.ld",
 			"-nostdlib"
 		]
 	}

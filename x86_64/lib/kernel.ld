@@ -10,7 +10,7 @@ SECTIONS {
 	 * This preserves some RAM between 1MiB and the
 	 * start of the kernel for critical structures.
 	 */
-	. = 0xffff800000100000;
+	. = ${LOAD-ADDRESS};
 
 	PROVIDE(boottext = .);
 	.text.boot : ALIGN(4096) {
