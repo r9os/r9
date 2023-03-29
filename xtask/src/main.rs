@@ -4,13 +4,22 @@ use std::{
     process::{self, Command},
 };
 
+mod config;
+use crate::config::{generate_args, read_config, Configuration};
+
 type DynError = Box<dyn std::error::Error>;
 type Result<T> = std::result::Result<T, DynError>;
 
-#[derive(Clone, Copy)]
-enum Profile {
+#[derive(Clone, Copy, Debug)]
+pub enum Profile {
     Debug,
     Release,
+}
+
+impl fmt::Display for Profile {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{self:?}")
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, clap::ValueEnum)]
@@ -31,8 +40,7 @@ struct BuildParams {
     profile: Profile,
     verbose: bool,
     wait_for_gdb: bool,
-    platform: String,
-    features: String,
+    config: Configuration,
     dump_dtb: String,
 }
 
@@ -43,26 +51,23 @@ impl BuildParams {
         let arch = matches.try_get_one("arch").ok().flatten().unwrap_or(&Arch::X86_64);
         let wait_for_gdb =
             matches.try_contains_id("gdb").unwrap_or(false) && matches.get_flag("gdb");
+
         let dump_dtb: String = matches
             .try_get_one::<String>("dump_dtb")
             .ok()
             .flatten()
             .unwrap_or(&"".to_string())
             .clone();
-        let platform: String = matches
-            .try_get_one::<String>("platform")
-            .ok()
-            .flatten()
-            .unwrap_or(&"".to_string())
-            .clone();
-        let features: String = matches
-            .try_get_one::<String>("features")
-            .ok()
-            .flatten()
-            .unwrap_or(&"".to_string())
-            .clone();
+        let default = "default".to_string();
+        let config_file = matches.try_get_one("config").ok().flatten().unwrap_or(&default);
+        let config = read_config(format!(
+            "{}/{}/lib/config_{}.toml",
+            workspace().display(),
+            arch.to_string().to_lowercase(),
+            config_file
+        ));
 
-        Self { arch: *arch, profile, verbose, wait_for_gdb, dump_dtb, platform, features }
+        Self { arch: *arch, profile, verbose, wait_for_gdb, dump_dtb, config }
     }
 
     fn dir(&self) -> &'static str {
@@ -75,29 +80,6 @@ impl BuildParams {
     fn add_build_arg(&self, cmd: &mut Command) {
         if let Profile::Release = self.profile {
             cmd.arg("--release");
-        }
-        if !self.platform.is_empty() {
-            cmd.arg("--config")
-                .arg(format!("build.rustflags='--cfg platform=\"{}\"'", self.platform));
-
-            match self.arch {
-                Arch::Aarch64 | Arch::Riscv64 => {
-                    cmd.arg("--config");
-                    cmd.arg(format!(
-                        "link.args='-T{}/src/platform/{}/kernel.ld'",
-                        self.arch, self.platform
-                    ));
-                }
-                _ => {}
-            }
-        } else {
-            cmd.arg("--config");
-            cmd.arg(format!("link.args='-T{}/src/platform/virt/kernel.ld'", self.arch));
-        }
-
-        if !self.features.is_empty() {
-            cmd.arg("--no-default-features");
-            cmd.arg("--features").arg(self.features.clone());
         }
     }
 
@@ -129,13 +111,10 @@ fn main() {
                 clap::arg!(--debug "Build debug version (default)").conflicts_with("release"),
                 clap::arg!(--arch <arch> "Target architecture")
                     .value_parser(clap::builder::EnumValueParser::<Arch>::new()),
+                clap::arg!(--config <config> "Configuration")
+                    .value_parser(clap::builder::NonEmptyStringValueParser::new())
+                    .default_value("default"),
                 clap::arg!(--verbose "Print commands"),
-                clap::arg!(--platform <platform> "Mainplatform to build")
-                    .required(false)
-                    .value_parser(clap::value_parser!(String)),
-                clap::arg!(--features <features> "Set compile features")
-                    .required(false)
-                    .value_parser(clap::value_parser!(String)),
             ]),
         )
         .subcommand(
@@ -162,10 +141,10 @@ fn main() {
                 clap::arg!(--debug "Build a debug version").conflicts_with("release"),
                 clap::arg!(--arch <arch> "Target architecture")
                     .value_parser(clap::builder::EnumValueParser::<Arch>::new()),
+                clap::arg!(--config <config> "Configuration")
+                    .value_parser(clap::builder::NonEmptyStringValueParser::new())
+                    .default_value("default"),
                 clap::arg!(--verbose "Print commands"),
-                clap::arg!(--features <features> "Set compile features")
-                    .required(false)
-                    .value_parser(clap::value_parser!(String)),
             ]),
         )
         .subcommand(clap::Command::new("test").about("Runs unit tests").args(&[
@@ -177,13 +156,9 @@ fn main() {
             clap::Command::new("clippy").about("Runs clippy").args(&[
                 clap::arg!(--release "Build a release version").conflicts_with("debug"),
                 clap::arg!(--debug "Build a debug version").conflicts_with("release"),
+                clap::arg!(--arch <arch> "Target architecture")
+                    .value_parser(clap::builder::EnumValueParser::<Arch>::new()),
                 clap::arg!(--verbose "Print commands"),
-                clap::arg!(--platform <platform> "Mainplatform to build")
-                    .required(false)
-                    .value_parser(clap::value_parser!(String)),
-                clap::arg!(--features <features> "Set compile features")
-                    .required(false)
-                    .value_parser(clap::value_parser!(String)),
             ]),
         )
         .subcommand(
@@ -193,14 +168,11 @@ fn main() {
                 clap::arg!(--arch <arch> "Target architecture")
                     .value_parser(clap::builder::EnumValueParser::<Arch>::new()),
                 clap::arg!(--gdb "Wait for gdb connection on start"),
+                clap::arg!(--config <config> "Configuration")
+                    .value_parser(clap::builder::NonEmptyStringValueParser::new())
+                    .default_value("default"),
                 clap::arg!(--verbose "Print commands"),
                 clap::arg!(--dump_dtb <file> "Dump the DTB from QEMU to a file")
-                    .value_parser(clap::value_parser!(String)),
-                clap::arg!(--platform <platform> "Mainplatform to build")
-                    .required(false)
-                    .value_parser(clap::value_parser!(String)),
-                clap::arg!(--features <features> "Set compile features")
-                    .required(false)
                     .value_parser(clap::value_parser!(String)),
             ]),
         )
@@ -213,12 +185,6 @@ fn main() {
                 clap::arg!(--gdb "Wait for gdb connection on start"),
                 clap::arg!(--verbose "Print commands"),
                 clap::arg!(--dump_dtb <file> "Dump the DTB from QEMU to a file")
-                    .value_parser(clap::value_parser!(String)),
-                clap::arg!(--platform <platform> "Mainplatform to build")
-                    .required(false)
-                    .value_parser(clap::value_parser!(String)),
-                clap::arg!(--features <features> "Set compile features")
-                    .required(false)
                     .value_parser(clap::value_parser!(String)),
             ]),
         )
@@ -275,12 +241,14 @@ fn objcopy() -> String {
 }
 
 fn build(build_params: &BuildParams) -> Result<()> {
-    let mut cmd = Command::new(cargo());
+    let mut cmd = generate_args(
+        "build",
+        &build_params.config,
+        &build_params.target(),
+        &build_params.profile,
+        workspace().to_str().unwrap(),
+    );
     cmd.current_dir(workspace());
-    cmd.arg("build");
-    #[rustfmt::skip]
-    cmd.arg("-Z").arg("build-std=core,alloc");
-    cmd.arg("--target").arg(format!("lib/{}.json", build_params.target()));
     cmd.arg("--workspace");
     cmd.arg("--exclude").arg("xtask");
     exclude_other_arches(build_params.arch, &mut cmd);
@@ -434,9 +402,16 @@ fn test(build_params: &BuildParams) -> Result<()> {
 }
 
 fn clippy(build_params: &BuildParams) -> Result<()> {
-    let mut cmd = Command::new(cargo());
+    let mut cmd = generate_args(
+        "clippy",
+        &build_params.config,
+        &build_params.target(),
+        &build_params.profile,
+        workspace().to_str().unwrap(),
+    );
     cmd.current_dir(workspace());
-    cmd.arg("clippy");
+    cmd.arg("--workspace");
+    exclude_other_arches(build_params.arch, &mut cmd);
     build_params.add_build_arg(&mut cmd);
     if build_params.verbose {
         println!("Executing {cmd:?}");

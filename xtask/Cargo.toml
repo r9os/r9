@@ -7,3 +7,5 @@ edition = "2018"
 
 [dependencies]
 clap = { version = "*", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+toml = "*"

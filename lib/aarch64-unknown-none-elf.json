@@ -13,7 +13,6 @@
 	"target-pointer-width": "64",
 	"pre-link-args": {
 		"ld.lld": [
-			"-Taarch64/src/kernel.ld",
 			"-nostdlib"
 		]
 	}

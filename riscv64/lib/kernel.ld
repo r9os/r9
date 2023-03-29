@@ -1,14 +1,8 @@
-OUTPUT_ARCH(riscv)
+OUTPUT_ARCH(${ARCH})
 ENTRY(start)
 
 SECTIONS {
-	/*
-	 * XXX This needs to change to a virtual address
-	 * once we set up paging.
-	 *
-	 * OpenSBI expects us to start at 0x40200000 
-	 */
-	. = 0x40200000;
+	. = ${LOAD-ADDRESS};
 	.text : ALIGN(4096) {
 		*(.text.entry)
 		*(.text*)
@@ -31,7 +25,6 @@ SECTIONS {
 	}
 
 	.bss : ALIGN(4096) {
-		sbss = .;
 		*(.bss*)
 		*(.sbss*)
 		*(COMMON)

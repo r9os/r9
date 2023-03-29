@@ -6,7 +6,7 @@ ENTRY(start)
 
 SECTIONS {
 	/* Entrypoint for Raspberry Pi will be at 0x80000 */
-	. = 0xffff800000100000 - 0x80000;
+	. = ${LOAD-ADDRESS};
 
 	boottext = .;
 	.text.boot : ALIGN(4096) {
