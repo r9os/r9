@@ -446,13 +446,13 @@ fn run(build_params: &BuildParams) -> Result<()> {
 
             // TODO Choose UART at cmdline
             // If using UART0 (PL011), this enables serial
-            //cmd.arg("-nographic");
+            cmd.arg("-nographic");
 
             // If using UART1 (MiniUART), this enables serial
             cmd.arg("-serial");
             cmd.arg("null");
             cmd.arg("-serial");
-            cmd.arg("stdio");
+            cmd.arg("mon:stdio");
 
             cmd.arg("-M");
             cmd.arg("raspi3b");
