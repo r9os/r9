@@ -111,7 +111,7 @@ fn main() {
                 clap::arg!(--debug "Build debug version (default)").conflicts_with("release"),
                 clap::arg!(--arch <arch> "Target architecture")
                     .value_parser(clap::builder::EnumValueParser::<Arch>::new()),
-                clap::arg!(--config <config> "Configuration")
+                clap::arg!(--config <name> "Configuration")
                     .value_parser(clap::builder::NonEmptyStringValueParser::new())
                     .default_value("default"),
                 clap::arg!(--verbose "Print commands"),
@@ -141,7 +141,7 @@ fn main() {
                 clap::arg!(--debug "Build a debug version").conflicts_with("release"),
                 clap::arg!(--arch <arch> "Target architecture")
                     .value_parser(clap::builder::EnumValueParser::<Arch>::new()),
-                clap::arg!(--config <config> "Configuration")
+                clap::arg!(--config <name> "Configuration")
                     .value_parser(clap::builder::NonEmptyStringValueParser::new())
                     .default_value("default"),
                 clap::arg!(--verbose "Print commands"),
@@ -168,7 +168,7 @@ fn main() {
                 clap::arg!(--arch <arch> "Target architecture")
                     .value_parser(clap::builder::EnumValueParser::<Arch>::new()),
                 clap::arg!(--gdb "Wait for gdb connection on start"),
-                clap::arg!(--config <config> "Configuration")
+                clap::arg!(--config <name> "Configuration")
                     .value_parser(clap::builder::NonEmptyStringValueParser::new())
                     .default_value("default"),
                 clap::arg!(--verbose "Print commands"),
@@ -390,6 +390,7 @@ fn test(build_params: &BuildParams) -> Result<()> {
     cmd.current_dir(workspace());
     cmd.arg("test");
     cmd.arg("--workspace");
+    cmd.arg("--config").arg("build.rustflags='--cfg platform=\"virt\"'");
     build_params.add_build_arg(&mut cmd);
     if build_params.verbose {
         println!("Executing {cmd:?}");
