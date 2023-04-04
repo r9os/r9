@@ -127,10 +127,17 @@ where
     res.tags.body
 }
 
+// https://github.com/raspberrypi/firmware/wiki/Mailbox-property-interface#tags-arm-to-vc
 #[repr(u32)]
 enum TagId {
-    GetArmMemory = 0x10005,
-    SetClockRate = 0x38002,
+    GetFirmwareRevision = 0x0000_0001,
+    GetBoardModel = 0x0001_0001,
+    GetBoardRevision = 0x0001_0002,
+    GetBoardMacAddress = 0x0001_0003,
+    GetBoardSerial = 0x0001_0004,
+    GetArmMemory = 0x0001_0005,
+    GetVcMemory = 0x0001_0006,
+    SetClockRate = 0x0003_8002,
 }
 
 #[repr(C)]
@@ -161,35 +168,120 @@ pub fn set_clock_rate(clock_id: u32, rate_hz: u32, skip_setting_turbo: u32) {
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-struct GetArmMemoryRequest {}
+struct EmptyRequest {}
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-struct GetArmMemoryResponse {
+struct MemoryResponse {
     pub base_addr: u32,
     pub size: u32,
 }
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct ArmMemory {
+pub struct MemoryInfo {
     pub start: u32,
     pub size: u32,
     pub end: u32,
 }
 
-pub fn get_arm_memory() -> ArmMemory {
-    let tags = Tag::<GetArmMemoryRequest> {
+pub fn get_arm_memory() -> MemoryInfo {
+    let tags = Tag::<EmptyRequest> {
         tag_id0: TagId::GetArmMemory as u32,
         tag_buffer_size0: 12,
         tag_code0: 0,
-        body: GetArmMemoryRequest {},
+        body: EmptyRequest {},
         end_tag: 0,
     };
-    let res: GetArmMemoryResponse = request(0, &tags);
+    let res: MemoryResponse = request(0, &tags);
     let start = res.base_addr;
     let size = res.size;
     let end = start + size;
 
-    ArmMemory { start, size, end }
+    MemoryInfo { start, size, end }
+}
+
+pub fn get_vc_memory() -> MemoryInfo {
+    let tags = Tag::<EmptyRequest> {
+        tag_id0: TagId::GetVcMemory as u32,
+        tag_buffer_size0: 12,
+        tag_code0: 0,
+        body: EmptyRequest {},
+        end_tag: 0,
+    };
+    let res: MemoryResponse = request(0, &tags);
+    let start = res.base_addr;
+    let size = res.size;
+    let end = start + size;
+
+    MemoryInfo { start, size, end }
+}
+
+pub fn get_firmware_revision() -> u32 {
+    let tags = Tag::<EmptyRequest> {
+        tag_id0: TagId::GetFirmwareRevision as u32,
+        tag_buffer_size0: 4,
+        tag_code0: 0,
+        body: EmptyRequest {},
+        end_tag: 0,
+    };
+    request::<_, u32>(0, &tags)
+}
+
+pub fn get_board_model() -> u32 {
+    let tags = Tag::<EmptyRequest> {
+        tag_id0: TagId::GetBoardModel as u32,
+        tag_buffer_size0: 4,
+        tag_code0: 0,
+        body: EmptyRequest {},
+        end_tag: 0,
+    };
+    request::<_, u32>(0, &tags)
+}
+
+pub fn get_board_revision() -> u32 {
+    let tags = Tag::<EmptyRequest> {
+        tag_id0: TagId::GetBoardRevision as u32,
+        tag_buffer_size0: 4,
+        tag_code0: 0,
+        body: EmptyRequest {},
+        end_tag: 0,
+    };
+    request::<_, u32>(0, &tags)
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct MacAddress {
+    pub a: u8,
+    pub b: u8,
+    pub c: u8,
+    pub d: u8,
+    pub e: u8,
+    pub f: u8,
+}
+
+pub fn get_board_macaddr() -> MacAddress {
+    let tags = Tag::<EmptyRequest> {
+        tag_id0: TagId::GetBoardMacAddress as u32,
+        tag_buffer_size0: 6,
+        tag_code0: 0,
+        body: EmptyRequest {},
+        end_tag: 0,
+    };
+    request::<_, MacAddress>(0, &tags)
+}
+
+pub fn get_board_serial() -> u64 {
+    let tags = Tag::<EmptyRequest> {
+        tag_id0: TagId::GetBoardSerial as u32,
+        tag_buffer_size0: 8,
+        tag_code0: 0,
+        body: EmptyRequest {},
+        end_tag: 0,
+    };
+    // FIXME: Treating this a `u64` gets us a memory address. Pointer fun ahead.
+    // Wrapping in a struct holding a single u64 doesn't work either.
+    let res: [u32; 2] = request(0, &tags);
+    ((res[0] as u64) << 32) | res[1] as u64
 }
