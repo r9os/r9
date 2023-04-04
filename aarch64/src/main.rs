@@ -54,10 +54,37 @@ fn print_binary_sections() {
 }
 
 fn print_physical_memory_map() {
-    let mailbox::ArmMemory { start, size, end } = mailbox::get_arm_memory();
-
     println!("Physical memory map:");
+    let mailbox::MemoryInfo { start, size, end } = mailbox::get_arm_memory();
     println!("  Memory:\t{start:#018x}-{end:#018x} ({size:#x})");
+    let mailbox::MemoryInfo { start, size, end } = mailbox::get_vc_memory();
+    println!("  Video:\t{start:#018x}-{end:#018x} ({size:#x})");
+}
+
+// https://github.com/raspberrypi/documentation/blob/develop/documentation/asciidoc/computers/raspberry-pi/revision-codes.adoc
+fn print_pi_name(board_revision: u32) {
+    let name = match board_revision {
+        0xa21041 => "Raspberry Pi 2B",
+        0xa02082 => "Raspberry Pi 3B",
+        0xa220a0 => "Raspberry Compute Module 3",
+        _ => "unknown",
+    };
+    println!("  Board Name: {name}");
+}
+
+fn print_board_info() {
+    println!("Board information:");
+    let board_revision = mailbox::get_board_revision();
+    print_pi_name(board_revision);
+    println!("  Board Revision: {board_revision:#010x}");
+    let model = mailbox::get_board_model();
+    println!("  Board Model: {model:#010x}");
+    let serial = mailbox::get_board_serial();
+    println!("  Serial Number: {serial:#010x}");
+    let mailbox::MacAddress { a, b, c, d, e, f } = mailbox::get_board_macaddr();
+    println!("  MAC Address: {a:02x}:{b:02x}:{c:02x}:{d:02x}:{e:02x}:{f:02x}");
+    let fw_revision = mailbox::get_firmware_revision();
+    println!("  Firmware Revision: {fw_revision:#010x}");
 }
 
 #[no_mangle]
@@ -77,6 +104,7 @@ pub extern "C" fn main9(dtb_ptr: u64) {
     port::devcons::drop_early_console();
 
     print_physical_memory_map();
+    print_board_info();
 
     println!("looping now");
 
