@@ -6,6 +6,7 @@
 #![allow(clippy::upper_case_acronyms)]
 #![forbid(unsafe_op_in_unsafe_fn)]
 
+mod memory;
 mod platform;
 mod runtime;
 mod sbi;
@@ -13,17 +14,21 @@ mod uart16550;
 
 use port::println;
 
-use crate::platform::{devcons, platform_init};
+use crate::{
+    memory::phys_to_virt,
+    platform::{devcons, platform_init},
+};
 use port::fdt::DeviceTree;
 
 #[cfg(not(test))]
 core::arch::global_asm!(include_str!("l.S"));
 
 #[no_mangle]
-pub extern "C" fn main9(hartid: usize, dtb_ptr: u64) -> ! {
-    let dt = unsafe { DeviceTree::from_u64(dtb_ptr).unwrap() };
-    devcons::init(&dt);
+pub extern "C" fn main9(hartid: usize, dtb_ptr: usize) -> ! {
+    let dt = unsafe { DeviceTree::from_u64(dtb_ptr as u64).unwrap() };
 
+    // devcons::init(&dt);
+    devcons::init_sbi();
     platform_init();
 
     println!();
