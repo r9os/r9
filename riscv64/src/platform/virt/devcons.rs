@@ -2,6 +2,8 @@
 
 use core::mem::MaybeUninit;
 
+use crate::memory::phys_to_virt;
+use crate::sbi::Sbi;
 use crate::uart16550::Uart16550;
 use port::{devcons::Console, fdt::DeviceTree};
 
@@ -14,10 +16,23 @@ pub fn init(dt: &DeviceTree) {
         .unwrap();
 
     Console::new(|| {
-        let mut uart = Uart16550::new(ns16550a_reg);
+        let mut uart = Uart16550::new(phys_to_virt(ns16550a_reg.addr as usize) as usize);
         uart.init(115_200);
 
         static mut UART: MaybeUninit<Uart16550> = MaybeUninit::uninit();
+
+        unsafe {
+            UART.write(uart);
+            UART.assume_init_mut()
+        }
+    });
+}
+
+pub fn init_sbi() {
+    Console::new(|| {
+        let mut uart = Sbi::new();
+
+        static mut UART: MaybeUninit<Sbi> = MaybeUninit::uninit();
 
         unsafe {
             UART.write(uart);

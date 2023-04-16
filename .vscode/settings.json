@@ -1,5 +1,13 @@
 {
     "editor.formatOnSave": true,
     "editor.formatOnPaste": true,
-    "git.alwaysSignOff": true
+    "git.alwaysSignOff": true,
+    "rust-analyzer.linkedProjects": [
+        "./riscv64/Cargo.toml",
+        "./riscv64/Cargo.toml",
+        "./riscv64/Cargo.toml",
+        "./riscv64/Cargo.toml",
+        "./riscv64/Cargo.toml",
+        "./riscv64/Cargo.toml"
+    ]
 }
