@@ -7,7 +7,6 @@ use std::{
     io::Write,
     process::exit,
 };
-use toml;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Build {
@@ -72,11 +71,11 @@ pub fn generate_args(
     if let Some(config) = &config.build {
         if task != "clippy" {
             let target = &config.target;
-            cmd.arg("--target").arg(format!("{target}"));
+            cmd.arg("--target").arg(target);
 
             if let Some(flags) = &config.buildflags {
                 for f in flags {
-                    cmd.arg(f.to_string());
+                    cmd.arg(f);
                 }
             }
 
