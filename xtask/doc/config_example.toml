@@ -1,0 +1,86 @@
+# This is an example configuration !
+
+[build]
+target = "lib/riscv64-unknown-none-elf.json"
+buildflags = [
+    "-Z", "build-std=core,alloc"
+]
+
+[link]
+# arch to insert into kernel.ld
+arch = 'riscv'
+
+# linker script to use
+script = 'riscv64/lib/kernel.ld'
+
+# kernel load address to insert into kernel.ld
+load-address = '0x80200000'
+
+[config]
+# platform/board possible values: empty, raspi3b, vfive2, nezha, virt etc.
+# example usage => #[cfg(platform = "virt")]
+platform = "nezha"
+
+# a list of features for the target
+features = ["mmu_sv39"]
+
+#
+# currently available configuration sections are dev, ip, link, nodev, nouart
+# the section name is always the prefix for the configuration
+#
+# example usage for section "dev"
+# 
+# dev = [
+#    'arch',
+#    'cap',
+#    'foo="baz"'
+# ]
+#
+# this will create a the following configuration options
+# dev_arch", dev_cap and dev_foo="baz"
+#
+# #[cfg(dev_arch)]
+# #[cfg(dev_foo="baz")]
+
+dev = [
+    'arch',
+    'cap',
+    'cons',
+    'dup',
+    'env',
+    'ip',
+    'mnt',
+    'mntn',
+    'pipe',
+    'proc',
+    'regress',
+    'root',
+    'segment',
+    'srv',
+    'uart',
+    'ws'
+]
+
+ip = [
+    'tcp',
+    'udp',
+    'ipifc',
+    'icmp',
+    'icmp6',
+    'gre'
+]
+
+link = [
+    'ethermedium',
+    'loopbackmedium',
+    'netdevmedium'
+]
+
+nodev = [
+    'kbin',
+    'kprof'
+]
+
+nouart = [
+    'pci'
+]

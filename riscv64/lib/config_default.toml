@@ -7,53 +7,7 @@ buildflags = [
 [link]
 arch = 'riscv'
 script = 'riscv64/lib/kernel.ld'
-
-# This needs to change to a virtual address once we set up paging.
 load-address = '0x80200000'
 
 [config]
 platform = "virt"
-
-
-dev = [
-    'arch',
-    'cap',
-    'cons',
-    'dup',
-    'env',
-    'ip',
-    'mnt',
-    'mntn',
-    'pipe',
-    'proc',
-    'regress',
-    'root',
-    'segment',
-    'srv',
-    'uart',
-    'ws'
-]
-
-ip = [
-    'tcp',
-    'udp',
-    'ipifc',
-    'icmp',
-    'icmp6',
-    'gre'
-]
-
-link = [
-    'ethermedium',
-    'loopbackmedium',
-    'netdevmedium'
-]
-
-nodev = [
-    'kbin',
-    'kprof'
-]
-
-nouart = [
-    'pci'
-]
