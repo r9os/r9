@@ -7,6 +7,7 @@
 #![forbid(unsafe_op_in_unsafe_fn)]
 
 mod memory;
+mod paging;
 mod platform;
 mod runtime;
 mod sbi;
@@ -14,14 +15,22 @@ mod uart16550;
 
 use port::println;
 
-use crate::{
-    memory::phys_to_virt,
-    platform::{devcons, platform_init},
-};
+use crate::platform::{devcons, platform_init};
 use port::fdt::DeviceTree;
 
 #[cfg(not(test))]
 core::arch::global_asm!(include_str!("l.S"));
+
+fn list_dtb(dt: &DeviceTree) {
+    for n in dt.nodes() {
+        if let Some(name) = DeviceTree::node_name(&dt, &n) {
+            let reg_block_iter = DeviceTree::property_reg_iter(&dt, n);
+            for b in reg_block_iter {
+                println!("{} at 0x{:x} len {:?}", name, b.addr, b.len);
+            }
+        }
+    }
+}
 
 #[no_mangle]
 pub extern "C" fn main9(hartid: usize, dtb_ptr: usize) -> ! {
@@ -35,6 +44,9 @@ pub extern "C" fn main9(hartid: usize, dtb_ptr: usize) -> ! {
     println!("r9 from the Internet");
     println!("Domain0 Boot HART = {hartid}");
     println!("DTB found at: {dtb_ptr:#x}");
+    println!();
+
+    list_dtb(&dt);
 
     #[cfg(not(test))]
     sbi::shutdown();
