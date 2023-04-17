@@ -158,6 +158,9 @@ fn main() {
                 clap::arg!(--debug "Build a debug version").conflicts_with("release"),
                 clap::arg!(--arch <arch> "Target architecture")
                     .value_parser(clap::builder::EnumValueParser::<Arch>::new()),
+                clap::arg!(--config <name> "Configuration")
+                    .value_parser(clap::builder::NonEmptyStringValueParser::new())
+                    .default_value("default"),
                 clap::arg!(--verbose "Print commands"),
             ]),
         )
