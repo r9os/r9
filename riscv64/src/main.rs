@@ -29,9 +29,9 @@ pub extern "C" fn main9(hartid: usize, dtb_ptr: u64) -> ! {
 
     // devcons::init(&dt);
     devcons::init_sbi();
+    println!();
     platform_init();
 
-    println!();
     println!("r9 from the Internet");
     println!("Domain0 Boot HART = {hartid}");
     println!("DTB found at: {dtb_ptr:#x}");
