@@ -57,8 +57,21 @@ bootstacktop:
 boot_page_table: // sv39
 // 0x00000000_80000000 -> 0x80000000 (1G)
 // 0xffffffff_c0000000 -> 0x80000000 (1G)
+// PTE register definition
+// N is reserved for Svnapot, PBMT is Page-based Memory Types
+//     |  N |  PBMT  | Rsvd.  |
+//     |[63]|[62..61]|[60..54]|
+// The Physical Page Number (PPN) is 9+9+26 bits long,
+// mapped to a 9+9+9 bit Virtual Page Number (VPN).
+//             | PPN[2] | PPN[1] | PPN[0] |
+//             |[53..28]|[27..19]|[18..10]|
+// RSW is reserved for supervisor software control.
+// D- dirty, A - accessed, G - global mapping, U - user mode access,
+// XWR - exec/write/read (table 4.5, p80), V - entry is valid
+//                     | RSW  | D | A | G | U | X | W | R | V |
+//                     |[9..8]|[7]|[6]|[5]|[4]|[3]|[2]|[1]|[0]|
 .quad 0
 .quad 0
 .quad (0x80000 << 10) | 0xcf // VRWXAD
-.zero 8 * 508
+.zero 8 * 508 // 0xfe0
 .quad (0x80000 << 10) | 0xcf // VRWXAD
