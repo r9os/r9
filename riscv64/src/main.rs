@@ -70,13 +70,6 @@ fn consume_dt_block(name: &str, a: u64, l: u64) {
         }
         "uart@10000000" => {
             println!("{name}: {l:x}");
-            let base = v as *mut u8;
-            let m = unsafe { base.add(4).read_volatile() };
-            println!("{m:x}");
-            let m = unsafe { base.add(8).read_volatile() };
-            println!("{m:x}");
-            let m = unsafe { base.add(12).read_volatile() };
-            println!("{m:x}");
             dump_block(v, l as usize, 0x40);
         }
         "virtio_mmio@10001000" | "virtio_mmio@10002000" => {
