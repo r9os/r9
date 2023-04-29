@@ -12,7 +12,7 @@ mod runtime;
 mod sbi;
 mod uart16550;
 
-use port::{print, println};
+use port::{fdt::Node, print, println};
 
 use crate::{
     memory::phys_to_virt,
@@ -49,6 +49,45 @@ fn write32(a: usize, v: u32) {
     unsafe { core::ptr::write_volatile(a as *mut u32, v) }
 }
 
+fn consume_dt_block(name: &str, a: u64, l: u64) {
+    let v = phys_to_virt(a as usize);
+    println!("- {name}: {a:016x}:{v:016x} ({l:x})");
+    match name {
+        "flash@20000000" => {
+            dump_block(v, 0x200, 0x40);
+        }
+        "test@100000" => {
+            let x = read32(v);
+            println!("{name}[0]:{x:x}");
+            write32(v, x | 0x1234_5678);
+            let x = read32(v);
+            println!("{name}[0]:{x:x}");
+        }
+        "pci@30000000" => {
+            // NOTE: v+l overflows usize, hitting 0
+            // dump_block(v, (l - 0x40) as usize, 0x40);
+            dump_block(v, 0x100, 0x40);
+        }
+        "uart@10000000" => {
+            println!("{name}: {l:x}");
+            let base = v as *mut u8;
+            let m = unsafe { base.add(4).read_volatile() };
+            println!("{m:x}");
+            let m = unsafe { base.add(8).read_volatile() };
+            println!("{m:x}");
+            let m = unsafe { base.add(12).read_volatile() };
+            println!("{m:x}");
+            dump_block(v, l as usize, 0x40);
+        }
+        "virtio_mmio@10001000" | "virtio_mmio@10002000" => {
+            dump_block(v, 0x100, 0x40);
+        }
+        _ => {}
+    }
+}
+
+const WHERE_ARE_WE: bool = false;
+
 #[no_mangle]
 pub extern "C" fn main9(hartid: usize, dtb_ptr: u64) -> ! {
     let dt = unsafe { DeviceTree::from_u64(dtb_ptr).unwrap() };
@@ -64,64 +103,34 @@ pub extern "C" fn main9(hartid: usize, dtb_ptr: u64) -> ! {
 
     dt.nodes().for_each(|n| {
         let name = dt.node_name(&n);
-        if let Some(name) = name {
-            let p = dt.property(&n, "start");
-            println!("{name:?}: {n:#?} {p:?}");
+        if false {
+            if let Some(name) = name {
+                let p = dt.property(&n, "start");
+                println!("{name:?}: {n:#?} {p:?}");
+            }
         }
         dt.property_translated_reg_iter(n).next().and_then(|i| {
             let b = i.regblock();
             if let Some(b) = b {
-                println!("{b:#?}");
+                // println!("{b:#?}");
                 let a = b.addr;
-                let v = phys_to_virt(a as usize);
-                println!("{a:016x}:{v:016x}");
                 if let Some(name) = name {
-                    match name {
-                        "flash@20000000" => {
-                            dump_block(v, 0x200, 0x40);
-                        }
-                        "test@100000" => {
-                            let x = read32(v);
-                            println!("{name}[0]:{x:x}");
-                            write32(v, x | 0x1234_5678);
-                            let x = read32(v);
-                            println!("{name}[0]:{x:x}");
-                        }
-                        "pci@30000000" => {
-                            println!("PCI: {:x?}", b.len);
-                            if let Some(l) = b.len {
-                                println!("PCI: {l}");
-                                // NOTE: v+l overflows usize, hitting 0
-                                // dump_block(v, (l - 0x40) as usize, 0x40);
-                                dump_block(v, 0x100, 0x40);
-                            }
-                        }
-                        "uart@10000000" => {
-                            if let Some(l) = b.len {
-                                println!("{name}: {l:x}");
-                                let base = v as *mut u8;
-                                let m = unsafe { base.add(4).read_volatile() };
-                                println!("{m:x}");
-                                let m = unsafe { base.add(8).read_volatile() };
-                                println!("{m:x}");
-                                let m = unsafe { base.add(12).read_volatile() };
-                                println!("{m:x}");
-                                dump_block(v, l as usize, 0x40);
-                            }
-                        }
-                        "virtio_mmio@10001000" | "virtio_mmio@10002000" => {
-                            if let Some(l) = b.len {
-                                println!("{name}: {l:x}");
-                                dump_block(v, 0x100, 0x40);
-                            }
-                        }
-                        _ => {}
+                    if let Some(l) = b.len {
+                        consume_dt_block(name, a, l);
                     }
                 }
             }
             b
         });
     });
+
+    // check on memory mapping foo
+    if WHERE_ARE_WE {
+        let x = "test";
+        let p = x.as_ptr();
+        // e.g., 0xffffffffc0400096
+        println!("{p:#x?}");
+    }
 
     #[cfg(not(test))]
     sbi::shutdown();
