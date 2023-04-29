@@ -33,6 +33,7 @@ struct BuildParams {
     wait_for_gdb: bool,
     platform: String,
     features: String,
+    dump_dtb: String,
 }
 
 impl BuildParams {
@@ -42,6 +43,12 @@ impl BuildParams {
         let arch = matches.try_get_one("arch").ok().flatten().unwrap_or(&Arch::X86_64);
         let wait_for_gdb =
             matches.try_contains_id("gdb").unwrap_or(false) && matches.get_flag("gdb");
+        let dump_dtb: String = matches
+            .try_get_one::<String>("dump_dtb")
+            .ok()
+            .flatten()
+            .unwrap_or(&"".to_string())
+            .clone();
         let platform: String = matches
             .try_get_one::<String>("platform")
             .ok()
@@ -55,7 +62,7 @@ impl BuildParams {
             .unwrap_or(&"".to_string())
             .clone();
 
-        Self { arch: *arch, profile, verbose, wait_for_gdb, platform, features }
+        Self { arch: *arch, profile, verbose, wait_for_gdb, dump_dtb, platform, features }
     }
 
     fn dir(&self) -> &'static str {
@@ -187,6 +194,8 @@ fn main() {
                     .value_parser(clap::builder::EnumValueParser::<Arch>::new()),
                 clap::arg!(--gdb "Wait for gdb connection on start"),
                 clap::arg!(--verbose "Print commands"),
+                clap::arg!(--dump_dtb <file> "Dump the DTB from QEMU to a file")
+                    .value_parser(clap::value_parser!(String)),
                 clap::arg!(--platform <platform> "Mainplatform to build")
                     .required(false)
                     .value_parser(clap::value_parser!(String)),
@@ -203,6 +212,8 @@ fn main() {
                     .value_parser(clap::builder::EnumValueParser::<Arch>::new()),
                 clap::arg!(--gdb "Wait for gdb connection on start"),
                 clap::arg!(--verbose "Print commands"),
+                clap::arg!(--dump_dtb <file> "Dump the DTB from QEMU to a file")
+                    .value_parser(clap::value_parser!(String)),
                 clap::arg!(--platform <platform> "Mainplatform to build")
                     .required(false)
                     .value_parser(clap::value_parser!(String)),
@@ -484,8 +495,17 @@ fn run(build_params: &BuildParams) -> Result<()> {
             cmd.arg("-nographic");
             //cmd.arg("-curses");
             // cmd.arg("-bios").arg("none");
-            cmd.arg("-machine").arg("virt");
+            let dump_dtb = &build_params.dump_dtb;
+            if dump_dtb != "" {
+                cmd.arg("-machine").arg(format!("virt,dumpdtb={dump_dtb}"));
+            } else {
+                cmd.arg("-machine").arg("virt");
+            }
             cmd.arg("-cpu").arg("rv64");
+            cmd.arg("-drive").arg("file=disk.bin,format=raw,id=hd0");
+            cmd.arg("-device").arg("virtio-blk-device,drive=hd0");
+            cmd.arg("-netdev").arg("type=user,id=net0");
+            cmd.arg("-device").arg("virtio-net-device,netdev=net0");
             cmd.arg("-smp").arg("4");
             cmd.arg("-m").arg("1024M");
             cmd.arg("-serial").arg("mon:stdio");
