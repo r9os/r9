@@ -92,9 +92,12 @@ const WHERE_ARE_WE: bool = false;
 pub extern "C" fn main9(hartid: usize, dtb_ptr: u64) -> ! {
     let dt = unsafe { DeviceTree::from_u64(dtb_ptr).unwrap() };
 
-    // devcons::init(&dt);
+    devcons::init(&dt);
+    println!("\n--> DT / native devcons\n");
     devcons::init_sbi();
-    println!();
+    println!("\n--> SBI devcons\n");
+    println!("dtb@{dtb_ptr:x}");
+
     platform_init();
 
     println!("r9 from the Internet");
