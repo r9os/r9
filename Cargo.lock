@@ -306,6 +306,7 @@ dependencies = [
 name = "riscv64"
 version = "0.1.0"
 dependencies = [
+ "bit_field",
  "port",
 ]
 

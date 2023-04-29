@@ -6,6 +6,7 @@
 #![allow(clippy::upper_case_acronyms)]
 #![forbid(unsafe_op_in_unsafe_fn)]
 
+mod address;
 mod memory;
 mod paging;
 mod platform;

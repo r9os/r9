@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+bit_field = "0.10.2"
 port = { path = "../port" }
 
-[features]
-opensbi = []

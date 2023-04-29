@@ -1,8 +1,23 @@
+use crate::platform::PGSIZE;
+
+/// a single PageTable with 512 entries
+#[derive(Copy, Clone)]
+#[repr(C, align(4096))]
 pub struct PageTable {
-    pub entries: [PageTableEntry; 512],
+    pub entries: [PageTableEntry; PGSIZE / 8],
 }
 
+static mut KERNEL_PAGETABLE: PageTable = PageTable::empty();
+
 impl PageTable {
+    pub fn as_addr(&self) -> usize {
+        self.entries.as_ptr() as usize
+    }
+
+    pub const fn empty() -> PageTable {
+        Self { entries: [PageTableEntry { entry: 0 }; PGSIZE / 8] }
+    }
+
     pub fn len() -> usize {
         512
     }
@@ -33,13 +48,14 @@ pub enum EntryBits {
 }
 
 impl EntryBits {
-    pub fn val(self) -> usize {
-        self as usize
+    pub fn val(self) -> i64 {
+        self as i64
     }
 }
 
+#[derive(Copy, Clone)]
 pub struct PageTableEntry {
-    pub entry: usize,
+    pub entry: i64,
 }
 impl PageTableEntry {
     pub fn is_valid(&self) -> bool {
@@ -61,11 +77,11 @@ impl PageTableEntry {
         !self.is_leaf()
     }
 
-    pub fn set_entry(&mut self, entry: usize) {
+    pub fn set_entry(&mut self, entry: i64) {
         self.entry = entry;
     }
 
-    pub fn get_entry(&self) -> usize {
+    pub fn get_entry(&self) -> i64 {
         self.entry
     }
 }
