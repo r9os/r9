@@ -3,36 +3,38 @@ ENTRY(start)
 
 SECTIONS {
 	. = ${LOAD-ADDRESS};
+
+	text = .;
 	.text : ALIGN(4096) {
 		*(.text.entry)
 		*(.text*)
 		. = ALIGN(2097152);
-		PROVIDE(etext = .);
+		etext = .;
 	}
 
+	rodata = .;
 	.rodata : ALIGN(4096) {
 		*(.rodata*)
-		*(.srodata*)
 		. = ALIGN(2097152);
-		PROVIDE(erodata = .);
+		erodata = .;
 	}
 
+	data = .;
 	.data : ALIGN(4096) {
 		*(.data*)
-		*(.sdata*)
 		. = ALIGN(2097152);
-		PROVIDE(edata = .);
+		edata = .;
 	}
 
+	bss = .;
 	.bss : ALIGN(4096) {
 		*(.bss*)
-		*(.sbss*)
 		*(COMMON)
 		. = ALIGN(2097152);
-		PROVIDE(end = .);
 	}
+	end = .;
 
 	/DISCARD/ : {
-		*(.eh_frame)
+		*(.eh_frame .note.GNU-stack)
 	}
 }
