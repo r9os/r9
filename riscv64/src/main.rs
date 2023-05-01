@@ -82,7 +82,7 @@ fn consume_dt_block(name: &str, a: u64, l: u64) {
 }
 
 const WHERE_ARE_WE: bool = false;
-const WALK_DT: bool = false;
+const WALK_DT: bool = true;
 
 unsafe fn print_memory_range(name: &str, start: &*const c_void, end: &*const c_void) {
     let start = start as *const _ as u64;
@@ -106,6 +106,7 @@ fn print_binary_sections() {
     println!("Binary sections:");
     unsafe {
         print_memory_range("text:\t\t", &text, &etext);
+        dump((&text) as *const _ as usize, 0x20);
         print_memory_range("rodata:\t", &rodata, &erodata);
         print_memory_range("data:\t\t", &data, &edata);
         print_memory_range("bss:\t\t", &bss, &end);
