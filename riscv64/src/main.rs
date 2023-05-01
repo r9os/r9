@@ -1,6 +1,7 @@
 #![feature(alloc_error_handler)]
 #![feature(asm_const)]
 #![feature(panic_info_message)]
+#![feature(ptr_to_from_bits)]
 #![cfg_attr(not(any(test, feature = "cargo-clippy")), no_std)]
 #![cfg_attr(not(test), no_main)]
 #![allow(clippy::upper_case_acronyms)]
@@ -18,6 +19,7 @@ use crate::{
     memory::phys_to_virt,
     platform::{devcons, platform_init},
 };
+use core::ffi::c_void;
 use core::ptr::{read_volatile, write_volatile};
 use core::slice;
 use port::fdt::DeviceTree;
@@ -80,23 +82,38 @@ fn consume_dt_block(name: &str, a: u64, l: u64) {
 }
 
 const WHERE_ARE_WE: bool = false;
+const WALK_DT: bool = false;
 
-#[no_mangle]
-pub extern "C" fn main9(hartid: usize, dtb_ptr: u64) -> ! {
-    let dt = unsafe { DeviceTree::from_u64(dtb_ptr).unwrap() };
+unsafe fn print_memory_range(name: &str, start: &*const c_void, end: &*const c_void) {
+    let start = start as *const _ as u64;
+    let end = end as *const _ as u64;
+    let size = end - start;
+    println!("  {name}{start:#x}-{end:#x} ({size:#x})");
+}
 
-    devcons::init(&dt);
-    println!("\n--> DT / native devcons\n");
-    devcons::init_sbi();
-    println!("\n--> SBI devcons\n");
-    println!("dtb@{dtb_ptr:x}");
+fn print_binary_sections() {
+    extern "C" {
+        static text: *const c_void;
+        static etext: *const c_void;
+        static rodata: *const c_void;
+        static erodata: *const c_void;
+        static data: *const c_void;
+        static edata: *const c_void;
+        static bss: *const c_void;
+        static end: *const c_void;
+    }
 
-    platform_init();
+    println!("Binary sections:");
+    unsafe {
+        print_memory_range("text:\t\t", &text, &etext);
+        print_memory_range("rodata:\t", &rodata, &erodata);
+        print_memory_range("data:\t\t", &data, &edata);
+        print_memory_range("bss:\t\t", &bss, &end);
+        print_memory_range("total:\t", &text, &end);
+    }
+}
 
-    println!("r9 from the Internet");
-    println!("Domain0 Boot HART = {hartid}");
-    println!("DTB found at: {dtb_ptr:#x}");
-
+fn walk_dt(dt: &DeviceTree) {
     dt.nodes().for_each(|n| {
         let name = dt.node_name(&n);
         if false {
@@ -119,7 +136,28 @@ pub extern "C" fn main9(hartid: usize, dtb_ptr: u64) -> ! {
             b
         });
     });
+}
 
+#[no_mangle]
+pub extern "C" fn main9(hartid: usize, dtb_ptr: u64) -> ! {
+    let dt = unsafe { DeviceTree::from_u64(dtb_ptr).unwrap() };
+
+    devcons::init(&dt);
+    println!("\n--> DT / native devcons\n");
+    devcons::init_sbi();
+    println!("\n--> SBI devcons\n");
+    println!("dtb@{dtb_ptr:x}");
+
+    platform_init();
+
+    println!("r9 from the Internet");
+    println!("Domain0 Boot HART = {hartid}");
+    println!("DTB found at: {dtb_ptr:#x}");
+    print_binary_sections();
+
+    if WALK_DT {
+        walk_dt(&dt);
+    }
     // check on memory mapping foo
     if WHERE_ARE_WE {
         let x = "test";
