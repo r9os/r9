@@ -94,34 +94,30 @@ fn print_binary_sections() {
 
 fn consume_dt_block(name: &str, a: u64, l: u64) {
     let v = phys_to_virt(a as usize);
-    println!("- {name}: {a:016x}:{v:016x} ({l:x})");
     let v = a as usize;
+    println!("- {name}: {a:016x}:{v:016x} ({l:x})");
     match name {
-        "flash@20000000" => {
-            let v = phys_to_virt(a as usize);
-            dump_block(v, 0x200, 0x40);
-        }
         "test@100000" => {
-            /*
             let x = read32(v);
             println!("{name}[0]:{x:x}");
             write32(v, x | 0x1234_5678);
             let x = read32(v);
             println!("{name}[0]:{x:x}");
-            */
+        }
+        "uart@10000000" => {
+            println!("{name}: {l:x}");
+            dump(v, 0x8);
+        }
+        "virtio_mmio@10001000" | "virtio_mmio@10002000" => {
+            dump_block(v, 0x100, 0x40);
+        }
+        "flash@20000000" => {
+            dump_block(v, 0x200, 0x40);
         }
         "pci@30000000" => {
             // NOTE: v+l overflows usize, hitting 0
             // dump_block(v, (l - 0x40) as usize, 0x40);
-            // dump_block(v, 0x100, 0x40);
-        }
-        "uart@10000000" => {
-            println!("{name}: {l:x}");
-            // let v = phys_to_virt(a as usize);
-            // dump(v, l as usize);
-        }
-        "virtio_mmio@10001000" | "virtio_mmio@10002000" => {
-            // dump_block(v, 0x100, 0x40);
+            dump_block(v, 0x100, 0x40);
         }
         _ => {}
     }
@@ -150,17 +146,6 @@ fn walk_dt(dt: &DeviceTree) {
             b
         });
     });
-}
-
-unsafe fn sbi_halp() {
-    unsafe {
-        core::arch::asm!(
-            "lui a0, 0x31", // char "1"
-            "lui a1, 0x0",  //
-            "lui a7, 0x1",  // extension: SBI_LEGACY_PUTCHAR
-            "ecall",        //
-        );
-    }
 }
 
 /// check on memory mapping foo

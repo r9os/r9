@@ -3,6 +3,7 @@ use core::fmt::Error;
 use core::fmt::Write;
 
 use port::devcons::Uart;
+use port::println;
 
 pub struct Uart16550 {
     base: *mut u8,
@@ -31,20 +32,28 @@ impl Uart16550 {
         Uart16550 { base: addr as *mut u8 }
     }
 
+    // see also https://www.lookrs232.com/rs232/dlab.htm
     pub fn init(&mut self, baud: u32) {
         let ptr = self.base;
+        let divisor: u16 = (2_227_900 / (baud * 16)) as u16; // set baud rate
+        let divisor_least: u8 = (divisor & 0xff).try_into().unwrap();
+        let divisor_most: u8 = (divisor >> 8).try_into().unwrap();
+        let word_length = 3;
         unsafe {
-            let lcr = 3; // word length
-            ptr.add(3).write_volatile(lcr); // set word length
-            ptr.add(2).write_volatile(1); // enable FIFO
-            ptr.add(1).write_volatile(1); // enable receiver interrupts
-            let divisor: u16 = (2_227_900 / (baud * 16)) as u16; // set baud rate
-            let divisor_least: u8 = (divisor & 0xff).try_into().unwrap();
-            let divisor_most: u8 = (divisor >> 8).try_into().unwrap();
-            ptr.add(3).write_volatile(lcr | 1 << 7); // access DLAB
-            ptr.add(0).write_volatile(divisor_least); // DLL
-            ptr.add(1).write_volatile(divisor_most); // DLM
-            ptr.add(3).write_volatile(lcr); // close DLAB
+            // set word length
+            ptr.add(3).write_volatile(word_length);
+            // enable FIFO
+            ptr.add(2).write_volatile(1);
+            // enable receiver interrupts
+            ptr.add(1).write_volatile(1);
+            // access DLAB (Divisor Latch Access Bit)
+            ptr.add(3).write_volatile(word_length | 1 << 7);
+            // divisor low byte
+            ptr.add(0).write_volatile(divisor_least);
+            // divisor high byte
+            ptr.add(1).write_volatile(divisor_most);
+            // close DLAB
+            ptr.add(3).write_volatile(word_length);
         }
     }
 
