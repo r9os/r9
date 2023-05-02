@@ -27,6 +27,10 @@ use port::fdt::DeviceTree;
 #[cfg(not(test))]
 core::arch::global_asm!(include_str!("l.S"));
 
+const WHERE_ARE_WE: bool = true;
+const WALK_DT: bool = true;
+
+/// debug helper - dump some memory range
 pub fn dump(addr: usize, length: usize) {
     let s = unsafe { slice::from_raw_parts(addr as *const u8, length) };
     println!("dump {length} bytes @{addr:x}");
@@ -36,6 +40,7 @@ pub fn dump(addr: usize, length: usize) {
     println!();
 }
 
+/// debug helper - dump some memory range, in chunks
 pub fn dump_block(base: usize, size: usize, step_size: usize) {
     println!("dump_block {base:x}:{:x}/{step_size:x}", base + size);
     for b in (base..base + size).step_by(step_size) {
@@ -43,47 +48,17 @@ pub fn dump_block(base: usize, size: usize, step_size: usize) {
     }
 }
 
+/// nobody wants to write this out, we know it's unsafe...
 fn read32(a: usize) -> u32 {
     unsafe { core::ptr::read_volatile(a as *mut u32) }
 }
 
+/// nobody wants to write this out, we know it's unsafe...
 fn write32(a: usize, v: u32) {
     unsafe { core::ptr::write_volatile(a as *mut u32, v) }
 }
 
-fn consume_dt_block(name: &str, a: u64, l: u64) {
-    let v = phys_to_virt(a as usize);
-    println!("- {name}: {a:016x}:{v:016x} ({l:x})");
-    match name {
-        "flash@20000000" => {
-            dump_block(v, 0x200, 0x40);
-        }
-        "test@100000" => {
-            let x = read32(v);
-            println!("{name}[0]:{x:x}");
-            write32(v, x | 0x1234_5678);
-            let x = read32(v);
-            println!("{name}[0]:{x:x}");
-        }
-        "pci@30000000" => {
-            // NOTE: v+l overflows usize, hitting 0
-            // dump_block(v, (l - 0x40) as usize, 0x40);
-            dump_block(v, 0x100, 0x40);
-        }
-        "uart@10000000" => {
-            println!("{name}: {l:x}");
-            dump_block(v, l as usize, 0x40);
-        }
-        "virtio_mmio@10001000" | "virtio_mmio@10002000" => {
-            dump_block(v, 0x100, 0x40);
-        }
-        _ => {}
-    }
-}
-
-const WHERE_ARE_WE: bool = false;
-const WALK_DT: bool = true;
-
+/// print a memory range from given pointers - name, start, end, and size
 unsafe fn print_memory_range(name: &str, start: &*const c_void, end: &*const c_void) {
     let start = start as *const _ as u64;
     let end = end as *const _ as u64;
@@ -91,6 +66,9 @@ unsafe fn print_memory_range(name: &str, start: &*const c_void, end: &*const c_v
     println!("  {name}{start:#x}-{end:#x} ({size:#x})");
 }
 
+/// Print binary sections of the kernel: text, rodata, data, bss, total range.
+/// NOTE: This needs to align with the corresponding linker script, where the
+/// sections are defined.
 fn print_binary_sections() {
     extern "C" {
         static text: *const c_void;
@@ -111,6 +89,41 @@ fn print_binary_sections() {
         print_memory_range("data:\t\t", &data, &edata);
         print_memory_range("bss:\t\t", &bss, &end);
         print_memory_range("total:\t", &text, &end);
+    }
+}
+
+fn consume_dt_block(name: &str, a: u64, l: u64) {
+    let v = phys_to_virt(a as usize);
+    println!("- {name}: {a:016x}:{v:016x} ({l:x})");
+    let v = a as usize;
+    match name {
+        "flash@20000000" => {
+            let v = phys_to_virt(a as usize);
+            dump_block(v, 0x200, 0x40);
+        }
+        "test@100000" => {
+            /*
+            let x = read32(v);
+            println!("{name}[0]:{x:x}");
+            write32(v, x | 0x1234_5678);
+            let x = read32(v);
+            println!("{name}[0]:{x:x}");
+            */
+        }
+        "pci@30000000" => {
+            // NOTE: v+l overflows usize, hitting 0
+            // dump_block(v, (l - 0x40) as usize, 0x40);
+            // dump_block(v, 0x100, 0x40);
+        }
+        "uart@10000000" => {
+            println!("{name}: {l:x}");
+            // let v = phys_to_virt(a as usize);
+            // dump(v, l as usize);
+        }
+        "virtio_mmio@10001000" | "virtio_mmio@10002000" => {
+            // dump_block(v, 0x100, 0x40);
+        }
+        _ => {}
     }
 }
 
@@ -139,18 +152,42 @@ fn walk_dt(dt: &DeviceTree) {
     });
 }
 
+unsafe fn sbi_halp() {
+    unsafe {
+        core::arch::asm!(
+            "lui a0, 0x31", // char "1"
+            "lui a1, 0x0",  //
+            "lui a7, 0x1",  // extension: SBI_LEGACY_PUTCHAR
+            "ecall",        //
+        );
+    }
+}
+
+/// check on memory mapping foo
+fn where_are_we() {
+    let x = "test";
+    let p = x.as_ptr();
+    // e.g., 0xffffffffc0400096
+    println!("YOU ARE HERE (approx.): {p:#x?}");
+}
+
 #[no_mangle]
 pub extern "C" fn main9(hartid: usize, dtb_ptr: u64) -> ! {
-    let dt = unsafe { DeviceTree::from_u64(dtb_ptr).unwrap() };
-
-    devcons::init(&dt);
-    println!("\n--> DT / native devcons\n");
+    if false {
+        unsafe {
+            sbi_halp();
+        }
+    }
     devcons::init_sbi();
     println!("\n--> SBI devcons\n");
+    // QEMU: dtb@bf000000
     println!("dtb@{dtb_ptr:x}");
+    let dt = unsafe { DeviceTree::from_u64(dtb_ptr).unwrap() };
+
+    // devcons::init(&dt);
+    // println!("\n--> DT / native devcons\n");
 
     platform_init();
-
     println!("r9 from the Internet");
     println!("Domain0 Boot HART = {hartid}");
     println!("DTB found at: {dtb_ptr:#x}");
@@ -159,12 +196,9 @@ pub extern "C" fn main9(hartid: usize, dtb_ptr: u64) -> ! {
     if WALK_DT {
         walk_dt(&dt);
     }
-    // check on memory mapping foo
+
     if WHERE_ARE_WE {
-        let x = "test";
-        let p = x.as_ptr();
-        // e.g., 0xffffffffc0400096
-        println!("{p:#x?}");
+        where_are_we();
     }
 
     #[cfg(not(test))]
