@@ -3,7 +3,6 @@ use core::fmt::Error;
 use core::fmt::Write;
 
 use port::devcons::Uart;
-use port::println;
 
 pub struct Uart16550 {
     base: *mut u8,

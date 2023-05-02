@@ -94,7 +94,7 @@ fn print_binary_sections() {
 
 fn consume_dt_block(name: &str, a: u64, l: u64) {
     let v = phys_to_virt(a as usize);
-    let v = a as usize;
+    // let v = a as usize;
     println!("- {name}: {a:016x}:{v:016x} ({l:x})");
     match name {
         "test@100000" => {
@@ -106,18 +106,22 @@ fn consume_dt_block(name: &str, a: u64, l: u64) {
         }
         "uart@10000000" => {
             println!("{name}: {l:x}");
-            dump(v, 0x8);
+            dump(v, 0x4);
+        }
+        "plic@c000000" | "clint@2000000" => {
+            let x = read32(v);
+            println!("{name}[0]:{x:x}");
         }
         "virtio_mmio@10001000" | "virtio_mmio@10002000" => {
-            dump_block(v, 0x100, 0x40);
+            dump(v, 0x20);
         }
         "flash@20000000" => {
-            dump_block(v, 0x200, 0x40);
+            dump(v, 0x20);
         }
         "pci@30000000" => {
             // NOTE: v+l overflows usize, hitting 0
             // dump_block(v, (l - 0x40) as usize, 0x40);
-            dump_block(v, 0x100, 0x40);
+            dump_block(v, 0x40, 0x10);
         }
         _ => {}
     }
@@ -158,14 +162,14 @@ fn where_are_we() {
 
 #[no_mangle]
 pub extern "C" fn main9(hartid: usize, dtb_ptr: u64) -> ! {
-    devcons::init_sbi();
-    println!("\n--> SBI devcons\n");
+    // devcons::init_sbi();
+    // println!("\n--> SBI devcons\n");
     // QEMU: dtb@bf000000
-    println!("dtb@{dtb_ptr:x}");
+    // println!("dtb@{dtb_ptr:x}");
     let dt = unsafe { DeviceTree::from_u64(dtb_ptr).unwrap() };
 
-    // devcons::init(&dt);
-    // println!("\n--> DT / native devcons\n");
+    devcons::init(&dt);
+    println!("\n--> DT / native devcons\n");
 
     platform_init();
     println!("r9 from the Internet");
