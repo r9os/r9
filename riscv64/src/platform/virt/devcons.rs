@@ -16,7 +16,9 @@ pub fn init(dt: &DeviceTree) {
         .unwrap();
 
     Console::new(|| {
-        let mut uart = Uart16550::new(phys_to_virt(ns16550a_reg.addr as usize));
+        let addr = phys_to_virt(ns16550a_reg.addr as usize);
+        let addr = ns16550a_reg.addr as usize;
+        let mut uart = Uart16550::new(addr);
         uart.init(115_200);
 
         static mut UART: MaybeUninit<Uart16550> = MaybeUninit::uninit();
