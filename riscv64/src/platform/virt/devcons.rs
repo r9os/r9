@@ -31,7 +31,7 @@ pub fn init(dt: &DeviceTree) {
 
 pub fn init_sbi() {
     Console::new(|| {
-        let mut uart = Sbi::new();
+        let uart = Sbi::new();
 
         static mut UART: MaybeUninit<Sbi> = MaybeUninit::uninit();
 
