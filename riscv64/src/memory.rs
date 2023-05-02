@@ -1,4 +1,7 @@
 use crate::platform::PHYSICAL_MEMORY_OFFSET;
+use port::println;
+
+const DEBUG_PHYS_TO_VIRT: bool = true;
 
 /// Convert physical address to virtual address
 /// See 4.3.2 Virtual Address Translation Process,
@@ -13,6 +16,10 @@ use crate::platform::PHYSICAL_MEMORY_OFFSET;
 /// |    [55..30]    |[29..21]|[20..12]|[11..0] |
 /// NOTE: PPN[2] is 26 bits wide, VPN[2] only 9
 #[inline]
-pub const fn phys_to_virt(paddr: usize) -> usize {
-    PHYSICAL_MEMORY_OFFSET + paddr
+pub fn phys_to_virt(paddr: usize) -> usize {
+    let vaddr = PHYSICAL_MEMORY_OFFSET + paddr;
+    if DEBUG_PHYS_TO_VIRT {
+        println!("Physical address {paddr:x} translates to {vaddr:x}");
+    }
+    vaddr
 }
