@@ -4,7 +4,7 @@ use core::{
     mem::{self, MaybeUninit},
 };
 
-const DEBUG_DT_PARSING: bool = true;
+const DEBUG_DT_PARSING: bool = false;
 
 #[derive(Debug)]
 pub enum ParseError {
