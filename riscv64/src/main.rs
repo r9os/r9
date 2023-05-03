@@ -44,7 +44,7 @@ pub extern "C" fn main9(hartid: usize, dtb_ptr: usize) -> ! {
     devcons::init_sbi();
 
     extern "C" {
-        pub(crate) static mut boot_page_table: PageTable;
+        static mut boot_page_table: PageTable;
     }
     println!();
     let root = unsafe { &mut boot_page_table };
@@ -61,6 +61,16 @@ pub extern "C" fn main9(hartid: usize, dtb_ptr: usize) -> ! {
         println!("0x8000_0000 not found");
     }
 
+    println!();
+    println!("is the UART accessible?");
+    if let Some(entry) = paging::virt_to_phys(root, memory::phys_to_virt(0x1000_0000)) {
+        println!("0x{:X} => 0x{:X}", memory::phys_to_virt(0x1000_0000), entry);
+    } else {
+        println!("0x{:X} not found", memory::phys_to_virt(0x1000_0000));
+    }
+
+    println!();
+    println!("map the UART");
     // map the UART port
     // map uses an hack to work, don't use this for something else!!
     paging::map(
@@ -77,6 +87,8 @@ pub extern "C" fn main9(hartid: usize, dtb_ptr: usize) -> ! {
         println!("0x{:X} not found", memory::phys_to_virt(0x1000_0000));
     }
 
+    println!();
+    println!("switch to UART devcons");
     // switch to UART
     devcons::init(&dt);
     platform_init();

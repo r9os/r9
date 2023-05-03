@@ -6,6 +6,7 @@ pub struct PageTable {
 
 static mut KERNEL_PAGETABLE: PageTable = PageTable::empty();
 
+#[allow(dead_code)]
 impl PageTable {
     pub fn as_addr(&self) -> usize {
         self.entries.as_ptr() as usize
@@ -20,6 +21,7 @@ impl PageTable {
     }
 }
 
+#[allow(dead_code)]
 #[repr(usize)]
 #[derive(Copy, Clone)]
 pub enum EntryBits {
@@ -50,10 +52,13 @@ impl EntryBits {
     }
 }
 
+#[repr(C)]
 #[derive(Copy, Clone)]
 pub struct PageTableEntry {
     pub entry: usize,
 }
+
+#[allow(dead_code)]
 impl PageTableEntry {
     pub fn is_valid(&self) -> bool {
         self.get_entry() & EntryBits::Valid.val() != 0
