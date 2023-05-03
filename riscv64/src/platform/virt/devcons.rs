@@ -2,7 +2,6 @@
 
 use core::mem::MaybeUninit;
 
-use crate::memory::phys_to_virt;
 use crate::sbi::Sbi;
 use crate::uart16550::Uart16550;
 use port::{devcons::Console, fdt::DeviceTree};

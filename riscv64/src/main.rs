@@ -6,6 +6,9 @@
 #![allow(clippy::upper_case_acronyms)]
 #![forbid(unsafe_op_in_unsafe_fn)]
 
+extern crate alloc;
+use alloc::boxed::Box;
+
 mod address;
 mod memory;
 mod paging;
@@ -42,6 +45,9 @@ pub extern "C" fn main9(hartid: usize, dtb_ptr: usize) -> ! {
 
     // use sbi for early messages
     devcons::init_sbi();
+    memory::init_heap(&dt);
+
+    // list_dtb(&dt);
 
     extern "C" {
         static mut boot_page_table: PageTable;
@@ -97,6 +103,15 @@ pub extern "C" fn main9(hartid: usize, dtb_ptr: usize) -> ! {
     println!("Domain0 Boot HART = {hartid}");
     println!("DTB found at: {:x} and {:x}", dtb_ptr, memory::phys_to_virt(dtb_ptr));
     println!();
+
+    println!("allocating ...");
+    let mut a = Box::new(0);
+    for i in 0..10240 {
+        a = Box::new(4711 + i);
+    }
+    a = Box::new(4711);
+    println!("{:p}", a);
+    println!("{}", a);
 
     #[cfg(not(test))]
     sbi::shutdown();

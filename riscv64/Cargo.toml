@@ -5,5 +5,6 @@ edition = "2021"
 
 [dependencies]
 bit_field = "0.10.2"
+linked_list_allocator = "0.10.5"
 port = { path = "../port" }
 

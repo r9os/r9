@@ -1,3 +1,5 @@
+use crate::memory::kalloc;
+
 /// a single PageTable with 512 entries
 #[repr(C)]
 pub struct PageTable {
@@ -141,11 +143,7 @@ pub fn map(root: &mut PageTable, vaddr: usize, paddr: usize, bits: usize, level:
     for i in (level..2).rev() {
         if !v.is_valid() {
             // Allocate a page
-            // let page = zalloc(1);
-
-            // XXX Evil HACK !! XXX
-            let mut page: usize = 0x8000_0000 + 0x1000_0000;
-
+            let page = kalloc();
             // The page is already aligned by 4,096, so store it
             // directly The page is stored in the entry shifted
             // right by 2 places.
