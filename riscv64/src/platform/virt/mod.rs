@@ -3,7 +3,7 @@ pub mod devcons;
 use crate::paging::PageTable;
 use core::ptr::null_mut;
 
-pub const PHYSICAL_MEMORY_OFFSET: usize = 0xFFFF_FFFF_C000_0000;
+pub const PHYSICAL_MEMORY_OFFSET: usize = 0xFFFF_FFFF_4000_0000;
 
 pub const PGSIZE: usize = 4096; // bytes per page
 pub const PGSHIFT: usize = 12; // bits of offset within a page

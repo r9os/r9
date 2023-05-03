@@ -27,7 +27,7 @@ impl Uart for Uart16550 {
 }
 
 impl Uart16550 {
-    pub fn new(addr: u64) -> Self {
+    pub fn new(addr: usize) -> Self {
         Uart16550 { base: addr as *mut u8 }
     }
 
