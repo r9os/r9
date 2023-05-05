@@ -9,5 +9,6 @@
         "./riscv64/Cargo.toml",
         "./riscv64/Cargo.toml",
         "./riscv64/Cargo.toml"
-    ]
+    ],
+    "rust-analyzer.showUnlinkedFileNotification": false
 }

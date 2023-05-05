@@ -5,10 +5,7 @@ extern crate alloc;
 use alloc::alloc::{GlobalAlloc, Layout};
 use core::arch::asm;
 use core::panic::PanicInfo;
-
 use port::{print, println};
-
-use linked_list_allocator::LockedHeap;
 
 // ///////////////////////////////////
 // / LANGUAGE STRUCTURES / FUNCTIONS
@@ -53,6 +50,3 @@ unsafe impl GlobalAlloc for FakeAlloc {
 
 // #[global_allocator]
 static FAKE_ALLOCATOR: FakeAlloc = FakeAlloc {};
-
-#[global_allocator]
-pub static ALLOCATOR: LockedHeap = LockedHeap::empty();
