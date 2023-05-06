@@ -1,9 +1,14 @@
-use crate::platform::PGSIZE;
-use crate::platform::PHYSICAL_MEMORY_OFFSET;
+use crate::{
+    dat::Mach,
+    platform::{PGSIZE, PHYSICAL_MEMORY_OFFSET},
+};
 use alloc::alloc::{alloc_zeroed, dealloc, Layout};
 use linked_list_allocator::LockedHeap;
-use port::devcons::print;
 use port::fdt::DeviceTree;
+
+extern "C" {
+    pub static end: usize; // defined in kernel.ld
+}
 
 #[global_allocator]
 pub static ALLOCATOR: LockedHeap = LockedHeap::empty();
@@ -20,15 +25,12 @@ pub fn virt_to_phys(vaddr: usize) -> usize {
 }
 
 pub fn init_heap(dt: &DeviceTree) {
-    extern "C" {
-        static end: usize; // defined in kernel.ld
-    }
-
     let mut heap_start: usize = 0;
     let mut heap_size: usize = 0;
 
     // get the physical end address of the kernel
-    let kernel_end = virt_to_phys(unsafe { &end as *const usize as usize });
+    let kernel_end =
+        virt_to_phys(unsafe { &end as *const usize as usize }) + core::mem::size_of::<Mach>();
 
     // lookup the memory size
     for n in dt.nodes() {
