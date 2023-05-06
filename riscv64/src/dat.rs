@@ -3,11 +3,15 @@
 pub struct Mach {
     /// physical id of processor
     pub machno: usize,
-    pub online: usize,
+    pub online: bool,
 }
 
 impl Mach {
-    pub fn new() -> Self {
-        Self { machno: 0, online: 0 }
+    pub const fn new() -> Self {
+        Self { machno: 0, online: false }
+    }
+
+    pub fn is_online(&self) -> bool {
+        self.online
     }
 }

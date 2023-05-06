@@ -29,8 +29,7 @@ pub fn init_heap(dt: &DeviceTree) {
     let mut heap_size: usize = 0;
 
     // get the physical end address of the kernel
-    let kernel_end =
-        virt_to_phys(unsafe { &end as *const usize as usize }) + core::mem::size_of::<Mach>();
+    let kernel_end = virt_to_phys(unsafe { &end as *const usize as usize });
 
     // lookup the memory size
     for n in dt.nodes() {
