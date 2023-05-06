@@ -127,7 +127,8 @@ impl PhysicalAddress {
         Self(self.0 + addr)
     }
 
-    pub fn to_pge(&self) -> usize {
+    /// helper to get the address for the page table entry
+    pub fn pg_entry(&self) -> usize {
         ((self.0 >> 12) & PGMASK) << 28
             | ((self.0 >> 21) & PGMASK) << 19
             | ((self.0 >> 30) & 0x3ff_ffff) << 10

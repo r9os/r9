@@ -123,7 +123,7 @@ pub fn map(
         let entry = ((v.get_entry() & !0x3ff) << 2) as *mut PageTableEntry;
         v = unsafe { entry.add(vaddr.page_num(i)).as_mut().unwrap() };
     }
-    let entry = paddr.to_pge() |
+    let entry = paddr.pg_entry() |
 				bits |                    // Specified bits, such as User, Read, Write, etc
 				EntryBits::Valid.val() |  // Valid bit
 				EntryBits::Dirty.val() |  // Some machines require this to =1
