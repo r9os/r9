@@ -1,7 +1,4 @@
-use crate::{
-    dat::Mach,
-    platform::{PGSIZE, PHYSICAL_MEMORY_OFFSET},
-};
+use crate::platform::{PGSIZE, PHYSICAL_MEMORY_OFFSET};
 use alloc::alloc::{alloc_zeroed, dealloc, Layout};
 use linked_list_allocator::LockedHeap;
 use port::fdt::DeviceTree;
@@ -34,9 +31,9 @@ pub fn init_heap(dt: &DeviceTree) {
 
     // lookup the memory size
     for n in dt.nodes() {
-        if let Some(name) = DeviceTree::node_name(&dt, &n) {
+        if let Some(name) = DeviceTree::node_name(dt, &n) {
             if name.starts_with("memory@") {
-                let reg_block_iter = DeviceTree::property_reg_iter(&dt, n);
+                let reg_block_iter = DeviceTree::property_reg_iter(dt, n);
                 for b in reg_block_iter {
                     heap_start = b.addr as usize;
                     heap_size = b.len.unwrap() as usize;
@@ -62,14 +59,15 @@ pub fn init_heap(dt: &DeviceTree) {
 
 pub fn kalloc() -> *mut u8 {
     unsafe {
-        let layout = Layout::from_size_align(PGSIZE as usize, PGSIZE).unwrap();
-        return alloc_zeroed(layout);
+        let layout = Layout::from_size_align(PGSIZE, PGSIZE).unwrap();
+        alloc_zeroed(layout)
     }
 }
 
+#[allow(dead_code)]
 pub fn kfree(ptr: *mut u8) {
     unsafe {
-        let layout = Layout::from_size_align(PGSIZE as usize, PGSIZE).unwrap();
+        let layout = Layout::from_size_align(PGSIZE, PGSIZE).unwrap();
         dealloc(ptr, layout);
     }
 }

@@ -8,8 +8,10 @@ use core::fmt::Error;
 use core::fmt::Write;
 use port::devcons::Uart;
 
+#[allow(dead_code)]
 const SBI_SET_TIMER: usize = 0;
 const SBI_CONSOLE_PUTCHAR: usize = 1;
+#[allow(dead_code)]
 const SBI_CONSOLE_GETCHAR: usize = 2;
 const _SBI_CLEAR_IPI: usize = 3;
 const _SBI_SEND_IPI: usize = 4;

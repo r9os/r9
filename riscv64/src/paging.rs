@@ -136,6 +136,7 @@ pub fn map(
 }
 
 /// look up a virtual address in the page table an return the physical address
+#[allow(dead_code)]
 pub fn lookup(root: &PageTable, vaddr: VirtualAddress) -> Option<usize> {
     let mut v = &root.entries[vaddr.page_num(2)];
 
@@ -145,7 +146,7 @@ pub fn lookup(root: &PageTable, vaddr: VirtualAddress) -> Option<usize> {
         } else if v.is_leaf() {
             let off_mask = (1 << (12 + i * 9)) - 1;
             let vaddr_pgoff = vaddr.0 & off_mask;
-            let addr = ((v.get_entry() << 2) as usize) & !off_mask;
+            let addr = (v.get_entry() << 2) & !off_mask;
             return Some(addr | vaddr_pgoff);
         }
         let entry = ((v.get_entry() & !0x3ff) << 2) as *const PageTableEntry;

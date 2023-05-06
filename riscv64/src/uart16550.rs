@@ -55,6 +55,7 @@ impl Uart16550 {
         }
     }
 
+    #[allow(dead_code)]
     pub fn get(&mut self) -> Option<u8> {
         let ptr = self.base;
         unsafe {
