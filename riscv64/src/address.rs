@@ -1,7 +1,5 @@
-use bit_field::BitField;
-use core::cmp::{Eq, Ord, Ordering, PartialEq};
+use core::cmp::PartialEq;
 use core::convert::From;
-use core::convert::Into;
 use core::ops::{Add, Sub};
 
 use crate::platform::{PGMASK, PGMASKLEN, PGSHIFT, PGSIZE};

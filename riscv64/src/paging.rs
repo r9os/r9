@@ -9,7 +9,8 @@ pub struct PageTable {
     pub entries: [PageTableEntry; 512],
 }
 
-static mut KERNEL_PAGETABLE: PageTable = PageTable::empty();
+// currently not used
+// static mut KERNEL_PAGETABLE: PageTable = PageTable::empty();
 
 #[allow(dead_code)]
 impl PageTable {
