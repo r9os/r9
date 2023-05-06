@@ -1,4 +1,7 @@
-use crate::memory::kalloc;
+use crate::{
+    address::{PhysicalAddress, VirtualAddress},
+    memory::kalloc,
+};
 
 /// a single PageTable with 512 entries
 #[repr(C)]
@@ -102,63 +105,25 @@ impl PageTableEntry {
 ///          Read, Write, Execute
 ///       The valid bit automatically gets added.
 /// level: 0 = 4KiB, 1 = 2MiB, 2 = 1GiB
-pub fn map(root: &mut PageTable, vaddr: usize, paddr: usize, bits: usize, level: usize) {
-    // Make sure that Read, Write, or Execute have been provided
-    // otherwise, we'll leak memory and always create a page fault.
+pub fn map(
+    root: &mut PageTable,
+    vaddr: VirtualAddress,
+    paddr: PhysicalAddress,
+    bits: usize,
+    level: usize,
+) {
     assert!(bits & 0xe != 0);
-    // Extract out each VPN from the virtual address
-    // On the virtual address, each VPN is exactly 9 bits,
-    // which is why we use the mask 0x1ff = 0b1_1111_1111 (9 bits)
-    let vpn = [
-        // VPN[0] = vaddr[20:12]
-        (vaddr >> 12) & 0x1ff,
-        // VPN[1] = vaddr[29:21]
-        (vaddr >> 21) & 0x1ff,
-        // VPN[2] = vaddr[38:30]
-        (vaddr >> 30) & 0x1ff,
-    ];
 
-    // Just like the virtual address, extract the physical address
-    // numbers (PPN). However, PPN[2] is different in that it stores
-    // 26 bits instead of 9. Therefore, we use,
-    // 0x3ff_ffff = 0b11_1111_1111_1111_1111_1111_1111 (26 bits).
-    let ppn = [
-        // PPN[0] = paddr[20:12]
-        (paddr >> 12) & 0x1ff,
-        // PPN[1] = paddr[29:21]
-        (paddr >> 21) & 0x1ff,
-        // PPN[2] = paddr[55:30]
-        (paddr >> 30) & 0x3ff_ffff,
-    ];
-    // We will use this as a floating reference so that we can set
-    // individual entries as we walk the table.
-    let mut v = &mut root.entries[vpn[2]];
-    // Now, we're going to traverse the page table and set the bits
-    // properly. We expect the root to be valid, however we're required to
-    // create anything beyond the root.
-    // In Rust, we create a range iterator using the .. operator.
-    // The .rev() will reverse the iteration since we need to start with
-    // VPN[2] The .. operator is inclusive on start but exclusive on end.
-    // So, (0..2) will iterate 0 and 1.
+    let mut v = &mut root.entries[vaddr.page_num(2)];
     for i in (level..2).rev() {
         if !v.is_valid() {
-            // Allocate a page
             let page = kalloc();
-            // The page is already aligned by 4,096, so store it
-            // directly The page is stored in the entry shifted
-            // right by 2 places.
             v.set_entry((page as usize >> 2) | EntryBits::Valid.val());
         }
         let entry = ((v.get_entry() & !0x3ff) << 2) as *mut PageTableEntry;
-        v = unsafe { entry.add(vpn[i]).as_mut().unwrap() };
+        v = unsafe { entry.add(vaddr.page_num(i)).as_mut().unwrap() };
     }
-    // When we get here, we should be at VPN[0] and v should be pointing to
-    // our entry.
-    // The entry structure is Figure 4.18 in the RISC-V Privileged
-    // Specification
-    let entry = (ppn[2] << 28) |   // PPN[2] = [53:28]
-	            (ppn[1] << 19) |   // PPN[1] = [27:19]
-				(ppn[0] << 10) |   // PPN[0] = [18:10]
+    let entry = paddr.to_pge() |
 				bits |                    // Specified bits, such as User, Read, Write, etc
 				EntryBits::Valid.val() |  // Valid bit
 				EntryBits::Dirty.val() |  // Some machines require this to =1
@@ -169,22 +134,21 @@ pub fn map(root: &mut PageTable, vaddr: usize, paddr: usize, bits: usize, level:
     v.set_entry(entry);
 }
 
-pub fn virt_to_phys(root: &PageTable, vaddr: usize) -> Option<usize> {
-    let vpn = [(vaddr >> 12) & 0x1ff, (vaddr >> 21) & 0x1ff, (vaddr >> 30) & 0x1ff];
-
-    let mut v = &root.entries[vpn[2]];
+/// look up a virtual address in the page table an return the physical address
+pub fn lookup(root: &PageTable, vaddr: VirtualAddress) -> Option<usize> {
+    let mut v = &root.entries[vaddr.page_num(2)];
 
     for i in (0..=2).rev() {
         if v.is_invalid() {
             break;
         } else if v.is_leaf() {
             let off_mask = (1 << (12 + i * 9)) - 1;
-            let vaddr_pgoff = vaddr & off_mask;
+            let vaddr_pgoff = vaddr.0 & off_mask;
             let addr = ((v.get_entry() << 2) as usize) & !off_mask;
             return Some(addr | vaddr_pgoff);
         }
         let entry = ((v.get_entry() & !0x3ff) << 2) as *const PageTableEntry;
-        v = unsafe { entry.add(vpn[i - 1]).as_ref().unwrap() };
+        v = unsafe { entry.add(vaddr.page_num(i - 1)).as_ref().unwrap() };
     }
 
     None

@@ -1,6 +1,9 @@
 use port::fdt::DeviceTree;
 
-use crate::paging::{self, PageTable};
+use crate::{
+    address::{PhysicalAddress, VirtualAddress},
+    paging::{self, PageTable},
+};
 
 pub mod devcons;
 
@@ -27,8 +30,8 @@ pub fn platform_init(dt: &DeviceTree) {
         port::println!("mapping serial port to 0x{:X}", ns16550a_reg.addr);
         paging::map(
             root,
-            ns16550a_reg.addr as usize,
-            ns16550a_reg.addr as usize,
+            VirtualAddress::new(ns16550a_reg.addr as usize),
+            PhysicalAddress::new(ns16550a_reg.addr as usize),
             paging::EntryBits::ReadWrite.val(),
             0, // level 0 = 4k page
         );

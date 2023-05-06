@@ -126,6 +126,12 @@ impl PhysicalAddress {
     pub fn add_addr(&self, addr: usize) -> Self {
         Self(self.0 + addr)
     }
+
+    pub fn to_pge(&self) -> usize {
+        ((self.0 >> 12) & PGMASK) << 28
+            | ((self.0 >> 21) & PGMASK) << 19
+            | ((self.0 >> 30) & 0x3ff_ffff) << 10
+    }
 }
 
 impl Add for VirtualAddress {
