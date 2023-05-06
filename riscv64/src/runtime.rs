@@ -48,5 +48,6 @@ unsafe impl GlobalAlloc for FakeAlloc {
     }
 }
 
-// #[global_allocator]
+#[cfg(test)]
+#[global_allocator]
 static FAKE_ALLOCATOR: FakeAlloc = FakeAlloc {};

@@ -10,6 +10,7 @@ extern "C" {
     pub static end: usize; // defined in kernel.ld
 }
 
+#[cfg(not(test))]
 #[global_allocator]
 pub static ALLOCATOR: LockedHeap = LockedHeap::empty();
 
@@ -49,7 +50,10 @@ pub fn init_heap(dt: &DeviceTree) {
     let heap_start: usize = kernel_end; // the heap starts where the kernel bss.end section is
 
     // initalize the allocator
-    unsafe { ALLOCATOR.lock().init(heap_start as *const usize as *mut u8, heap_size) }
+    #[cfg(not(test))]
+    unsafe {
+        ALLOCATOR.lock().init(heap_start as *const usize as *mut u8, heap_size)
+    }
 
     port::println!();
     port::println!("heap start: 0x{:X}", heap_start);
