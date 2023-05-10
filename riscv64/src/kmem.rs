@@ -1,15 +1,23 @@
-use crate::platform::{PGSIZE, PHYSICAL_MEMORY_OFFSET};
+use crate::{
+    paging::PageTable,
+    platform::{PGSIZE, PHYSICAL_MEMORY_OFFSET},
+};
 use alloc::alloc::{alloc_zeroed, dealloc, Layout};
 use linked_list_allocator::LockedHeap;
 use port::fdt::DeviceTree;
 
 extern "C" {
+    static mut boot_page_table: PageTable;
     pub static end: usize; // defined in kernel.ld
 }
 
 #[cfg(not(test))]
 #[global_allocator]
 pub static ALLOCATOR: LockedHeap = LockedHeap::empty();
+
+pub fn get_boot_page_table() -> &'static mut PageTable {
+    unsafe { &mut boot_page_table }
+}
 
 /// Convert physical address to virtual address
 #[inline]

@@ -12,7 +12,7 @@ pub use alloc::*;
 mod address;
 mod dat;
 mod fns;
-mod memory;
+mod kmem;
 mod paging;
 mod platform;
 mod runtime;
@@ -41,8 +41,8 @@ pub extern "C" fn main9(hartid: usize, dtb_ptr: usize) -> ! {
         m.machno = hartid;
         m.online = true;
 
-        let dt = unsafe { DeviceTree::from_u64(memory::phys_to_virt(dtb_ptr) as u64).unwrap() };
-        memory::init_heap(&dt);
+        let dt = unsafe { DeviceTree::from_u64(kmem::phys_to_virt(dtb_ptr) as u64).unwrap() };
+        kmem::init_heap(&dt);
         platform_init(&dt);
 
         println!("switch to UART devcons");
@@ -51,7 +51,7 @@ pub extern "C" fn main9(hartid: usize, dtb_ptr: usize) -> ! {
         println!();
         println!("r9 from the Internet");
         println!("Domain0 Boot HART = {hartid}");
-        println!("DTB found at: {:x} and {:x}", dtb_ptr, memory::phys_to_virt(dtb_ptr));
+        println!("DTB found at: {:x} and {:x}", dtb_ptr, kmem::phys_to_virt(dtb_ptr));
         println!();
     } else {
         // startup the other hart's

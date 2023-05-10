@@ -2,7 +2,8 @@ use port::fdt::DeviceTree;
 
 use crate::{
     address::{PhysicalAddress, VirtualAddress},
-    paging::{self, PageTable},
+    kmem::get_boot_page_table,
+    paging,
 };
 
 pub mod devcons;
@@ -14,12 +15,11 @@ pub const PGSHIFT: usize = 12; // bits of offset within a page
 pub const PGMASKLEN: usize = 9;
 pub const PGMASK: usize = 0x1FF;
 
-pub fn platform_init(dt: &DeviceTree) {
-    extern "C" {
-        static mut boot_page_table: PageTable;
-    }
+#[cfg(not(test))]
+core::arch::global_asm!(include_str!("boot_page_table.S"),);
 
-    let root = unsafe { &mut boot_page_table };
+pub fn platform_init(dt: &DeviceTree) {
+    let root = get_boot_page_table();
 
     if let Some(ns16550a_reg) = dt
         .find_compatible("ns16550a")

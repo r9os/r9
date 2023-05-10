@@ -1,6 +1,6 @@
 use crate::{
     address::{PhysicalAddress, VirtualAddress},
-    memory::kalloc,
+    kmem::kalloc,
 };
 
 /// a single PageTable with 512 entries
