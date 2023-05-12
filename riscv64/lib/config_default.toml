@@ -7,7 +7,7 @@ buildflags = [
 [link]
 arch = 'riscv'
 script = 'riscv64/lib/kernel.ld'
-load-address = '0xffffffffC0000000'
+load-address = '0xffffffffc0200000'
 
 [config]
 platform = "virt"
