@@ -34,3 +34,33 @@ OBJCOPY=$(which llvm-objcopy) cargo xtask qemukvm
 If `No such file or directory (os error 2)` messages persist, 
 check to ensure `qemu` or `qemu-kvm` is installed and the 
 `qemu-system-x86_64` binary is in your path (or `qemu-system-aarch64` in the case of aarch64).
+
+## Running on Qemu
+
+R9 can be run using qemu for the various supported architectures:
+
+|Arch|Commandline|
+|----|-----------|
+|aarch64|cargo xtask qemu --arch aarch64 --verbose|
+|x86-64|cargo xtask qemu --arch x86-64 --verbose|
+|riscv|cargo xtask qemu --arch riscv64 --verbose|
+
+## Running on Real Hardware™️
+
+R9 has been run on the following hardware to a greater or lesser degree:
+- Raspberry Pi 4 (Gets as far as printing 'r9' via the miniuart)
+
+### Raspberry Pi, Netboot
+
+Assuming you can set up a TFTP server (good luck, it's incredibly fiddly, but for what it's worth, dnsmasq can work occasionally), and assuming the location of your netboot directory, you can build and copy the binary using the following command:
+```
+cargo xtask dist --arch aarch64 --verbose && cp target/aarch64-unknown-none-elf/debug/aarch64-qemu.gz ../netboot/kernel8.img
+```
+
+This copies a compressed binary, which should be much faster to copy across the network.
+
+The Raspberry Pi firmware loads `config.txt` before the kernel.  Here we can set which UART to use, amongst other things.  The following contents will set up to use the miniuart:
+```
+enable_uart=1
+core_freq_min=500
+```

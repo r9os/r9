@@ -2,75 +2,145 @@
 
 STACKSZ = 4096*4
 
-.equ	CURRENTEL_EL,		(1<<3) | (1<<2)
+CURRENTEL_EL			= (1<<3) | (1<<2)
 
-.equ	SCR_EL3_NS,		(1<<0)
-.equ	SCR_EL3_SMD,		(1<<7)
-.equ	SCR_EL3_HCE,		(1<<8)
-.equ	SCR_EL3_RW,		(1<<10)
+SCR_EL3_NS			= (1<<0)
+SCR_EL3_SMD			= (1<<7)
+SCR_EL3_HCE			= (1<<8)
+SCR_EL3_RW			= (1<<10)
 
-.equ	SPSR_EL3_M_EL2H,	(1<<3) | (1<<0)	// Exception level and SP: EL2H
-.equ	SPSR_EL3_F,		(1<<6)		// FIQ
-.equ	SPSR_EL3_I,		(1<<7)		// IRQ
-.equ	SPSR_EL3_A,		(1<<8)		// SError
-.equ	SPSR_EL3_D,		(1<<9)		// Debug exception
+SPSR_EL3_M_EL2H			= (1<<3) | (1<<0)	// Exception level and SP: EL2H
+SPSR_EL3_F			= (1<<6)		// FIQ
+SPSR_EL3_I			= (1<<7)		// IRQ
+SPSR_EL3_A			= (1<<8)		// SError
+SPSR_EL3_D			= (1<<9)		// Debug exception
 
-.equ	HCR_EL2_RW,		(1<<31)
+HCR_EL2_RW			= (1<<31)
 
-.equ	SPSR_EL2_M_EL1H,	(1<<2) | (1<<0)	// Exception level and SP: EL1h
-.equ	SPSR_EL2_F,		(1<<6)		// FIQ
-.equ	SPSR_EL2_I,		(1<<7)		// IRQ
-.equ	SPSR_EL2_A,		(1<<8)		// SError
-.equ	SPSR_EL2_D,		(1<<9)		// Debug exception
+SPSR_EL2_M_EL1H			= (1<<2) | (1<<0)	// Exception level and SP: EL1h
+SPSR_EL2_F			= (1<<6)		// FIQ
+SPSR_EL2_I			= (1<<7)		// IRQ
+SPSR_EL2_A			= (1<<8)		// SError
+SPSR_EL2_D			= (1<<9)		// Debug exception
 
-.equ	CPACR_EL1_FPEN,		(1<<21) | (1<<20)	// Don't trap FPU instr at EL1,0
+CPACR_EL1_FPEN			= (1<<21) | (1<<20)	// Don't trap FPU instr at EL1,0
 
-.equ	TCR_EL1_T0SZ,		(16<<0)		// 2^(64-N) size offset of region addressed by TTBR0_EL1: 2^(64-N)
-.equ	TCR_EL1_TG0,		(0<<14)		// TTBR0_EL1 4KiB granule
-.equ	TCR_EL1_T1SZ,		(16<<16)	// 2^(64-N) size offset of region addressed by TTBR1_EL1: 2^(64-N)
-.equ	TCR_EL1_TG1,		(2<<30)		// TTBR1_EL1 4KiB granule
-.equ	TCR_EL1_IPS,		(1<<1)		// 40bit physical addresses (qemu default)
+TCR_EL1_T0SZ			= (16<<0)		// 2^(64-N) size offset of region addressed by TTBR0_EL1: 2^(64-N)
+TCR_EL1_TG0			= (0<<14)		// TTBR0_EL1 4KiB granule
+TCR_EL1_T1SZ			= (16<<16)		// 2^(64-N) size offset of region addressed by TTBR1_EL1: 2^(64-N)
+TCR_EL1_TG1			= (2<<30)		// TTBR1_EL1 4KiB granule
+TCR_EL1_IPS			= (1<<1)		// 40bit physical addresses (qemu default)
 
-.equ	SCTLR_EL1_M,		(1<<0)		// Enable MMU
+SCTLR_EL1_M			= (1<<0)		// Enable MMU
 
 // Preset memory attributes.  This register stores 8 8-bit presets that are
 // referenced by index in the page table entries:
 //  [0] 0x00 - Device (Non-gathering, non-reordering, no early write acknowledgement (most restrictive))
 //  [1] 0xff - Normal
-.equ	MAIR_EL1,		0xff00
-.equ	PT_MAIR_DEVICE,		(0<<2)		// Use device memory attributes
-.equ	PT_MAIR_NORMAL,		(1<<2)		// Use normal memory attributes
+MAIR_EL1			= 0xff00
+PT_MAIR_DEVICE			= (0<<2)		// Use device memory attributes
+PT_MAIR_NORMAL			= (1<<2)		// Use normal memory attributes
 
-.equ	PT_PAGE,		3		// 4KiB granule
-.equ	PT_BLOCK,		1		// 2MiB granule
+PT_PAGE				= 3			// 4KiB granule
+PT_BLOCK			= 1			// 2MiB granule
 
 // Page table entry AP Flag
-.equ	PT_AP_KERNEL_RW,	(0<<6)		// Kernel: rw
-.equ	PT_AP_KERNEL_RW_USER_RW,(1<<6)		// Kernel: rw, User: rw
-.equ	PT_AP_KERNEL_RO,	(2<<6)		// Kernel: r
-.equ	PT_AP_KERNEL_RO_USER_RO,(3<<6)		// Kernel: r, User: r
+PT_AP_KERNEL_RW			= (0<<6)		// Kernel: rw
+PT_AP_KERNEL_RW_USER_RW		= (1<<6)		// Kernel: rw, User: rw
+PT_AP_KERNEL_RO			= (2<<6)		// Kernel: r
+PT_AP_KERNEL_RO_USER_RO		= (3<<6)		// Kernel: r, User: r
 
-.equ	PT_AF,			(1<<10)		// Access Flag
+PT_AF				= (1<<10)		// Access Flag
 
-.equ	PT_PXN,			(1<<53)		// Priviledged execute never
-.equ	PT_UXN,			(1<<54)		// User execute never
+PT_PXN				= (1<<53)		// Priviledged execute never
+PT_UXN				= (1<<54)		// User execute never
 
 // Cache shareability
-.equ	PT_NOSH,		(0<<8)		// Non-shareable (single core)
-.equ	PT_OSH,			(2<<8)		// Outer shareable (shared across CPUs, GPU)
-.equ	PT_ISH,			(3<<8)		// Inner shareable (shared across CPUs)
+PT_NOSH				= (0<<8)		// Non-shareable (single core)
+PT_OSH				= (2<<8)		// Outer shareable (shared across CPUs, GPU)
+PT_ISH				= (3<<8)		// Inner shareable (shared across CPUs)
 
 // This defines the kernel's virtual address location.
 // This value splits a 48 bit address space exactly in half, with the half
 // beginning with 1 going to the kernel.
-.equ	KZERO,			0xffff800000000000
-.equ	MiB,			(1<<20)
-.equ	GiB,			(1<<30)
-.equ	KTZERO,			(KZERO+2*MiB)	// Virtual base of kernel text
+KZERO				= 0xffff800000000000
+MiB				= (1<<20)
+GiB				= (1<<30)
+KTZERO				= (KZERO+2*MiB)	// Virtual base of kernel text
+
+// Constants for early uart setup
+MMIO_BASE_RPI3 = 0x3f000000
+MMIO_BASE_RPI4 = 0xfe000000
+
+GPIO				= 0x00200000	// Offset from MMIO base
+GPFSEL1				= GPIO + 0x04
+GPPUD				= GPIO + 0x94
+GPPUDCLK0			= GPIO + 0x98
+GPIO_PUP_PDN_CNTRL_REG0		= GPIO + 0xe4
+
+GPFSEL1_FSEL14_MASK		= 0xffff8fff	// Mask all but bits 12:14 (pin 14)
+GPFSEL1_FSEL14_ALT5		= 0x00002000	// Pin 14, ALT5
+GPFSEL1_FSEL15_MASK		= 0xfffc7fff	// Mask all but bits 15:17 (pin 15)
+GPFSEL1_FSEL15_ALT5		= 0x00010000	// Pin 15, ALT5
+GPIO_PUP_PDN_CNTRL_REG0_MASK_14	= 0xcfffffff	// Mask all but bits 28:29
+GPIO_PUP_PDN_CNTRL_REG0_MASK_15	= 0x3fffffff	// Mask all but bits 30:31
+GPPUD_ENABLE_14_15		= 0x0000c000	// Enable pins 14, 15
+
+AUX				= 0x00215000	// Offset from MMIO base
+AUX_ENABLES			= AUX + 0x04
+AUX_MU				= AUX + 0x40
+AUX_MU_IER			= AUX_MU + 0x04
+AUX_MU_IIR			= AUX_MU + 0x08
+AUX_MU_LCR			= AUX_MU + 0x0c
+AUX_MU_MCR			= AUX_MU + 0x10
+AUX_MU_LSR			= AUX_MU + 0x14
+AUX_MU_CNTL			= AUX_MU + 0x20
+AUX_MU_BAUD			= AUX_MU + 0x28
+
+// Calculate the baudrate to be inserted into AUX_MU_BAUD
+UART_CLOCK			= 500000000
+UART_BAUDRATE			= 115200
+UART_BAUDRATE_REG		= ((UART_CLOCK/(UART_BAUDRATE*8))-1)
+
+// Simple spin macro
+//  reg: Scratch register
+//  numcycles: Number of cycles to spin
+.macro spin reg, numcycles
+	mov	\reg, \numcycles
+1:	isb
+	subs	\reg, \reg, #1
+	cbnz	\reg, 1b
+.endm
+
+// Write a character to the miniuart
+.macro putc X0, X1, W2, Xmmio, aux_mu, aux_mu_lsr, chr
+	movz	\X1, #:abs_g0_nc:\aux_mu
+	movk	\X1, #:abs_g1:\aux_mu
+	add	\X0, \X1, \Xmmio
+	movz	\X1, #:abs_g0_nc:\aux_mu_lsr
+	movk	\X1, #:abs_g1:\aux_mu_lsr
+	add	\X1, \X1, \Xmmio
+	// Wait for miniuart to become ready to transmit, then write a byte
+1:	ldr	\W2, [\X1]
+	tbz	\W2, #5, 1b
+	mov	\W2, #\chr
+	str	\W2, [\X0]
+.endm
 
 .section .boottext, "awx"
 .globl start
 start:
+	// We use some registers throught this assembly code.  They shouldn't be
+	// used by any code in this file.  Once we call main9, they can be
+	// used again.  There's also a couple that are best avoided out of
+	// principle.
+
+	// x26: MMIO base (to be set later)
+	// x27: DTB address
+	// x28: Entrypoint address
+	// x29: Frame pointer
+	// x30: Link register
+
 	// Cache dtb pointer so we can pass to main9 later
 	mov	x27, x0
 	// Cache entrypoint (offset)
@@ -83,7 +153,7 @@ start:
 
 	// Aarch64 has 4 exception levels:
 	//  EL0 - Application level
-	//  EL1 - Rich OS
+	//  EL1 - OS
 	//  EL2 - Hypervisor
 	//  EL3 - Firmware
 	// We want to be in EL1.  Qemu starts in EL3.  Raspi3 usually starts in EL2.
@@ -125,6 +195,240 @@ el2:	// Now in EL2, so prepare jump to EL1
 	eret
 
 el1:	// In EL1
+
+	// Set up a very early uart - the miniuart.  The full driver is in
+	// uartmini.rs.  This code is just enough to help debug the early stage.
+	// Unfortunately raspberry pi 3 and 4 have differences in miniuart init.
+
+	// We can get the board ID from the midr_el1 register (PartNum [15:4]),
+	// and use that to work out the appropriate MMIO base.
+	mrs	x0, midr_el1
+	lsr	x0, x0, #4
+	and	x0, x0, #0xfff
+	cmp	x0, #0xd03	// Check for rpi3
+	bne	.rpi4uart
+
+	// We must be on a raspberry pi 3, which has a different MMIO base, and
+	// a different method for configuring the miniuart...
+	mov	x26, MMIO_BASE_RPI3
+
+	// x0 AUX_ENABLES
+	movz	x1, #:abs_g0_nc:AUX_ENABLES
+	movk	x1, #:abs_g1:AUX_ENABLES
+	add	x0, x1, x26
+	ldr	w1, [x0]
+	orr	w1, w1, #1
+	str	w1, [x0]
+
+	// x0 AUX_MU_CNTL
+	movz	x1, #:abs_g0_nc:AUX_MU_CNTL
+	movk	x1, #:abs_g1:AUX_MU_CNTL
+	add	x0, x1, x26
+	str	wzr, [x0]
+
+	// x0 AUX_MU_LCR
+	movz	x1, #:abs_g0_nc:AUX_MU_LCR
+	movk	x1, #:abs_g1:AUX_MU_LCR
+	add	x0, x1, x26
+	mov	w1, #3
+	str	w1, [x0]
+
+	// x0 AUX_MU_MCR
+	movz	x1, #:abs_g0_nc:AUX_MU_MCR
+	movk	x1, #:abs_g1:AUX_MU_MCR
+	add	x0, x1, x26
+	str	wzr, [x0]
+
+	// x0 AUX_MU_IER
+	movz	x1, #:abs_g0_nc:AUX_MU_IER
+	movk	x1, #:abs_g1:AUX_MU_IER
+	add	x0, x1, x26
+	str	wzr, [x0]
+
+	// x0 AUX_MU_IIR
+	movz	x1, #:abs_g0_nc:AUX_MU_IIR
+	movk	x1, #:abs_g1:AUX_MU_IIR
+	add	x0, x1, x26
+	mov	w1, #0xc6
+	str	w1, [x0]
+
+	// x0 AUX_MU_BAUD
+	movz	x1, #:abs_g0_nc:AUX_MU_BAUD
+	movk	x1, #:abs_g1:AUX_MU_BAUD
+	add	x0, x1, x26
+	mov	w1, UART_BAUDRATE_REG
+	str	w1, [x0]
+
+	// Set GPIO pins 14 to be used for ALT5 - UART1 (miniuart)
+	// x0 GPFSEL1
+	movz	x1, #:abs_g0_nc:GPFSEL1
+	movk	x1, #:abs_g1:GPFSEL1
+	add	x0, x1, x26
+	ldr	w1, [x0]
+	movz	w2, #:abs_g0_nc:GPFSEL1_FSEL14_MASK
+	movk	w2, #:abs_g1:GPFSEL1_FSEL14_MASK
+	and	w1, w1, w2
+	movz	w2, #:abs_g0_nc:GPFSEL1_FSEL14_ALT5
+	movk	w2, #:abs_g1:GPFSEL1_FSEL14_ALT5
+	orr	w1, w1, w2
+	str	w1, [x0]
+
+	// Set GPIO pins 15 to be used for ALT5 - UART1 (miniuart)
+	// x0 GPFSEL1
+	movz	x1, #:abs_g0_nc:GPFSEL1
+	movk	x1, #:abs_g1:GPFSEL1
+	add	x0, x1, x26
+	ldr	w1, [x0]
+	movz	w2, #:abs_g0_nc:GPFSEL1_FSEL15_MASK
+	movk	w2, #:abs_g1:GPFSEL1_FSEL15_MASK
+	and	w1, w1, w2
+	movz	w2, #:abs_g0_nc:GPFSEL1_FSEL15_ALT5
+	movk	w2, #:abs_g1:GPFSEL1_FSEL15_ALT5
+	orr	w1, w1, w2
+	str	w1, [x0]
+
+	// Set up GPIO pull up/down state
+	// x0 GPPUD
+	movz	x1, #:abs_g0_nc:GPPUD
+	movk	x1, #:abs_g1:GPPUD
+	add	x0, x1, x26
+	str	wzr, [x0]
+
+	spin	x3, #150
+
+	// x0 GPPUDCLK0
+	movz	x1, #:abs_g0_nc:GPPUDCLK0
+	movk	x1, #:abs_g1:GPPUDCLK0
+	add	x0, x1, x26
+	ldr	w1, =GPPUD_ENABLE_14_15
+	str	w1, [x0]
+	
+	spin	x3, #150
+
+	// Write 0 to GPPUDCLK0
+	str	wzr, [x1]
+
+	// x0 AUX_MU_CNTL
+	movz	x1, #:abs_g0_nc:AUX_MU_CNTL
+	movk	x1, #:abs_g1:AUX_MU_CNTL
+	add	x0, x1, x26
+	mov	w1, #3
+	str	w1, [x0]
+
+	b	.uartinitdone
+
+.rpi4uart:
+	// We're on a raspberry pi 4, or assume future boards have the same uart
+	mov	x26, MMIO_BASE_RPI4
+
+	// x0 AUX_ENABLES
+	movz	x1, #:abs_g0_nc:AUX_ENABLES
+	movk	x1, #:abs_g1:AUX_ENABLES
+	add	x0, x1, x26
+	ldr	w1, [x0]
+	orr	w1, w1, #1
+	str	w1, [x0]
+
+	// x0 AUX_MU_CNTL
+	movz	x1, #:abs_g0_nc:AUX_MU_CNTL
+	movk	x1, #:abs_g1:AUX_MU_CNTL
+	add	x0, x1, x26
+	str	wzr, [x0]
+
+	// x0 AUX_MU_LCR
+	movz	x1, #:abs_g0_nc:AUX_MU_LCR
+	movk	x1, #:abs_g1:AUX_MU_LCR
+	add	x0, x1, x26
+	mov	w1, #3
+	str	w1, [x0]
+
+	// x0 AUX_MU_MCR
+	movz	x1, #:abs_g0_nc:AUX_MU_MCR
+	movk	x1, #:abs_g1:AUX_MU_MCR
+	add	x0, x1, x26
+	str	wzr, [x0]
+
+	// x0 AUX_MU_IER
+	movz	x1, #:abs_g0_nc:AUX_MU_IER
+	movk	x1, #:abs_g1:AUX_MU_IER
+	add	x0, x1, x26
+	str	wzr, [x0]
+
+	// x0 AUX_MU_IIR
+	movz	x1, #:abs_g0_nc:AUX_MU_IIR
+	movk	x1, #:abs_g1:AUX_MU_IIR
+	add	x0, x1, x26
+	mov	w1, #0xc6
+	str	w1, [x0]
+
+	// x0 AUX_MU_BAUD
+	movz	x1, #:abs_g0_nc:AUX_MU_BAUD
+	movk	x1, #:abs_g1:AUX_MU_BAUD
+	add	x0, x1, x26
+	mov	w1, UART_BAUDRATE_REG
+	str	w1, [x0]
+
+	// Set up GPIO pin 14 pull up/down state
+	// x0 GPIO_PUP_PDN_CNTRL_REG0
+	movz	x1, #:abs_g0_nc:GPIO_PUP_PDN_CNTRL_REG0
+	movk	x1, #:abs_g1:GPIO_PUP_PDN_CNTRL_REG0
+	add	x0, x1, x26
+	ldr	w1, [x0]
+	movz	w2, #:abs_g0_nc:GPIO_PUP_PDN_CNTRL_REG0_MASK_14
+	movk	w2, #:abs_g1:GPIO_PUP_PDN_CNTRL_REG0_MASK_14
+	and	w1, w1, w2
+	// Pull none (0) - just use mask
+	str	w1, [x0]
+
+	// Set GPIO pins 14 to be used for ALT5 - UART1 (miniuart)
+	// x0 GPFSEL1
+	movz	x1, #:abs_g0_nc:GPFSEL1
+	movk	x1, #:abs_g1:GPFSEL1
+	add	x0, x1, x26
+	ldr	w1, [x0]
+	movz	w2, #:abs_g0_nc:GPFSEL1_FSEL14_MASK
+	movk	w2, #:abs_g1:GPFSEL1_FSEL14_MASK
+	and	w1, w1, w2
+	movz	w2, #:abs_g0_nc:GPFSEL1_FSEL14_ALT5
+	movk	w2, #:abs_g1:GPFSEL1_FSEL14_ALT5
+	orr	w1, w1, w2
+	str	w1, [x0]
+
+	// Set up GPIO pin 15 pull up/down state
+	// x0 GPIO_PUP_PDN_CNTRL_REG0
+	movz	x1, #:abs_g0_nc:GPIO_PUP_PDN_CNTRL_REG0
+	movk	x1, #:abs_g1:GPIO_PUP_PDN_CNTRL_REG0
+	add	x0, x1, x26
+	ldr	w1, [x0]
+	movz	w2, #:abs_g0_nc:GPIO_PUP_PDN_CNTRL_REG0_MASK_15
+	movk	w2, #:abs_g1:GPIO_PUP_PDN_CNTRL_REG0_MASK_15
+	and	w1, w1, w2
+	// Pull none (0) - just use mask
+	str	w1, [x0]
+
+	// Set GPIO pins 15 to be used for ALT5 - UART1 (miniuart)
+	// x0 GPFSEL1
+	movz	x1, #:abs_g0_nc:GPFSEL1
+	movk	x1, #:abs_g1:GPFSEL1
+	add	x0, x1, x26
+	ldr	w1, [x0]
+	movz	w2, #:abs_g0_nc:GPFSEL1_FSEL15_MASK
+	movk	w2, #:abs_g1:GPFSEL1_FSEL15_MASK
+	and	w1, w1, w2
+	movz	w2, #:abs_g0_nc:GPFSEL1_FSEL15_ALT5
+	movk	w2, #:abs_g1:GPFSEL1_FSEL15_ALT5
+	orr	w1, w1, w2
+	str	w1, [x0]
+
+	// x0 AUX_MU_CNTL
+	movz	x1, #:abs_g0_nc:AUX_MU_CNTL
+	movk	x1, #:abs_g1:AUX_MU_CNTL
+	add	x0, x1, x26
+	mov	w1, #3
+	str	w1, [x0]
+
+.uartinitdone:
+	putc	x23, x24, w25, x26, AUX_MU, AUX_MU_LSR, '.'
 
 	// AArch64 memory management examples
 	//  https://developer.arm.com/documentation/102416/0100
