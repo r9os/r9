@@ -259,7 +259,7 @@ fn build(build_params: &BuildParams) -> Result<()> {
     if build_params.verbose {
         println!("Executing {cmd:?}");
     }
-    let status = cmd.status()?;
+    let status = annotated_status(&mut cmd)?;
     if !status.success() {
         return Err("build kernel failed".into());
     }
@@ -279,7 +279,7 @@ fn expand(build_params: &BuildParams) -> Result<()> {
     if build_params.verbose {
         println!("Executing {cmd:?}");
     }
-    let status = cmd.status()?;
+    let status = annotated_status(&mut cmd)?;
     if !status.success() {
         return Err("build kernel failed".into());
     }
@@ -298,7 +298,7 @@ fn kasm(build_params: &BuildParams) -> Result<()> {
     if build_params.verbose {
         println!("Executing {cmd:?}");
     }
-    let status = cmd.status()?;
+    let status = annotated_status(&mut cmd)?;
     if !status.success() {
         return Err("build kernel failed".into());
     }
@@ -324,7 +324,7 @@ fn dist(build_params: &BuildParams) -> Result<()> {
             if build_params.verbose {
                 println!("Executing {cmd:?}");
             }
-            let status = cmd.status()?;
+            let status = annotated_status(&mut cmd)?;
             if !status.success() {
                 return Err("objcopy failed".into());
             }
@@ -343,7 +343,7 @@ fn dist(build_params: &BuildParams) -> Result<()> {
             if build_params.verbose {
                 println!("Executing {cmd:?}");
             }
-            let status = cmd.status()?;
+            let status = annotated_status(&mut cmd)?;
             if !status.success() {
                 return Err("gzip failed".into());
             }
@@ -358,7 +358,7 @@ fn dist(build_params: &BuildParams) -> Result<()> {
             if build_params.verbose {
                 println!("Executing {cmd:?}");
             }
-            let status = cmd.status()?;
+            let status = annotated_status(&mut cmd)?;
             if !status.success() {
                 return Err("objcopy failed".into());
             }
@@ -378,7 +378,7 @@ fn dist(build_params: &BuildParams) -> Result<()> {
             if build_params.verbose {
                 println!("Executing {cmd:?}");
             }
-            let status = cmd.status()?;
+            let status = annotated_status(&mut cmd)?;
             if !status.success() {
                 return Err("objcopy failed".into());
             }
@@ -398,7 +398,7 @@ fn test(build_params: &BuildParams) -> Result<()> {
     if build_params.verbose {
         println!("Executing {cmd:?}");
     }
-    let status = cmd.status()?;
+    let status = annotated_status(&mut cmd)?;
     if !status.success() {
         return Err("test failed".into());
     }
@@ -420,7 +420,7 @@ fn clippy(build_params: &BuildParams) -> Result<()> {
     if build_params.verbose {
         println!("Executing {cmd:?}");
     }
-    let status = cmd.status()?;
+    let status = annotated_status(&mut cmd)?;
     if !status.success() {
         return Err("build kernel failed".into());
     }
@@ -464,7 +464,7 @@ fn run(build_params: &BuildParams) -> Result<()> {
             if build_params.verbose {
                 println!("Executing {cmd:?}");
             }
-            let status = cmd.status()?;
+            let status = annotated_status(&mut cmd)?;
             if !status.success() {
                 return Err("qemu failed".into());
             }
@@ -498,7 +498,7 @@ fn run(build_params: &BuildParams) -> Result<()> {
             if build_params.verbose {
                 println!("Executing {cmd:?}");
             }
-            let status = cmd.status()?;
+            let status = annotated_status(&mut cmd)?;
             if !status.success() {
                 return Err("qemu failed".into());
             }
@@ -530,7 +530,7 @@ fn run(build_params: &BuildParams) -> Result<()> {
             if build_params.verbose {
                 println!("Executing {cmd:?}");
             }
-            let status = cmd.status()?;
+            let status = annotated_status(&mut cmd)?;
             if !status.success() {
                 return Err("qemu failed".into());
             }
@@ -561,7 +561,7 @@ fn accelrun(build_params: &BuildParams) -> Result<()> {
     if build_params.verbose {
         println!("Executing {cmd:?}");
     }
-    let status = cmd.status()?;
+    let status = annotated_status(&mut cmd)?;
     if !status.success() {
         return Err("qemu failed".into());
     }
@@ -569,7 +569,10 @@ fn accelrun(build_params: &BuildParams) -> Result<()> {
 }
 
 fn clean() -> Result<()> {
-    let status = Command::new(cargo()).current_dir(workspace()).arg("clean").status()?;
+    let mut cmd = Command::new(cargo());
+    cmd.current_dir(workspace());
+    cmd.arg("clean");
+    let status = annotated_status(&mut cmd)?;
     if !status.success() {
         return Err("clean failed".into());
     }
@@ -596,4 +599,11 @@ fn exclude_other_arches(arch: Arch, cmd: &mut Command) {
             cmd.arg("--exclude").arg("riscv64");
         }
     }
+}
+
+// Annotates the error result with the calling binary's name.
+fn annotated_status(cmd: &mut Command) -> Result<process::ExitStatus> {
+    Ok(cmd.status().map_err(|e| {
+        format!("{}: {}", cmd.get_program().to_string_lossy(), e)
+    })?)
 }
