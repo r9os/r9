@@ -1,9 +1,9 @@
 # r9
-Plan 9 in Rust
+[Plan 9](https://plan9.io/plan9/) in Rust
 
 R9 is a reimplementation of the plan9 kernel in Rust.  It is
 not only inspired by but in many ways derived from the original
-Plan 9 source code.
+[Plan 9](https://plan9.io/plan9/) source code.
 
 ## Building
 
