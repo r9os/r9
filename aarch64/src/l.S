@@ -66,11 +66,11 @@ PT_ISH				= (3<<8)		// Inner shareable (shared across CPUs)
 KZERO				= 0xffff800000000000
 MiB				= (1<<20)
 GiB				= (1<<30)
-KTZERO				= (KZERO+2*MiB)	// Virtual base of kernel text
+KTZERO				= (KZERO + 2*MiB)	// Virtual base of kernel text
 
 // Constants for early uart setup
-MMIO_BASE_RPI3 = 0x3f000000
-MMIO_BASE_RPI4 = 0xfe000000
+MMIO_BASE_RPI3			= 0x3f000000
+MMIO_BASE_RPI4			= 0xfe000000
 
 GPIO				= 0x00200000	// Offset from MMIO base
 GPFSEL1				= GPIO + 0x04
@@ -102,6 +102,27 @@ UART_CLOCK			= 500000000
 UART_BAUDRATE			= 115200
 UART_BAUDRATE_REG		= ((UART_CLOCK/(UART_BAUDRATE*8))-1)
 
+// Exception vector IDs
+SYNC_INVALID_EL1t		= 0
+IRQ_INVALID_EL1t		= 1
+FIQ_INVALID_EL1t		= 2
+ERROR_INVALID_EL1t		= 3
+
+SYNC_INVALID_EL1h		= 4
+IRQ_INVALID_EL1h		= 5
+FIQ_INVALID_EL1h		= 6
+ERROR_INVALID_EL1h		= 7
+
+SYNC_INVALID_EL0_64		= 8
+IRQ_INVALID_EL0_64		= 9
+FIQ_INVALID_EL0_64		= 10
+ERROR_INVALID_EL0_64		= 11
+
+SYNC_INVALID_EL0_32		= 12
+IRQ_INVALID_EL0_32		= 13
+FIQ_INVALID_EL0_32		= 14
+ERROR_INVALID_EL0_32		= 15
+
 // Simple spin macro
 //  reg: Scratch register
 //  numcycles: Number of cycles to spin
@@ -113,18 +134,48 @@ UART_BAUDRATE_REG		= ((UART_CLOCK/(UART_BAUDRATE*8))-1)
 .endm
 
 // Write a character to the miniuart
-.macro putc X0, X1, W2, Xmmio, aux_mu, aux_mu_lsr, chr
-	movz	\X1, #:abs_g0_nc:\aux_mu
-	movk	\X1, #:abs_g1:\aux_mu
-	add	\X0, \X1, \Xmmio
-	movz	\X1, #:abs_g0_nc:\aux_mu_lsr
-	movk	\X1, #:abs_g1:\aux_mu_lsr
-	add	\X1, \X1, \Xmmio
+// Overwrites x0, x1, x2
+// Assumes MMIO base is in x26
+.macro putc aux_mu, aux_mu_lsr, chr
+	movz	x1, #:abs_g0_nc:\aux_mu
+	movk	x1, #:abs_g1:\aux_mu
+	add	x0, x1, x26
+	movz	x1, #:abs_g0_nc:\aux_mu_lsr
+	movk	x1, #:abs_g1:\aux_mu_lsr
+	add	x1, x1, x26
 	// Wait for miniuart to become ready to transmit, then write a byte
-1:	ldr	\W2, [\X1]
-	tbz	\W2, #5, 1b
-	mov	\W2, #\chr
-	str	\W2, [\X0]
+1\@:	ldr	w2, [x1]
+	tbz	w2, #5, 1\@b
+	mov	w2, \chr
+	str	w2, [x0]
+.endm
+
+// Write newline to the miniuart
+// Overwrites x0, x1, x2
+// Assumes MMIO base is in x26
+.macro putnewline aux_mu, aux_mu_lsr
+	putc	\aux_mu, \aux_mu_lsr, '\r'
+	putc	\aux_mu, \aux_mu_lsr, '\n'
+.endm
+
+// Define the macro to write a u64 in hex value using putc
+// Overwrites x0, x1, x2, x3, x4
+// Assumes MMIO base is in x26
+.macro putu64 aux_mu, aux_mu_lsr, Xval
+	# putc	\aux_mu, \aux_mu_lsr, '0'
+	# putc	\aux_mu, \aux_mu_lsr, 'x'
+	mov	x3, #60			// Amount to shift by
+1\@:	lsr	x4, \Xval, x3
+	and	x4, x4, #0xf		// Mask off digit
+	cmp	x4, #10
+	bge	3\@f
+	add	x4, x4, #'0'		// 0-9
+	b	4\@f
+3\@:	sub	x4, x4, #10		// a-f
+	add	x4, x4, #'a'
+4\@:	putc	\aux_mu, \aux_mu_lsr, w4
+	subs	x3, x3, #4
+	bpl	1\@b
 .endm
 
 .section .boottext, "awx"
@@ -140,11 +191,8 @@ start:
 	// x28: Entrypoint address
 	// x29: Frame pointer
 	// x30: Link register
-
-	// Cache dtb pointer so we can pass to main9 later
-	mov	x27, x0
-	// Cache entrypoint (offset)
-	mov	x28, x4
+	mov	x27, x0			// Cache dtb pointer so we can pass to main9 later
+	mov	x28, x4			// Cache entrypoint (offset)
 
 	// All cores other than 0 should just hang
 	mrs	x0, mpidr_el1
@@ -428,7 +476,7 @@ el1:	// In EL1
 	str	w1, [x0]
 
 .uartinitdone:
-	putc	x23, x24, w25, x26, AUX_MU, AUX_MU_LSR, '.'
+	putc	AUX_MU, AUX_MU_LSR, #'.'
 
 	// AArch64 memory management examples
 	//  https://developer.arm.com/documentation/102416/0100
@@ -496,7 +544,8 @@ el1:	// In EL1
 	// want is to move to virtual higher half addresses, we need to have
 	// ttbr0_el1 identity mapped during the transition until the PC is also
 	// in the higher half.  This is because the PC is still in the lower
-	// half immediately after the MMU is enabled.
+	// half immediately after the MMU is enabled.  Once we enter rust-land,
+	// we can define a new set of tables.
 	adrp	x0, kernelpt4
 	msr	ttbr1_el1, x0
 	adrp	x0, physicalpt4
@@ -521,7 +570,7 @@ el1:	// In EL1
 	mrs	x0, sctlr_el1
 	ldr	x1, =(SCTLR_EL1_M)
 	orr	x0, x0, x1
-	msr	sctlr_el1, x0
+	msr	sctlr_el1, x0		// Enable MMU!
 
 	// Force changes to be be seen by next instruction.
 	// At this point the PC is still in the lower half, so we need to jump
@@ -532,6 +581,17 @@ el1:	// In EL1
 	br	x20
 
 higher_half:
+	ldr	x0, =(KZERO)
+	# ldr	x1, =(MMIO_BASE_RPI4 + GPIO)
+	# add	x25, x1, x0
+	add	x26, x26, x0
+	# putnewline	AUX_MU, AUX_MU_LSR
+	# putu64	AUX_MU, AUX_MU_LSR, x25
+	# putnewline	AUX_MU, AUX_MU_LSR
+	# at	s1e1r, x25
+	# mrs	x25, par_el1
+	# putu64	AUX_MU, AUX_MU_LSR, x25
+	putc	AUX_MU, AUX_MU_LSR, #'m'
 	// Now that the kernel is mapped, the MMU is enabled and we're in the
 	// higher half, we can set up the initial stack.
 	ldr	x0, =stack
@@ -554,27 +614,163 @@ higher_half:
 dnr:	wfe
 	b	dnr
 
+.macro	ventry	label
+.balign	128
+	b	\label
+.endm
+
+.macro handle_interrupt type
+	putnewline	AUX_MU, AUX_MU_LSR
+
+	// Interrupt type
+	putc	AUX_MU, AUX_MU_LSR, #'0'
+	putc	AUX_MU, AUX_MU_LSR, #'x'
+	mov	x25, \type
+	putu64	AUX_MU, AUX_MU_LSR, x25
+	putnewline	AUX_MU, AUX_MU_LSR
+
+	// esr_el1
+	putc	AUX_MU, AUX_MU_LSR, #'0'
+	putc	AUX_MU, AUX_MU_LSR, #'x'
+	mrs	x25, esr_el1
+	putu64	AUX_MU, AUX_MU_LSR, x25
+	putnewline	AUX_MU, AUX_MU_LSR
+
+	// elr_el1
+	putc	AUX_MU, AUX_MU_LSR, #'0'
+	putc	AUX_MU, AUX_MU_LSR, #'x'
+	mrs	x25, elr_el1
+	putu64	AUX_MU, AUX_MU_LSR, x25
+	putnewline	AUX_MU, AUX_MU_LSR
+	
+1\@:	wfe
+	b	1\@b
+.endm
+
+.balign	2048
+.exception_vectors:
+	// Current EL with SP0
+	ventry	sync_invalid_el1t			// Synchronous EL1t
+	ventry	irq_invalid_el1t			// IRQ EL1t
+	ventry	fiq_invalid_el1t			// FIQ EL1t
+	ventry	error_invalid_el1t			// Error EL1t
+
+	// Current EL with SPx
+	ventry	sync_invalid_el1h			// Synchronous EL1h
+	ventry	irq_invalid_el1h			// IRQ EL1h
+	ventry	fiq_invalid_el1h			// FIQ EL1h
+	ventry	error_invalid_el1h			// Error EL1h
+
+	// Lower EL using AArch64
+	ventry	sync_invalid_el0_64			// Synchronous 64-bit EL0
+	ventry	irq_invalid_el0_64			// IRQ 64-bit EL0
+	ventry	fiq_invalid_el0_64			// FIQ 64-bit EL0
+	ventry	error_invalid_el0_64			// Error 64-bit EL0
+
+	// Lower EL using AArch32
+	ventry	sync_invalid_el0_32			// Synchronous 32-bit EL0
+	ventry	irq_invalid_el0_32			// IRQ 32-bit EL0
+	ventry	fiq_invalid_el0_32			// FIQ 32-bit EL0
+	ventry	error_invalid_el0_32			// Error 32-bit EL0
+
+sync_invalid_el1t:
+	handle_interrupt  SYNC_INVALID_EL1t
+
+irq_invalid_el1t:
+	handle_interrupt  IRQ_INVALID_EL1t
+
+fiq_invalid_el1t:
+	handle_interrupt  FIQ_INVALID_EL1t
+
+error_invalid_el1t:
+	handle_interrupt  ERROR_INVALID_EL1t
+
+sync_invalid_el1h:
+	handle_interrupt  SYNC_INVALID_EL1h
+
+irq_invalid_el1h:
+	handle_interrupt  IRQ_INVALID_EL1h
+
+fiq_invalid_el1h:
+	handle_interrupt  FIQ_INVALID_EL1h
+
+error_invalid_el1h:
+	handle_interrupt  ERROR_INVALID_EL1h
+
+sync_invalid_el0_64:
+	handle_interrupt  SYNC_INVALID_EL0_64
+
+irq_invalid_el0_64:
+	handle_interrupt  IRQ_INVALID_EL0_64
+
+fiq_invalid_el0_64:
+	handle_interrupt  FIQ_INVALID_EL0_64
+
+error_invalid_el0_64:
+	handle_interrupt  ERROR_INVALID_EL0_64
+
+sync_invalid_el0_32:
+	handle_interrupt  SYNC_INVALID_EL0_32
+
+irq_invalid_el0_32:
+	handle_interrupt  IRQ_INVALID_EL0_32
+
+fiq_invalid_el0_32:
+	handle_interrupt  FIQ_INVALID_EL0_32
+
+error_invalid_el0_32:
+	handle_interrupt  ERROR_INVALID_EL0_32
+
 // Early page tables for mapping the kernel to the higher half.
 // It's assumed that the kernelpt* page tables will only be used until the
 // full VM code is running.
+
+// Here we've set up a 2GiB page from the start of the kernel address space.
+// This covers 0xffff_8000_0000_0000 - 0xffff_8000_8000_0000, and should be more
+// than enough at this stage.
+
+// We also want to map the MMIO section, which for the part of MMIO that we care
+// about for Raspberry Pi 4 (to allow us to use the miniuart), is basically a
+// 2MiB section starting at from 0xfe20_0000.  This is all in the lower half,
+// so to allow us to abandon the physicalpt4 temp page table quickly, we'll
+// map it into the higher half, starting at 0xffff_8000_fe20_0000.  Note that
+// this is temporary - once we have a rust VM, the MMIO will be mapped somewhere
+// else.
+
+// Unfortunately, this is very specific to Raspberry Pi 4.  Once we're confident
+// that the aarch64 setup code in l.S is solid, we should disable the uart code
+// and perhaps have something that can be enabled manually for dev purposes only
+// in the future.
 .balign 4096
 kernelpt4:
-	.space	(4096/2)
-	.quad	(kernelpt3 - KZERO) + (PT_PAGE)
-	.space	(4096/2) - (1*8)
+	.space	(256*8)
+	.quad	(kernelpt3 - KZERO) + (PT_PAGE)		// [256] (for kernel + mmio)
+	.space	(255*8)
 
 .balign 4096
 kernelpt3:
- 	.quad	(0*2*GiB) + (PT_BLOCK|PT_AF|PT_AP_KERNEL_RW|PT_ISH|PT_UXN|PT_MAIR_NORMAL)
-	.space	(4096) - (1*8)
+ 	.quad	(0*2*GiB) + (PT_BLOCK|PT_AF|PT_AP_KERNEL_RW|PT_ISH|PT_UXN|PT_MAIR_NORMAL)	// [0] (for kernel)
+	.space	(2*8)
+	.quad	(kernelpt2 - KZERO) + (PT_PAGE)		// [3] (for mmio)
+	.space	(508*8)
 
-// Early page table for identity mapping the kernel physical addresses.
+.balign 4096
+kernelpt2:
+	.space	(497*8)
+ 	.quad	(MMIO_BASE_RPI4 + GPIO) + (PT_BLOCK|PT_AF|PT_AP_KERNEL_RW|PT_ISH|PT_UXN|PT_MAIR_DEVICE)	// [497] (for mmio)
+	.space	(14*8)
+
+// Early page tables for identity mapping the kernel physical addresses.
 // Once we've jumped to the higher half, this will no longer be used.
-// (The pt3 table is the same for in both cases, so we can share.)
 .balign 4096
 physicalpt4:
-	.quad	(kernelpt3 - KZERO) + (PT_PAGE)
-	.space	(4096) - (1*8)
+	.quad	(physicalpt3 - KZERO) + (PT_PAGE)	// [0] (for kernel)
+	.space	(511*8)
+
+.balign 4096
+physicalpt3:
+ 	.quad	(0*2*GiB) + (PT_BLOCK|PT_AF|PT_AP_KERNEL_RW|PT_ISH|PT_UXN|PT_MAIR_NORMAL)	// [0] (for kernel)
+	.space	(511*8)
 
 .bss
 .balign	4096
