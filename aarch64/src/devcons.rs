@@ -35,7 +35,9 @@ pub fn init(dt: &DeviceTree) {
     // Create early console because aarch64 can't use locks until MMU is set up
     Console::new_early(|| {
         // let uart = Pl011Uart::new(dt);
-        let uart = MiniUart::new(dt);
+        // TODO this should be defined elsewhere
+        const KZERO: u64 = 0xffff800000000000;
+        let uart = MiniUart::new(dt, KZERO);
         uart.init();
 
         static mut UART: MaybeUninit<MiniUart> = MaybeUninit::uninit();
