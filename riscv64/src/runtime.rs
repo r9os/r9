@@ -5,7 +5,6 @@ extern crate alloc;
 use alloc::alloc::{GlobalAlloc, Layout};
 use core::arch::asm;
 use core::panic::PanicInfo;
-
 use port::{print, println};
 
 // ///////////////////////////////////
@@ -49,5 +48,6 @@ unsafe impl GlobalAlloc for FakeAlloc {
     }
 }
 
+#[cfg(test)]
 #[global_allocator]
 static FAKE_ALLOCATOR: FakeAlloc = FakeAlloc {};

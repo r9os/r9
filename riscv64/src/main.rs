@@ -6,30 +6,56 @@
 #![allow(clippy::upper_case_acronyms)]
 #![forbid(unsafe_op_in_unsafe_fn)]
 
+extern crate alloc;
+pub use alloc::*;
+
+mod address;
+mod dat;
+mod fns;
+mod kmem;
+mod paging;
 mod platform;
 mod runtime;
 mod sbi;
 mod uart16550;
 
-use port::println;
-
-use crate::platform::{devcons, platform_init};
-use port::fdt::DeviceTree;
+use crate::{
+    dat::Mach,
+    fns::machp,
+    platform::{devcons, platform_init},
+};
+use port::{fdt::DeviceTree, println};
 
 #[cfg(not(test))]
 core::arch::global_asm!(include_str!("l.S"));
 
+pub static mut MACH: Mach = Mach::new();
+
 #[no_mangle]
-pub extern "C" fn main9(hartid: usize, dtb_ptr: u64) -> ! {
-    let dt = unsafe { DeviceTree::from_u64(dtb_ptr).unwrap() };
-    devcons::init(&dt);
+pub extern "C" fn main9(hartid: usize, dtb_ptr: usize) -> ! {
+    // use sbi for early messaging
+    devcons::init_sbi();
 
-    platform_init();
+    if !machp().is_online() {
+        let m = machp();
+        m.machno = hartid;
+        m.online = true;
 
-    println!();
-    println!("r9 from the Internet");
-    println!("Domain0 Boot HART = {hartid}");
-    println!("DTB found at: {dtb_ptr:#x}");
+        let dt = unsafe { DeviceTree::from_u64(kmem::phys_to_virt(dtb_ptr) as u64).unwrap() };
+        kmem::init_heap(&dt);
+        platform_init(&dt);
+
+        println!("switch to UART devcons");
+        devcons::init(&dt);
+
+        println!();
+        println!("r9 from the Internet");
+        println!("Domain0 Boot HART = {hartid}");
+        println!("DTB found at: {:x} and {:x}", dtb_ptr, kmem::phys_to_virt(dtb_ptr));
+        println!();
+    } else {
+        // startup the other hart's
+    }
 
     #[cfg(not(test))]
     sbi::shutdown();
