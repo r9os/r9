@@ -36,8 +36,11 @@ pub fn init(dt: &DeviceTree) {
     Console::new_early(|| {
         // let uart = Pl011Uart::new(dt);
         // TODO this should be defined elsewhere
-        const KZERO: u64 = 0xffff800000000000;
-        let uart = MiniUart::new(dt, KZERO);
+        // const KZERO: u64 = 0xffff800000000000;
+        // let uart = MiniUart::new(dt, KZERO);
+        let uart =
+            MiniUart::from_addresses(0xffff800000200000, 0xffff800000215000, 0xffff800000215040);
+
         uart.init();
 
         static mut UART: MaybeUninit<MiniUart> = MaybeUninit::uninit();

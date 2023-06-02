@@ -6,7 +6,13 @@ use alloc::alloc::{GlobalAlloc, Layout};
 use core::panic::PanicInfo;
 
 #[panic_handler]
-pub extern "C" fn panic(_info: &PanicInfo) -> ! {
+pub extern "C" fn panic(info: &PanicInfo) -> ! {
+    // let uart = uartmini::MiniUart::from_addresses(
+    //     0xffff800000200000,
+    //     0xffff800000215000,
+    //     0xffff800000215040,
+    // );
+
     #[allow(clippy::empty_loop)]
     loop {}
 }

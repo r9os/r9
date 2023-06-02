@@ -25,13 +25,23 @@ SPSR_EL2_D			= (1<<9)		// Debug exception
 
 CPACR_EL1_FPEN			= (1<<21) | (1<<20)	// Don't trap FPU instr at EL1,0
 
-TCR_EL1_T0SZ			= (16<<0)		// 2^(64-N) size offset of region addressed by TTBR0_EL1: 2^(64-N)
-TCR_EL1_TG0			= (0<<14)		// TTBR0_EL1 4KiB granule
-TCR_EL1_T1SZ			= (16<<16)		// 2^(64-N) size offset of region addressed by TTBR1_EL1: 2^(64-N)
-TCR_EL1_TG1			= (2<<30)		// TTBR1_EL1 4KiB granule
-TCR_EL1_IPS			= (1<<1)		// 40bit physical addresses (qemu default)
+TCR_EL1_IPS			= (4 << 32)		// 48bit physical addresses
+TCR_EL1_TG1			= (2 << 30)		// TTBR1_EL1 4KiB granule
+TCR_EL1_SH1			= (3 << 28)		// 
+TCR_EL1_ORGN1			= (1 << 26)		// 
+TCR_EL1_IRGN1			= (1 << 24)		// 
+TCR_EL1_T1SZ			= (16 << 16)		// 2^(64-N) size offset of region addressed by TTBR1_EL1: 2^(64-N)
+TCR_EL1_TG0			= (0 << 14)		// TTBR0_EL1 4KiB granule
+TCR_EL1_SH0			= (3 << 12)		// 
+TCR_EL1_ORGN0			= (1 << 10)		// 
+TCR_EL1_IRGN0			= (1 << 8)		// 
+TCR_EL1_T0SZ			= (16 << 0)		// 2^(64-N) size offset of region addressed by TTBR0_EL1: 2^(64-N)
+TCR_EL1				= (TCR_EL1_IPS|TCR_EL1_TG1|TCR_EL1_SH1|TCR_EL1_ORGN1|TCR_EL1_IRGN1|TCR_EL1_T1SZ|TCR_EL1_TG0|TCR_EL1_SH0|TCR_EL1_ORGN0|TCR_EL1_IRGN0|TCR_EL1_T0SZ)
 
-SCTLR_EL1_M			= (1<<0)		// Enable MMU
+SCTLR_EL1_I			= (1 << 12)		// Instruction access cacheability
+SCTLR_EL1_C			= (1 << 2)		// Data cacheability
+SCTLR_EL1_M			= (1 << 0)		// Enable MMU
+SCTLR_EL1			= (SCTLR_EL1_I|SCTLR_EL1_C|SCTLR_EL1_M)
 
 // Preset memory attributes.  This register stores 8 8-bit presets that are
 // referenced by index in the page table entries:
@@ -52,8 +62,8 @@ PT_AP_KERNEL_RO_USER_RO		= (3<<6)		// Kernel: r, User: r
 
 PT_AF				= (1<<10)		// Access Flag
 
-PT_PXN				= (1<<53)		// Priviledged execute never
 PT_UXN				= (1<<54)		// User execute never
+PT_PXN				= (1<<53)		// Priviledged execute never
 
 // Cache shareability
 PT_NOSH				= (0<<8)		// Non-shareable (single core)
@@ -177,6 +187,21 @@ ERROR_INVALID_EL0_32		= 15
 	subs	x3, x3, #4
 	bpl	1\@b
 .endm
+
+.globl foobar
+foobar:
+	putc	AUX_MU, AUX_MU_LSR, #'x'
+	ret
+
+.globl foobar2
+foobar2:
+	putc	AUX_MU, AUX_MU_LSR, #'y'
+	ret
+
+.globl foobar3
+foobar3:
+	putc	AUX_MU, AUX_MU_LSR, #'z'
+	ret
 
 .section .boottext, "awx"
 .globl start
@@ -557,7 +582,7 @@ el1:	// In EL1
 	//  TCR_EL1_TG0: 4KiB granule
 	//  TCR_EL1_TG1: 4KiB granule
 	//  TCR_EL1_IPS: 40 bit physical addresses
-	ldr	x0, =(TCR_EL1_T0SZ|TCR_EL1_T1SZ|TCR_EL1_TG0|TCR_EL1_TG1|TCR_EL1_IPS)
+	ldr	x0, =(TCR_EL1)
 	msr	tcr_el1, x0
 
 	// The mair_el1 register contains 8 different cache settings, to be
@@ -567,9 +592,7 @@ el1:	// In EL1
 
 	// Force changes to be be seen before MMU enabled, then enable MMU
 	isb
-	mrs	x0, sctlr_el1
-	ldr	x1, =(SCTLR_EL1_M)
-	orr	x0, x0, x1
+	ldr	x0, =(SCTLR_EL1)
 	msr	sctlr_el1, x0		// Enable MMU!
 
 	// Force changes to be be seen by next instruction.
@@ -585,13 +608,26 @@ higher_half:
 	# ldr	x1, =(MMIO_BASE_RPI4 + GPIO)
 	# add	x25, x1, x0
 	add	x26, x26, x0
-	# putnewline	AUX_MU, AUX_MU_LSR
-	# putu64	AUX_MU, AUX_MU_LSR, x25
-	# putnewline	AUX_MU, AUX_MU_LSR
+	# mrs	x27, ID_AA64MMFR0_EL1
+	putnewline	AUX_MU, AUX_MU_LSR
+	ldr	x20, =(KZERO)
+	mov	x21, #0x80000
+	add	x20, x20, x21
+	putu64	AUX_MU, AUX_MU_LSR, x20
+	putnewline	AUX_MU, AUX_MU_LSR
+	ldr	x21, [x20]
+	putu64	AUX_MU, AUX_MU_LSR, x21
+	putnewline	AUX_MU, AUX_MU_LSR
 	# at	s1e1r, x25
 	# mrs	x25, par_el1
 	# putu64	AUX_MU, AUX_MU_LSR, x25
 	putc	AUX_MU, AUX_MU_LSR, #'m'
+	ldr	x9, =bss		// Start address
+	putu64	AUX_MU, AUX_MU_LSR, x9
+	putnewline	AUX_MU, AUX_MU_LSR
+	ldaxr	x8, [x9]
+	stlxr	w8, w7, [x9]
+	putc	AUX_MU, AUX_MU_LSR, #'u'
 	// Now that the kernel is mapped, the MMU is enabled and we're in the
 	// higher half, we can set up the initial stack.
 	ldr	x0, =stack
@@ -757,7 +793,7 @@ kernelpt3:
 .balign 4096
 kernelpt2:
 	.space	(497*8)
- 	.quad	(MMIO_BASE_RPI4 + GPIO) + (PT_BLOCK|PT_AF|PT_AP_KERNEL_RW|PT_ISH|PT_UXN|PT_MAIR_DEVICE)	// [497] (for mmio)
+ 	.quad	(MMIO_BASE_RPI4 + GPIO) + (PT_BLOCK|PT_AF|PT_AP_KERNEL_RW|PT_ISH|PT_UXN|PT_PXN|PT_MAIR_DEVICE)	// [497] (for mmio)
 	.space	(14*8)
 
 // Early page tables for identity mapping the kernel physical addresses.

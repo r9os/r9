@@ -22,7 +22,10 @@ pub fn init(dt: &DeviceTree) {
     *mailbox = Some({
         static mut MAYBE_MAILBOX: MaybeUninit<Mailbox> = MaybeUninit::uninit();
         unsafe {
-            MAYBE_MAILBOX.write(Mailbox::new(dt));
+            // TODO this should be defined elsewhere
+            const KZERO: u64 = 0xffff800000000000;
+
+            MAYBE_MAILBOX.write(Mailbox::new(dt, KZERO));
             MAYBE_MAILBOX.assume_init_mut()
         }
     });
@@ -35,14 +38,15 @@ struct Mailbox {
 }
 
 impl Mailbox {
-    fn new(dt: &DeviceTree) -> Mailbox {
+    fn new(dt: &DeviceTree, mmio_virt_offset: u64) -> Mailbox {
         Mailbox {
             reg: dt
                 .find_compatible("brcm,bcm2835-mbox")
                 .next()
                 .and_then(|uart| dt.property_translated_reg_iter(uart).next())
                 .and_then(|reg| reg.regblock())
-                .unwrap(),
+                .unwrap()
+                .with_offset(mmio_virt_offset),
         }
     }
 
