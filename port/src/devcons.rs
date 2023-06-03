@@ -20,12 +20,13 @@ pub trait Uart {
     fn putb(&self, b: u8);
 }
 
-static mut EARLY_CONS: Option<&'static mut dyn Uart> = None;
 static CONS: Lock<Option<&'static mut dyn Uart>> = Lock::new("cons", None);
 
-pub struct Console;
+/// LockingConsole is the what should be used in almost all cases, as it ensures
+/// threadsafe use of the console.
+pub struct LockingConsole;
 
-impl Console {
+impl LockingConsole {
     /// Create a locking console.  Assumes at this point we can use atomics.
     pub fn new<F>(uart_fn: F) -> Self
     where
@@ -37,62 +38,66 @@ impl Console {
         Self
     }
 
-    /// Create an early, non-locking console.  Assumes at this point we cannot use atomics.
-    /// Once atomics can be used safely, drop_early_console should be called so we switch
-    /// to the locking console.
-    pub fn new_early<F>(uart_fn: F) -> Self
-    where
-        F: FnOnce() -> &'static mut dyn Uart,
-    {
-        unsafe { EARLY_CONS.replace(uart_fn()) };
-        Self
-    }
-
-    pub fn putb(&mut self, uart: &mut dyn Uart, b: u8) {
-        if b == b'\n' {
-            uart.putb(b'\r');
-        } else if b == BACKSPACE {
-            uart.putb(b);
-            uart.putb(b' ');
-        }
-        uart.putb(b);
-    }
-
     pub fn putstr(&mut self, s: &str) {
         // XXX: Just for testing.
 
-        if let Some(uart) = unsafe { &mut EARLY_CONS } {
-            for b in s.bytes() {
-                self.putb(*uart, b);
-            }
-        } else {
-            static mut NODE: LockNode = LockNode::new();
-            let mut uart = CONS.lock(unsafe { &NODE });
-            for b in s.bytes() {
-                self.putb(uart.as_deref_mut().unwrap(), b);
-            }
+        static mut NODE: LockNode = LockNode::new();
+        let mut uart_guard = CONS.lock(unsafe { &NODE });
+        let mut uart = uart_guard.as_deref_mut().unwrap();
+        for b in s.bytes() {
+            putb(uart, b);
         }
     }
 }
 
-impl fmt::Write for Console {
+impl fmt::Write for LockingConsole {
     fn write_str(&mut self, s: &str) -> fmt::Result {
         self.putstr(s);
         Ok(())
     }
 }
 
-pub fn drop_early_console() {
-    static mut NODE: LockNode = LockNode::new();
-    let mut cons = CONS.lock(unsafe { &NODE });
-    let earlycons = unsafe { EARLY_CONS.take() };
-    *cons = earlycons;
+/// EarlyConsole should only be used in the very early stages of booting, when
+/// we're not sure we can use locks.  This can be particularly useful for
+/// implementing an early panic handler.
+pub struct EarlyConsole<T>
+where
+    T: Uart,
+{
+    uart: T,
+}
+
+impl<T> EarlyConsole<T>
+where
+    T: Uart,
+{
+    pub fn new(uart: T) -> Self {
+        Self { uart }
+    }
+
+    pub fn putstr(&mut self, s: &str) {
+        // XXX: Just for testing.
+
+        for b in s.bytes() {
+            putb(&self.uart, b);
+        }
+    }
+}
+
+impl<T> fmt::Write for EarlyConsole<T>
+where
+    T: Uart,
+{
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        self.putstr(s);
+        Ok(())
+    }
 }
 
 pub fn print(args: fmt::Arguments) {
     // XXX: Just for testing.
     use fmt::Write;
-    let mut cons: Console = Console {};
+    let mut cons: LockingConsole = LockingConsole {};
     cons.write_fmt(args).unwrap();
 }
 
@@ -107,4 +112,14 @@ macro_rules! print {
     ($($args:tt)*) => {{
         $crate::devcons::print(format_args!($($args)*))
     }};
+}
+
+fn putb(uart: &dyn Uart, b: u8) {
+    if b == b'\n' {
+        uart.putb(b'\r');
+    } else if b == BACKSPACE {
+        uart.putb(b);
+        uart.putb(b' ');
+    }
+    uart.putb(b);
 }

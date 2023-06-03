@@ -100,9 +100,6 @@ pub extern "C" fn main9(dtb_ptr: u64) {
     println!("DTB found at: {:#x}", dtb_ptr);
     print_binary_sections();
 
-    // Assume we've got MMU set up, so drop early console for the locking console
-    port::devcons::drop_early_console();
-
     print_physical_memory_map();
     print_board_info();
 

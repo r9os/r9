@@ -1,7 +1,7 @@
 // Racy to start.
 
 use core::mem::MaybeUninit;
-use port::devcons::Console;
+use port::devcons::LockingConsole;
 use port::fdt::DeviceTree;
 
 use crate::uartmini::MiniUart;
@@ -32,9 +32,7 @@ use crate::uartmini::MiniUart;
 // - Break out mailbox, gpio code
 
 pub fn init(dt: &DeviceTree) {
-    // Create early console because aarch64 can't use locks until MMU is set up
-    Console::new_early(|| {
-        // let uart = Pl011Uart::new(dt);
+    LockingConsole::new(|| {
         let uart = MiniUart::new(dt);
         uart.init();
 

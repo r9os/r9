@@ -45,6 +45,14 @@ impl MiniUart {
         MiniUart { gpio_reg, aux_reg, miniuart_reg }
     }
 
+    pub fn from_addresses(gpio_addr: u64, aux_addr: u64, miniuart_addr: u64) -> MiniUart {
+        MiniUart {
+            gpio_reg: RegBlock::from_addr(gpio_addr),
+            aux_reg: RegBlock::from_addr(aux_addr),
+            miniuart_reg: RegBlock::from_addr(miniuart_addr),
+        }
+    }
+
     pub fn init(&self) {
         // Set GPIO pins 14 and 15 to be used for UART1.  This is done by
         // setting the appropriate flags in GPFSEL1 to ALT5, which is
