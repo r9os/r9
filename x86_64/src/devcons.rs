@@ -1,6 +1,6 @@
 // Racy to start.
 
-use port::devcons::{Console, Uart};
+use port::devcons::{LockingConsole, Uart};
 
 struct Uart16550 {
     port: u16,
@@ -13,7 +13,7 @@ impl Uart for Uart16550 {
 }
 
 pub fn init() {
-    Console::new(|| {
+    LockingConsole::new(|| {
         static mut UART: Uart16550 = Uart16550 { port: 0x3f8 };
         unsafe { &mut UART }
     });

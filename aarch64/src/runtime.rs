@@ -2,7 +2,6 @@
 
 extern crate alloc;
 
-use crate::println;
 use crate::uartmini::MiniUart;
 use alloc::alloc::{GlobalAlloc, Layout};
 use core::fmt::Write;

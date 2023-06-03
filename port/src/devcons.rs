@@ -43,7 +43,7 @@ impl LockingConsole {
 
         static mut NODE: LockNode = LockNode::new();
         let mut uart_guard = CONS.lock(unsafe { &NODE });
-        let mut uart = uart_guard.as_deref_mut().unwrap();
+        let uart = uart_guard.as_deref_mut().unwrap();
         for b in s.bytes() {
             putb(uart, b);
         }
@@ -79,7 +79,7 @@ where
         // XXX: Just for testing.
 
         for b in s.bytes() {
-            putb(&self.uart, b);
+            putb(&mut self.uart, b);
         }
     }
 }
@@ -114,7 +114,7 @@ macro_rules! print {
     }};
 }
 
-fn putb(uart: &dyn Uart, b: u8) {
+fn putb(uart: &mut dyn Uart, b: u8) {
     if b == b'\n' {
         uart.putb(b'\r');
     } else if b == BACKSPACE {
