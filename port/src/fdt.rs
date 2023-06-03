@@ -696,6 +696,15 @@ pub struct RegBlock {
     pub len: Option<u64>,
 }
 
+impl RegBlock {
+    pub fn from_addr(addr: u64) -> RegBlock {
+        RegBlock { addr, len: None }
+    }
+    pub fn with_offset(self, offset: u64) -> RegBlock {
+        RegBlock { addr: self.addr + offset, len: self.len }
+    }
+}
+
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub enum TranslatedReg {
     Translated(RegBlock),

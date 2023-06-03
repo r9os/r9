@@ -2,11 +2,31 @@
 
 extern crate alloc;
 
+use crate::println;
+use crate::uartmini::MiniUart;
 use alloc::alloc::{GlobalAlloc, Layout};
+use core::fmt::Write;
 use core::panic::PanicInfo;
+use port::devcons::EarlyConsole;
 
+// TODO
+//  - Add qemu integration test
+//  - Use LockingConsole via println!() macro once available
+//  - Add support for raspi4
 #[panic_handler]
-pub extern "C" fn panic(_info: &PanicInfo) -> ! {
+pub extern "C" fn panic(info: &PanicInfo) -> ! {
+    // Miniuart settings for raspi4 once mapped to higher half
+    //let uart = MiniUart::from_addresses(0xffff800000200000, 0xffff800000215000, 0xffff800000215040);
+
+    // Miniuart settings for raspi3 physical memory, as used by qemu currently
+    let uart = MiniUart::from_addresses(0x3f200000, 0x3f215000, 0x3f215040);
+    uart.init();
+
+    EarlyConsole::new(uart).write_fmt(format_args!("{}\n", info)).unwrap();
+
+    // TODO Once the LockingConsole is available, we should use this
+    // println!("{}", info);
+
     #[allow(clippy::empty_loop)]
     loop {}
 }
