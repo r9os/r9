@@ -1,10 +1,10 @@
 // Racy to start.
 
+use crate::registers::MidrEl1;
+use crate::uartmini::MiniUart;
 use core::mem::MaybeUninit;
 use port::devcons::LockingConsole;
 use port::fdt::DeviceTree;
-
-use crate::uartmini::MiniUart;
 
 // The aarch64 devcons implementation is focussed on Raspberry Pi 3, 4 for now.
 
@@ -33,8 +33,15 @@ use crate::uartmini::MiniUart;
 
 pub fn init(dt: &DeviceTree) {
     LockingConsole::new(|| {
-        let uart = MiniUart::new(dt);
-        uart.init();
+        const KZERO: u64 = 0xffff800000000000;
+        let base = KZERO + MidrEl1::read().partnum_enum().map(|p| p.mmio()).unwrap_or(0);
+        let gpio_addr = base + 0x200000;
+        let aux_addr = base + 0x215000;
+        let miniuart_addr = base + 0x215040;
+
+        let uart = MiniUart::from_addresses(gpio_addr, aux_addr, miniuart_addr);
+        //let uart = MiniUart::new(dt);
+        // uart.init();
 
         static mut UART: MaybeUninit<MiniUart> = MaybeUninit::uninit();
         unsafe {

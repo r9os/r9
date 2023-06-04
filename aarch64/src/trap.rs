@@ -65,6 +65,7 @@ pub extern "C" fn trap_unsafe(frame: *mut TrapFrame) {
 
 fn trap(frame: &mut TrapFrame) {
     // Just print out the frame and loop for now
-    println!("{:x?}", frame);
+    // TODO Make it a little prettier and more space efficient
+    println!("{:#x?}", frame);
     loop {}
 }

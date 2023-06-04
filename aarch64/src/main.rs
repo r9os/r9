@@ -67,7 +67,7 @@ fn print_pi_name(board_revision: u32) {
         0xa21041 => "Raspberry Pi 2B",
         0xa02082 => "Raspberry Pi 3B",
         0xa220a0 => "Raspberry Compute Module 3",
-        _ => "unknown",
+        _ => "Unknown",
     };
     println!("  Board Name: {name}");
 }
@@ -98,8 +98,9 @@ pub extern "C" fn main9(dtb_ptr: u64) {
     println!();
     println!("r9 from the Internet");
     println!("DTB found at: {:#x}", dtb_ptr);
-    print_binary_sections();
+    println!("midr_el1: {:?}", registers::MidrEl1::read());
 
+    print_binary_sections();
     print_physical_memory_map();
     print_board_info();
 

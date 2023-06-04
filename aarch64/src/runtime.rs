@@ -2,6 +2,7 @@
 
 extern crate alloc;
 
+use crate::registers::MidrEl1;
 use crate::uartmini::MiniUart;
 use alloc::alloc::{GlobalAlloc, Layout};
 use core::fmt::Write;
@@ -14,12 +15,14 @@ use port::devcons::EarlyConsole;
 //  - Add support for raspi4
 #[panic_handler]
 pub extern "C" fn panic(info: &PanicInfo) -> ! {
-    // Miniuart settings for raspi4 once mapped to higher half
-    //let uart = MiniUart::from_addresses(0xffff800000200000, 0xffff800000215000, 0xffff800000215040);
+    const KZERO: u64 = 0xffff800000000000;
+    let base = KZERO + MidrEl1::read().partnum_enum().map(|p| p.mmio()).unwrap_or(0);
+    let gpio_addr = base + 0x200000;
+    let aux_addr = base + 0x215000;
+    let miniuart_addr = base + 0x215040;
 
-    // Miniuart settings for raspi3 physical memory, as used by qemu currently
-    let uart = MiniUart::from_addresses(0x3f200000, 0x3f215000, 0x3f215040);
-    uart.init();
+    let uart = MiniUart::from_addresses(gpio_addr, aux_addr, miniuart_addr);
+    //uart.init();
 
     EarlyConsole::new(uart).write_fmt(format_args!("{}\n", info)).unwrap();
 
