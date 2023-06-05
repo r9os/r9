@@ -1,4 +1,5 @@
 use crate::io::{read_reg, write_reg};
+use crate::registers::MidrEl1;
 use core::mem;
 use core::mem::MaybeUninit;
 use port::fdt::{DeviceTree, RegBlock};
@@ -22,7 +23,12 @@ pub fn init(dt: &DeviceTree) {
     *mailbox = Some({
         static mut MAYBE_MAILBOX: MaybeUninit<Mailbox> = MaybeUninit::uninit();
         unsafe {
-            MAYBE_MAILBOX.write(Mailbox::new(dt));
+            // TODO this should be defined elsewhere
+            const KZERO: u64 = 0xffff800000000000;
+            let mbox_addr =
+                KZERO + MidrEl1::read().partnum_enum().map(|p| p.mmio()).unwrap_or(0) + 0xb880;
+            MAYBE_MAILBOX.write(Mailbox::from_address(mbox_addr));
+            //MAYBE_MAILBOX.write(Mailbox::new(dt, KZERO));
             MAYBE_MAILBOX.assume_init_mut()
         }
     });
@@ -35,15 +41,20 @@ struct Mailbox {
 }
 
 impl Mailbox {
-    fn new(dt: &DeviceTree) -> Mailbox {
+    fn new(dt: &DeviceTree, mmio_virt_offset: u64) -> Mailbox {
         Mailbox {
             reg: dt
                 .find_compatible("brcm,bcm2835-mbox")
                 .next()
                 .and_then(|uart| dt.property_translated_reg_iter(uart).next())
                 .and_then(|reg| reg.regblock())
-                .unwrap(),
+                .unwrap()
+                .with_offset(mmio_virt_offset),
         }
+    }
+
+    pub fn from_address(addr: u64) -> Mailbox {
+        Mailbox { reg: RegBlock::from_addr(addr) }
     }
 
     fn request<T, U>(&self, req: &mut Message<T, U>)

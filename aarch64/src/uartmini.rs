@@ -17,14 +17,15 @@ pub struct MiniUart {
 }
 
 impl MiniUart {
-    pub fn new(dt: &DeviceTree) -> MiniUart {
+    pub fn new(dt: &DeviceTree, mmio_virt_offset: u64) -> MiniUart {
         // TODO use aliases?
         let gpio_reg = dt
             .find_compatible("brcm,bcm2835-gpio")
             .next()
             .and_then(|uart| dt.property_translated_reg_iter(uart).next())
             .and_then(|reg| reg.regblock())
-            .unwrap();
+            .unwrap()
+            .with_offset(mmio_virt_offset);
 
         // Find a compatible aux
         let aux_reg = dt
@@ -32,7 +33,8 @@ impl MiniUart {
             .next()
             .and_then(|uart| dt.property_translated_reg_iter(uart).next())
             .and_then(|reg| reg.regblock())
-            .unwrap();
+            .unwrap()
+            .with_offset(mmio_virt_offset);
 
         // Find a compatible miniuart
         let miniuart_reg = dt
@@ -40,7 +42,8 @@ impl MiniUart {
             .next()
             .and_then(|uart| dt.property_translated_reg_iter(uart).next())
             .and_then(|reg| reg.regblock())
-            .unwrap();
+            .unwrap()
+            .with_offset(mmio_virt_offset);
 
         MiniUart { gpio_reg, aux_reg, miniuart_reg }
     }
