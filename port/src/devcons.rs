@@ -22,11 +22,11 @@ pub trait Uart {
 
 static CONS: Lock<Option<&'static mut dyn Uart>> = Lock::new("cons", None);
 
-/// LockingConsole is the what should be used in almost all cases, as it ensures
-/// threadsafe use of the console.
-pub struct LockingConsole;
+/// Console is what should be used in almost all cases, as it ensures threadsafe
+/// use of the console.
+pub struct Console;
 
-impl LockingConsole {
+impl Console {
     /// Create a locking console.  Assumes at this point we can use atomics.
     pub fn new<F>(uart_fn: F) -> Self
     where
@@ -50,24 +50,24 @@ impl LockingConsole {
     }
 }
 
-impl fmt::Write for LockingConsole {
+impl fmt::Write for Console {
     fn write_str(&mut self, s: &str) -> fmt::Result {
         self.putstr(s);
         Ok(())
     }
 }
 
-/// EarlyConsole should only be used in the very early stages of booting, when
+/// PanicConsole should only be used in the very early stages of booting, when
 /// we're not sure we can use locks.  This can be particularly useful for
 /// implementing an early panic handler.
-pub struct EarlyConsole<T>
+pub struct PanicConsole<T>
 where
     T: Uart,
 {
     uart: T,
 }
 
-impl<T> EarlyConsole<T>
+impl<T> PanicConsole<T>
 where
     T: Uart,
 {
@@ -84,7 +84,7 @@ where
     }
 }
 
-impl<T> fmt::Write for EarlyConsole<T>
+impl<T> fmt::Write for PanicConsole<T>
 where
     T: Uart,
 {
@@ -97,7 +97,7 @@ where
 pub fn print(args: fmt::Arguments) {
     // XXX: Just for testing.
     use fmt::Write;
-    let mut cons: LockingConsole = LockingConsole {};
+    let mut cons: Console = Console {};
     cons.write_fmt(args).unwrap();
 }
 

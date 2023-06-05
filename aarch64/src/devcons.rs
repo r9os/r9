@@ -1,7 +1,7 @@
 // Racy to start.
 
 use core::mem::MaybeUninit;
-use port::devcons::LockingConsole;
+use port::devcons::Console;
 use port::fdt::DeviceTree;
 
 use crate::uartmini::MiniUart;
@@ -32,7 +32,7 @@ use crate::uartmini::MiniUart;
 // - Break out mailbox, gpio code
 
 pub fn init(dt: &DeviceTree) {
-    LockingConsole::new(|| {
+    Console::new(|| {
         let uart = MiniUart::new(dt);
         uart.init();
 
