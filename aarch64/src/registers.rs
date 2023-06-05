@@ -32,6 +32,69 @@ pub const AUX_MU_BAUD: u64 = 0x28; // Mini Uart baudrate register
 
 bitstruct! {
     #[derive(Copy, Clone)]
+    pub struct MidrEl1(pub u64) {
+        revision: u8 = 0..4;
+        partnum: u16 = 4..16;
+        architecture: u8 = 16..20;
+        variant: u8 = 20..24;
+        implementer: u16 = 24..32;
+    }
+}
+
+impl MidrEl1 {
+    pub fn read() -> Self {
+        let mut value: u64;
+        unsafe {
+            core::arch::asm!("mrs {value}, midr_el1", value = out(reg) value);
+        }
+        Self(value)
+    }
+
+    pub fn partnum_enum(&self) -> Result<PartNum, u16> {
+        PartNum::try_from(self.partnum()).map_err(|e| e.number)
+    }
+}
+
+impl fmt::Debug for MidrEl1 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MidrEl1")
+            .field("revision", &format_args!("{:#x}", self.revision()))
+            .field(
+                "partnum",
+                &format_args!("{:?}", self.partnum_enum().unwrap_or(PartNum::Unknown)),
+            )
+            .field("architecture", &format_args!("{:#x}", self.architecture()))
+            .field("variant", &format_args!("{:#x}", self.variant()))
+            .field("implementer", &format_args!("{:#x}", self.implementer()))
+            .finish()
+    }
+}
+
+/// Known IDs for midr_el1's partnum
+#[derive(Debug, Eq, PartialEq, TryFromPrimitive)]
+#[repr(u16)]
+pub enum PartNum {
+    Unknown = 0,
+    RaspberryPi1 = 0xb76,
+    RaspberryPi2 = 0xc07,
+    RaspberryPi3 = 0xd03,
+    RaspberryPi4 = 0xd08,
+}
+
+impl PartNum {
+    /// Return the physical MMIO base address for the Raspberry Pi MMIO
+    pub fn mmio(&self) -> u64 {
+        match self {
+            Self::RaspberryPi1 => 0x20000000,
+            Self::RaspberryPi2 | Self::RaspberryPi3 => 0x3f000000,
+            Self::RaspberryPi4 => 0xfe000000,
+            Self::Unknown => 0,
+        }
+    }
+}
+
+bitstruct! {
+    #[derive(Copy, Clone)]
     pub struct EsrEl1(pub u64) {
         iss: u32 = 0..25;
         il: bool = 25;
@@ -43,7 +106,7 @@ bitstruct! {
 impl EsrEl1 {
     /// Try to convert the error into an ExceptionClass enum, or return the original number
     /// as the error.
-    pub fn exception_class(&self) -> Result<ExceptionClass, u8> {
+    pub fn exception_class_enum(&self) -> Result<ExceptionClass, u8> {
         ExceptionClass::try_from(self.ec()).map_err(|e| e.number)
     }
 }
@@ -53,7 +116,7 @@ impl fmt::Debug for EsrEl1 {
         f.debug_struct("EsrEl1")
             .field("iss", &format_args!("{:#010x}", self.iss()))
             .field("il", &format_args!("{}", self.il()))
-            .field("ec", &format_args!("{:?}", self.exception_class()))
+            .field("ec", &format_args!("{:?}", self.exception_class_enum()))
             .field("iss2", &format_args!("{:#04x}", self.iss2()))
             .finish()
     }
@@ -106,7 +169,7 @@ bitstruct! {
 
 impl EsrEl1IssInstructionAbort {
     pub fn from_esr_el1(r: EsrEl1) -> Option<EsrEl1IssInstructionAbort> {
-        r.exception_class()
+        r.exception_class_enum()
             .ok()
             .filter(|ec| *ec == ExceptionClass::InstructionAbortSameEl)
             .map(|_| EsrEl1IssInstructionAbort(r.iss()))
@@ -198,7 +261,7 @@ mod tests {
     #[test]
     fn test_parse_esr_el1() {
         let r = EsrEl1(0x86000004);
-        assert_eq!(r.exception_class().unwrap(), ExceptionClass::InstructionAbortSameEl);
+        assert_eq!(r.exception_class_enum().unwrap(), ExceptionClass::InstructionAbortSameEl);
         assert_eq!(
             EsrEl1IssInstructionAbort::from_esr_el1(r).unwrap().instruction_fault().unwrap(),
             InstructionFaultStatusCode::TranslationFaultLevel0
