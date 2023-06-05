@@ -43,7 +43,8 @@ bitstruct! {
 
 impl MidrEl1 {
     pub fn read() -> Self {
-        let mut value: u64;
+        let mut value: u64 = 0;
+        #[cfg(not(test))]
         unsafe {
             core::arch::asm!("mrs {value}, midr_el1", value = out(reg) value);
         }
