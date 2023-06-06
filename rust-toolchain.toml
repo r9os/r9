@@ -4,4 +4,5 @@ components = [ "rustfmt", "rust-src", "clippy", "llvm-tools" ]
 targets = [
   "aarch64-unknown-none-softfloat",
   "riscv64imac-unknown-none-elf",
+  "x86_64-unknown-none"
 ]
