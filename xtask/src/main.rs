@@ -233,11 +233,11 @@ fn objcopy() -> String {
         path.push("rustlib");
         path.push(host);
         path.push("bin");
-        path.push("llvm-objcopy");
+        path.push("rust-objcopy");
         if path.exists() {
             path.into_os_string().into_string().unwrap()
         } else {
-            "llvm-objcopy".into()
+            "rust-objcopy".into()
         }
     };
     env_or("OBJCOPY", &llvm_objcopy)
@@ -450,7 +450,7 @@ fn run(build_params: &BuildParams) -> Result<()> {
                 cmd.arg("-s").arg("-S");
             }
             cmd.arg("-dtb");
-            cmd.arg("lib/bcm2710-rpi-3-b.dtb");
+            cmd.arg("aarch64/lib/bcm2710-rpi-3-b.dtb");
             // Show exception level change events in stdout
             cmd.arg("-d");
             cmd.arg("int");
@@ -603,7 +603,5 @@ fn exclude_other_arches(arch: Arch, cmd: &mut Command) {
 
 // Annotates the error result with the calling binary's name.
 fn annotated_status(cmd: &mut Command) -> Result<process::ExitStatus> {
-    Ok(cmd.status().map_err(|e| {
-        format!("{}: {}", cmd.get_program().to_string_lossy(), e)
-    })?)
+    Ok(cmd.status().map_err(|e| format!("{}: {}", cmd.get_program().to_string_lossy(), e))?)
 }
