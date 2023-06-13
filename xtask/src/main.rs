@@ -481,8 +481,12 @@ fn run(build_params: &BuildParams) -> Result<()> {
                 cmd.arg("-machine").arg("virt");
             }
             cmd.arg("-cpu").arg("rv64");
-            cmd.arg("-drive").arg("file=disk.bin,format=raw,id=hd0");
-            cmd.arg("-device").arg("virtio-blk-device,drive=hd0");
+            // FIXME: This is not needed as of now, and will only work once the
+            // FIXME: // disk.bin is also taken care of. Doesn't exist by default.
+            if false {
+                cmd.arg("-drive").arg("file=disk.bin,format=raw,id=hd0");
+                cmd.arg("-device").arg("virtio-blk-device,drive=hd0");
+            }
             cmd.arg("-netdev").arg("type=user,id=net0");
             cmd.arg("-device").arg("virtio-net-device,netdev=net0");
             cmd.arg("-smp").arg("4");
