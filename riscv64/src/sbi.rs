@@ -4,6 +4,10 @@
 
 #![cfg_attr(not(target_arch = "riscv64"), allow(dead_code))]
 
+use core::fmt::Error;
+use core::fmt::Write;
+use port::devcons::Uart;
+
 const SBI_SET_TIMER: usize = 0;
 const SBI_CONSOLE_PUTCHAR: usize = 1;
 const SBI_CONSOLE_GETCHAR: usize = 2;
@@ -39,7 +43,7 @@ pub fn _set_timer(timer: usize) {
 }
 
 #[deprecated = "expected to be deprecated; no replacement"]
-pub fn _consputb(c: u8) {
+pub fn consputb(c: u8) {
     sbi_call_legacy(SBI_CONSOLE_PUTCHAR, c as usize, 0, 0);
 }
 
@@ -51,4 +55,27 @@ pub fn _consgetb() -> u8 {
 pub fn shutdown() -> ! {
     sbi_call_legacy(SBI_SHUTDOWN, 0, 0, 0);
     panic!("shutdown failed!");
+}
+
+pub struct Sbi {}
+
+impl Write for Sbi {
+    fn write_str(&mut self, out: &str) -> Result<(), Error> {
+        for c in out.bytes() {
+            consputb(c);
+        }
+        Ok(())
+    }
+}
+
+impl Uart for Sbi {
+    fn putb(&self, b: u8) {
+        consputb(b);
+    }
+}
+
+impl Sbi {
+    pub fn new() -> Self {
+        Sbi {}
+    }
 }

@@ -1,7 +1,10 @@
+use crate::println;
 use core::{
     ffi::CStr,
     mem::{self, MaybeUninit},
 };
+
+const DEBUG_DT_PARSING: bool = false;
 
 #[derive(Debug)]
 pub enum ParseError {
@@ -66,6 +69,9 @@ impl<'a> DeviceTree<'a> {
     /// Given a pointer to the dtb as a u64, return a DeviceTree struct.
     pub unsafe fn from_u64(ptr: u64) -> Result<Self> {
         let u8ptr = ptr as *const mem::MaybeUninit<u8>;
+        if DEBUG_DT_PARSING {
+            println!(" DT @ {u8ptr:x?}");
+        }
 
         // Extract the real length from the header
         let dtb_buf_for_header: &[mem::MaybeUninit<u8>] =
@@ -77,7 +83,11 @@ impl<'a> DeviceTree<'a> {
         // Extract the buffer for real
         let dtb_buf: &[mem::MaybeUninit<u8>] =
             unsafe { core::slice::from_raw_parts(u8ptr as *const MaybeUninit<u8>, len) };
-        FdtHeader::new(dtb_buf, false).map(|header| Self { data: dtb_buf, header })
+        let h = FdtHeader::new(dtb_buf, false);
+        if DEBUG_DT_PARSING {
+            println!(" DT header {:#x?}", h);
+        }
+        h.map(|header| Self { data: dtb_buf, header })
     }
 
     /// Return slice containing `structs` area in FDT
