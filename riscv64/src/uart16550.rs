@@ -56,6 +56,7 @@ impl Uart16550 {
         }
     }
 
+    #[allow(dead_code)]
     pub fn get(&mut self) -> Option<u8> {
         let ptr = self.ns16550a_reg.addr as *mut u8;
         unsafe {

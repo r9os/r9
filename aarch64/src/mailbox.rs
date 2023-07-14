@@ -17,7 +17,7 @@ static MAILBOX: Lock<Option<&'static mut Mailbox>> = Lock::new("mailbox", None);
 /// Mailbox init.  Mainly initialises a lock to ensure only one mailbox request
 /// can be made at a time.  We have no heap at this point, so creating a mailbox
 /// that can be initialised based off the devicetree is rather convoluted.
-pub fn init(dt: &DeviceTree) {
+pub fn init(_dt: &DeviceTree) {
     static mut NODE: LockNode = LockNode::new();
     let mut mailbox = MAILBOX.lock(unsafe { &NODE });
     *mailbox = Some({
@@ -40,6 +40,7 @@ struct Mailbox {
     reg: RegBlock,
 }
 
+#[allow(dead_code)]
 impl Mailbox {
     fn new(dt: &DeviceTree, mmio_virt_offset: u64) -> Mailbox {
         Mailbox {
@@ -167,6 +168,7 @@ struct SetClockRateResponse {
     rate_hz: u32,
 }
 
+#[allow(dead_code)]
 pub fn set_clock_rate(clock_id: u32, rate_hz: u32, skip_setting_turbo: u32) {
     let tags = Tag::<SetClockRateRequest> {
         tag_id0: TagId::SetClockRate,

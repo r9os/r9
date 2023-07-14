@@ -10,12 +10,14 @@ use crate::registers::{
 /// MiniUart is assigned to UART1 on the Raspberry Pi.  It is easier to use with
 /// real hardware, as it requires no additional configuration.  Conversely, it's
 /// harded to use with QEMU, as it can't be used with the `nographic` switch.
+#[allow(dead_code)]
 pub struct MiniUart {
     gpio_reg: RegBlock,
     aux_reg: RegBlock,
     miniuart_reg: RegBlock,
 }
 
+#[allow(dead_code)]
 impl MiniUart {
     pub fn new(dt: &DeviceTree, mmio_virt_offset: u64) -> MiniUart {
         // TODO use aliases?
