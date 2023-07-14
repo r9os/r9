@@ -31,7 +31,7 @@ use port::fdt::DeviceTree;
 //     https://wiki.osdev.org/Detecting_Raspberry_Pi_Board
 // - Break out mailbox, gpio code
 
-pub fn init(dt: &DeviceTree) {
+pub fn init(_dt: &DeviceTree) {
     Console::new(|| {
         const KZERO: u64 = 0xffff800000000000;
         let base = KZERO + MidrEl1::read().partnum_enum().map(|p| p.mmio()).unwrap_or(0);

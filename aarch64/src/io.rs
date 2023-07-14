@@ -9,6 +9,7 @@ pub enum GpioPull {
 }
 
 /// Delay for count cycles
+#[allow(dead_code)]
 pub fn delay(count: u32) {
     for _ in 0..count {
         core::hint::spin_loop();
@@ -26,6 +27,7 @@ pub fn write_reg(reg: RegBlock, offset: u64, val: u32) {
 /// Write val|old into the reg RegBlock at offset from reg.addr,
 /// where `old` is the existing value.
 /// Panics if offset is outside any range specified by reg.len.
+#[allow(dead_code)]
 pub fn write_or_reg(reg: RegBlock, offset: u64, val: u32) {
     let dst = reg.addr + offset;
     assert!(reg.len.map_or(true, |len| offset < len));

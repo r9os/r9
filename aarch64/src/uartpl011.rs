@@ -7,6 +7,7 @@ use crate::registers::{
 use port::devcons::Uart;
 use port::fdt::{DeviceTree, RegBlock};
 
+#[allow(dead_code)]
 pub struct Pl011Uart {
     gpio_reg: RegBlock,
     pl011_reg: RegBlock,
@@ -15,6 +16,7 @@ pub struct Pl011Uart {
 /// PL011 is the default in qemu (UART0), but a bit fiddly to use on a real
 /// Raspberry Pi board, as it needs additional configuration in the config
 /// and EEPROM (rpi4) to assign to the serial GPIO pins.
+#[allow(dead_code)]
 impl Pl011Uart {
     pub fn new(dt: &DeviceTree) -> Pl011Uart {
         // TODO use aliases?
