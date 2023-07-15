@@ -1,3 +1,5 @@
+#![allow(unused_variables, dead_code)]
+
 pub unsafe fn outb(port: u16, b: u8) {
     #[cfg(not(test))]
     unsafe {
