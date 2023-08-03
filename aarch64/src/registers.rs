@@ -4,33 +4,35 @@ use bitstruct::bitstruct;
 use core::fmt;
 use num_enum::TryFromPrimitive;
 
+use crate::mem::PhysAddr;
+
 // GPIO registers
-pub const GPFSEL1: u64 = 0x04; // GPIO function select register 1
-pub const GPPUD: u64 = 0x94; // GPIO pin pull up/down enable
-pub const GPPUDCLK0: u64 = 0x98; // GPIO pin pull up/down enable clock 0
+pub const GPFSEL1: usize = 0x04; // GPIO function select register 1
+pub const GPPUD: usize = 0x94; // GPIO pin pull up/down enable
+pub const GPPUDCLK0: usize = 0x98; // GPIO pin pull up/down enable clock 0
 
 // UART 0 (PL011) registers
-pub const UART0_DR: u64 = 0x00; // Data register
-pub const UART0_FR: u64 = 0x18; // Flag register
-pub const UART0_IBRD: u64 = 0x24; // Integer baud rate divisor
-pub const UART0_FBRD: u64 = 0x28; // Fractional baud rate divisor
-pub const UART0_LCRH: u64 = 0x2c; // Line control register
-pub const UART0_CR: u64 = 0x30; // Control register
-pub const UART0_IMSC: u64 = 0x38; // Interrupt mask set clear register
-pub const UART0_ICR: u64 = 0x44; // Interrupt clear register
+pub const UART0_DR: usize = 0x00; // Data register
+pub const UART0_FR: usize = 0x18; // Flag register
+pub const UART0_IBRD: usize = 0x24; // Integer baud rate divisor
+pub const UART0_FBRD: usize = 0x28; // Fractional baud rate divisor
+pub const UART0_LCRH: usize = 0x2c; // Line control register
+pub const UART0_CR: usize = 0x30; // Control register
+pub const UART0_IMSC: usize = 0x38; // Interrupt mask set clear register
+pub const UART0_ICR: usize = 0x44; // Interrupt clear register
 
 // AUX registers, offset from aux_reg
-pub const AUX_ENABLE: u64 = 0x04; // AUX enable register (Mini Uart, SPIs)
+pub const AUX_ENABLE: usize = 0x04; // AUX enable register (Mini Uart, SPIs)
 
 // UART1 registers, offset from miniuart_reg
-pub const AUX_MU_IO: u64 = 0x00; // AUX IO data register
-pub const AUX_MU_IER: u64 = 0x04; // Mini Uart interrupt enable register
-pub const AUX_MU_IIR: u64 = 0x08; // Mini Uart interrupt identify register
-pub const AUX_MU_LCR: u64 = 0x0c; // Mini Uart line control register
-pub const AUX_MU_MCR: u64 = 0x10; // Mini Uart line control register
-pub const AUX_MU_LSR: u64 = 0x14; // Mini Uart line status register
-pub const AUX_MU_CNTL: u64 = 0x20; // Mini Uart control register
-pub const AUX_MU_BAUD: u64 = 0x28; // Mini Uart baudrate register
+pub const AUX_MU_IO: usize = 0x00; // AUX IO data register
+pub const AUX_MU_IER: usize = 0x04; // Mini Uart interrupt enable register
+pub const AUX_MU_IIR: usize = 0x08; // Mini Uart interrupt identify register
+pub const AUX_MU_LCR: usize = 0x0c; // Mini Uart line control register
+pub const AUX_MU_MCR: usize = 0x10; // Mini Uart line control register
+pub const AUX_MU_LSR: usize = 0x14; // Mini Uart line status register
+pub const AUX_MU_CNTL: usize = 0x20; // Mini Uart control register
+pub const AUX_MU_BAUD: usize = 0x28; // Mini Uart baudrate register
 
 bitstruct! {
     #[derive(Copy, Clone)]
@@ -90,14 +92,18 @@ pub enum PartNum {
 
 impl PartNum {
     /// Return the physical MMIO base address for the Raspberry Pi MMIO
-    pub fn mmio(&self) -> u64 {
+    pub fn mmio(&self) -> Option<PhysAddr> {
         match self {
-            Self::RaspberryPi1 => 0x20000000,
-            Self::RaspberryPi2 | Self::RaspberryPi3 => 0x3f000000,
-            Self::RaspberryPi4 => 0xfe000000,
-            Self::Unknown => 0,
+            Self::RaspberryPi1 => Some(PhysAddr::from(0x20000000)),
+            Self::RaspberryPi2 | Self::RaspberryPi3 => Some(PhysAddr::from(0x3f000000)),
+            Self::RaspberryPi4 => Some(PhysAddr::from(0xfe000000)),
+            Self::Unknown => None,
         }
     }
+}
+
+pub fn rpi_mmio() -> Option<PhysAddr> {
+    MidrEl1::read().partnum_enum().ok().and_then(|p| p.mmio())
 }
 
 bitstruct! {

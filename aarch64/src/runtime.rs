@@ -2,12 +2,13 @@
 
 extern crate alloc;
 
-use crate::registers::MidrEl1;
+use crate::registers::rpi_mmio;
 use crate::uartmini::MiniUart;
 use alloc::alloc::{GlobalAlloc, Layout};
 use core::fmt::Write;
 use core::panic::PanicInfo;
 use port::devcons::PanicConsole;
+use port::mem::VirtRange;
 
 // TODO
 //  - Add qemu integration test
@@ -15,13 +16,13 @@ use port::devcons::PanicConsole;
 //  - Add support for raspi4
 #[panic_handler]
 pub extern "C" fn panic(info: &PanicInfo) -> ! {
-    const KZERO: u64 = 0xffff800000000000;
-    let base = KZERO + MidrEl1::read().partnum_enum().map(|p| p.mmio()).unwrap_or(0);
-    let gpio_addr = base + 0x200000;
-    let aux_addr = base + 0x215000;
-    let miniuart_addr = base + 0x215040;
+    let mmio = rpi_mmio().expect("mmio base detect failed").to_virt();
 
-    let uart = MiniUart::from_addresses(gpio_addr, aux_addr, miniuart_addr);
+    let gpio_range = VirtRange((mmio + 0x200000)..(mmio + 0x20_00b4));
+    let aux_range = VirtRange((mmio + 0x215000)..(mmio + 0x21_5008));
+    let miniuart_range = VirtRange((mmio + 0x215040)..(mmio + 0x21_5080));
+
+    let uart = MiniUart { gpio_range, aux_range, miniuart_range };
     //uart.init();
 
     PanicConsole::new(uart).write_fmt(format_args!("{}\n", info)).unwrap();
