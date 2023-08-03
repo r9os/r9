@@ -18,9 +18,9 @@ use port::mem::VirtRange;
 pub extern "C" fn panic(info: &PanicInfo) -> ! {
     let mmio = rpi_mmio().expect("mmio base detect failed").to_virt();
 
-    let gpio_range = VirtRange((mmio + 0x200000)..(mmio + 0x20_00b4));
-    let aux_range = VirtRange((mmio + 0x215000)..(mmio + 0x21_5008));
-    let miniuart_range = VirtRange((mmio + 0x215040)..(mmio + 0x21_5080));
+    let gpio_range = VirtRange::with_len(mmio + 0x200000, 0xb4);
+    let aux_range = VirtRange::with_len(mmio + 0x215000, 0x8);
+    let miniuart_range = VirtRange::with_len(mmio + 0x215040, 0x40);
 
     let uart = MiniUart { gpio_range, aux_range, miniuart_range };
     //uart.init();
