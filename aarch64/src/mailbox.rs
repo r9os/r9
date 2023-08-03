@@ -2,12 +2,13 @@ use crate::io::{read_reg, write_reg};
 use crate::registers::MidrEl1;
 use core::mem;
 use core::mem::MaybeUninit;
-use port::fdt::{DeviceTree, RegBlock};
+use port::fdt::DeviceTree;
 use port::mcslock::{Lock, LockNode};
+use port::mem::VirtRange;
 
-const MBOX_READ: u64 = 0x00;
-const MBOX_STATUS: u64 = 0x18;
-const MBOX_WRITE: u64 = 0x20;
+const MBOX_READ: usize = 0x00;
+const MBOX_STATUS: usize = 0x18;
+const MBOX_WRITE: usize = 0x20;
 
 const MBOX_FULL: u32 = 0x8000_0000;
 const MBOX_EMPTY: u32 = 0x4000_0000;
@@ -23,11 +24,15 @@ pub fn init(_dt: &DeviceTree) {
     *mailbox = Some({
         static mut MAYBE_MAILBOX: MaybeUninit<Mailbox> = MaybeUninit::uninit();
         unsafe {
-            // TODO this should be defined elsewhere
-            const KZERO: u64 = 0xffff800000000000;
-            let mbox_addr =
-                KZERO + MidrEl1::read().partnum_enum().map(|p| p.mmio()).unwrap_or(0) + 0xb880;
-            MAYBE_MAILBOX.write(Mailbox::from_address(mbox_addr));
+            let mbox_addr = MidrEl1::read()
+                .partnum_enum()
+                .expect("unknown rpi partnum")
+                .mmio()
+                .expect("rpi mmio not found")
+                .to_virt()
+                + 0xb880;
+            let mbox_range = VirtRange(mbox_addr..(mbox_addr + 0x40));
+            MAYBE_MAILBOX.write(Mailbox { mbox_range });
             //MAYBE_MAILBOX.write(Mailbox::new(dt, KZERO));
             MAYBE_MAILBOX.assume_init_mut()
         }
@@ -37,25 +42,22 @@ pub fn init(_dt: &DeviceTree) {
 /// https://developer.arm.com/documentation/ddi0306/b/CHDGHAIG
 /// https://github.com/raspberrypi/firmware/wiki/Mailbox-property-interface
 struct Mailbox {
-    reg: RegBlock,
+    pub mbox_range: VirtRange,
 }
 
 #[allow(dead_code)]
 impl Mailbox {
     fn new(dt: &DeviceTree, mmio_virt_offset: u64) -> Mailbox {
         Mailbox {
-            reg: dt
-                .find_compatible("brcm,bcm2835-mbox")
-                .next()
-                .and_then(|uart| dt.property_translated_reg_iter(uart).next())
-                .and_then(|reg| reg.regblock())
-                .unwrap()
-                .with_offset(mmio_virt_offset),
+            mbox_range: VirtRange::from(
+                &dt.find_compatible("brcm,bcm2835-mbox")
+                    .next()
+                    .and_then(|uart| dt.property_translated_reg_iter(uart).next())
+                    .and_then(|reg| reg.regblock())
+                    .unwrap()
+                    .with_offset(mmio_virt_offset),
+            ),
         }
-    }
-
-    pub fn from_address(addr: u64) -> Mailbox {
-        Mailbox { reg: RegBlock::from_addr(addr) }
     }
 
     fn request<T, U>(&self, req: &mut Message<T, U>)
@@ -64,19 +66,19 @@ impl Mailbox {
         U: Copy,
     {
         // Read status register until full flag not set
-        while (read_reg(self.reg, MBOX_STATUS) & MBOX_FULL) != 0 {}
+        while (read_reg(&self.mbox_range, MBOX_STATUS) & MBOX_FULL) != 0 {}
 
         // Write the request address combined with the channel to the write register
         let channel = ChannelId::ArmToVc as u32;
         let uart_mbox_u32 = req as *const _ as u32;
         let r = (uart_mbox_u32 & !0xF) | channel;
-        write_reg(self.reg, MBOX_WRITE, r);
+        write_reg(&self.mbox_range, MBOX_WRITE, r);
 
         // Wait for response
         // FIXME: two infinite loops - can go awry
         loop {
-            while (read_reg(self.reg, MBOX_STATUS) & MBOX_EMPTY) != 0 {}
-            let response = read_reg(self.reg, MBOX_READ);
+            while (read_reg(&self.mbox_range, MBOX_STATUS) & MBOX_EMPTY) != 0 {}
+            let response = read_reg(&self.mbox_range, MBOX_READ);
             if response == r {
                 break;
             }

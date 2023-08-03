@@ -1,10 +1,11 @@
 // Racy to start.
 
-use crate::registers::MidrEl1;
+use crate::registers::rpi_mmio;
 use crate::uartmini::MiniUart;
 use core::mem::MaybeUninit;
 use port::devcons::Console;
 use port::fdt::DeviceTree;
+use port::mem::VirtRange;
 
 // The aarch64 devcons implementation is focussed on Raspberry Pi 3, 4 for now.
 
@@ -33,13 +34,13 @@ use port::fdt::DeviceTree;
 
 pub fn init(_dt: &DeviceTree) {
     Console::new(|| {
-        const KZERO: u64 = 0xffff800000000000;
-        let base = KZERO + MidrEl1::read().partnum_enum().map(|p| p.mmio()).unwrap_or(0);
-        let gpio_addr = base + 0x200000;
-        let aux_addr = base + 0x215000;
-        let miniuart_addr = base + 0x215040;
+        let mmio = rpi_mmio().expect("mmio base detect failed").to_virt();
 
-        let uart = MiniUart::from_addresses(gpio_addr, aux_addr, miniuart_addr);
+        let gpio_range = VirtRange(mmio + 0x20_0000..mmio + 0x20_00b4);
+        let aux_range = VirtRange(mmio + 0x21_5000..mmio + 0x21_5008);
+        let miniuart_range = VirtRange(mmio + 0x21_5040..mmio + 0x21_5080);
+
+        let uart = MiniUart { gpio_range, aux_range, miniuart_range };
         //let uart = MiniUart::new(dt);
         // uart.init();
 

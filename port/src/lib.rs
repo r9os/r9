@@ -7,3 +7,4 @@ pub mod dat;
 pub mod devcons;
 pub mod fdt;
 pub mod mcslock;
+pub mod mem;
