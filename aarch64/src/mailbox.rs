@@ -1,5 +1,5 @@
 use crate::io::{read_reg, write_reg};
-use crate::registers::MidrEl1;
+use crate::registers::rpi_mmio;
 use core::mem;
 use core::mem::MaybeUninit;
 use port::fdt::DeviceTree;
@@ -24,14 +24,9 @@ pub fn init(_dt: &DeviceTree) {
     *mailbox = Some({
         static mut MAYBE_MAILBOX: MaybeUninit<Mailbox> = MaybeUninit::uninit();
         unsafe {
-            let mbox_addr = MidrEl1::read()
-                .partnum_enum()
-                .expect("unknown rpi partnum")
-                .mmio()
-                .expect("rpi mmio not found")
-                .to_virt()
-                + 0xb880;
-            let mbox_range = VirtRange(mbox_addr..(mbox_addr + 0x40));
+            let mmio = rpi_mmio().expect("mmio base detect failed").to_virt();
+            let mbox_range = VirtRange::with_len(mmio + 0xb880, 0x40);
+
             MAYBE_MAILBOX.write(Mailbox { mbox_range });
             //MAYBE_MAILBOX.write(Mailbox::new(dt, KZERO));
             MAYBE_MAILBOX.assume_init_mut()
