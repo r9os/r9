@@ -517,6 +517,7 @@ fn run(build_params: &BuildParams) -> Result<()> {
             cmd.arg("qemu64,pdpe1gb,xsaveopt,fsgsbase,apic,msr");
             cmd.arg("-smp");
             cmd.arg("8");
+            cmd.arg("-s");
             cmd.arg("-m");
             cmd.arg("8192");
             if build_params.wait_for_gdb {
