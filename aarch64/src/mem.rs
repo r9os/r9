@@ -1,5 +1,6 @@
 use crate::param::KZERO;
 
+#[repr(transparent)]
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub struct PhysAddr(u64);
 
