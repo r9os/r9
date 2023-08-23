@@ -94,9 +94,9 @@ impl PartNum {
     /// Return the physical MMIO base address for the Raspberry Pi MMIO
     pub fn mmio(&self) -> Option<PhysAddr> {
         match self {
-            Self::RaspberryPi1 => Some(PhysAddr::from(0x20000000)),
-            Self::RaspberryPi2 | Self::RaspberryPi3 => Some(PhysAddr::from(0x3f000000)),
-            Self::RaspberryPi4 => Some(PhysAddr::from(0xfe000000)),
+            Self::RaspberryPi1 => Some(PhysAddr::new(0x20000000)),
+            Self::RaspberryPi2 | Self::RaspberryPi3 => Some(PhysAddr::new(0x3f000000)),
+            Self::RaspberryPi4 => Some(PhysAddr::new(0xfe000000)),
             Self::Unknown => None,
         }
     }
