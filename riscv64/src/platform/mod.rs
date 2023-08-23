@@ -3,7 +3,7 @@ pub mod nezha;
 #[cfg(platform = "nezha")]
 pub use crate::platform::nezha::*;
 
-#[cfg(platform = "virt")]
+#[cfg(any(test, platform = "virt", not(platform = "nezha")))]
 pub mod virt;
-#[cfg(platform = "virt")]
+#[cfg(any(test, platform = "virt", not(platform = "nezha")))]
 pub use crate::platform::virt::*;

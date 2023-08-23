@@ -1,4 +1,4 @@
-#![cfg(not(any(test, feature = "cargo-clippy")))]
+#![cfg(target_os = "none")]
 
 extern crate alloc;
 
