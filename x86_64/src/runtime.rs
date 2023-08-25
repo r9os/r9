@@ -1,4 +1,4 @@
-#![cfg(target_os = "none")]
+#![cfg(not(test))]
 
 extern crate alloc;
 
