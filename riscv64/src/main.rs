@@ -186,12 +186,6 @@ pub extern "C" fn main9(hartid: usize, dtb_ptr: u64) -> ! {
     devcons::init(&dt);
     println!("\n--> DT / native devcons\n");
 
-    if false {
-        unsafe {
-            sbi_halp();
-        }
-    }
-
     platform_init();
     println!("r9 from the Internet");
     println!("{LOGO}");
