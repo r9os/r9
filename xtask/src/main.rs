@@ -223,8 +223,12 @@ fn cargo() -> String {
 fn objcopy() -> String {
     let llvm_objcopy = {
         let toolchain = env_or("RUSTUP_TOOLCHAIN", "nightly-x86_64-unknown-none");
-        let pos = toolchain.find('-').map(|p| p + 1).unwrap_or(0);
-        let host = toolchain[pos..].to_string();
+
+        // find host architecture by taking last 3 segments from toolchain
+        let mut arch_segments: Box<[_]> = toolchain.split('-').rev().take(3).collect();
+        arch_segments.reverse();
+        let host = arch_segments.join("-");
+
         let home = env_or("RUSTUP_HOME", "");
         let mut path = PathBuf::from(home);
         path.push("toolchains");
@@ -233,11 +237,11 @@ fn objcopy() -> String {
         path.push("rustlib");
         path.push(host);
         path.push("bin");
-        path.push("rust-objcopy");
+        path.push("llvm-objcopy");
         if path.exists() {
             path.into_os_string().into_string().unwrap()
         } else {
-            "rust-objcopy".into()
+            "llvm-objcopy".into()
         }
     };
     env_or("OBJCOPY", &llvm_objcopy)
