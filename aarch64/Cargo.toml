@@ -1,7 +1,10 @@
+cargo-features = ["per-package-target"]
+
 [package]
 name = "aarch64"
 version = "0.1.0"
 edition = "2021"
+default-target = "aarch64-unknown-none-softfloat"
 
 [dependencies]
 bitstruct = "0.1"
