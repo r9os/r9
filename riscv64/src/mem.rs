@@ -16,61 +16,46 @@ bitflags! {
   }
 }
 
-#[derive(Clone, Copy, Debug)]
-struct SizedInteger<const N: usize>(u64);
-
-#[derive(Debug)]
-pub struct NumberTooLarge;
-
-impl<const N: usize> TryFrom<u64> for SizedInteger<N> {
-    type Error = NumberTooLarge;
-
-    fn try_from(value: u64) -> Result<Self, Self::Error> {
-        if (value.leading_zeros() as usize) < 64 - N {
-            return Err(NumberTooLarge);
-        }
-        Ok(Self(value))
-    }
-}
-
-impl<const N: usize> From<SizedInteger<N>> for u64 {
-    fn from(value: SizedInteger<N>) -> Self {
-        value.0
-    }
+/// Used as an index for PPN and VPN
+pub enum PageNumberSegment {
+    _0,
+    _1,
+    _2,
 }
 
 #[derive(Debug)]
-pub struct PageTableEntry {
-    ppn2: SizedInteger<26>,
-    ppn1: SizedInteger<9>,
-    ppn0: SizedInteger<9>,
-    flags: PageTableFlags,
-}
+pub struct PageTableEntry(u64);
 
 impl PageTableEntry {
-    pub fn serialize(&self) -> u64 {
-        let mut out = 0u64;
-        out.set_bits(0..=7, self.flags.bits() as _);
-        out.set_bits(10..=18, self.ppn0.into());
-        out.set_bits(19..=27, self.ppn1.into());
-        out.set_bits(28..=53, self.ppn2.into());
-        out
+    pub unsafe fn write_to(&self, addr: u64) {
+        unsafe { write_volatile(addr as *mut u64, self.0) }
     }
 
-    pub unsafe fn write_to(&self, addr: u64) {
-        unsafe { write_volatile(addr as *mut u64, self.serialize()) }
+    pub fn ppn(&self, i: PageNumberSegment) -> u64 {
+        use PageNumberSegment::*;
+        match i {
+            _0 => self.0.get_bits(10..=18),
+            _1 => self.0.get_bits(19..=27),
+            _2 => self.0.get_bits(28..=53),
+        }
+    }
+
+    pub fn flags(&self) -> PageTableFlags {
+        let bits = self.0.get_bits(0..=7) as u8;
+        // safe to unwrap since all bits of a u8 are defined flags
+        PageTableFlags::from_bits(bits).unwrap()
     }
 }
 
 impl From<u64> for PageTableEntry {
     fn from(value: u64) -> Self {
-        let flags = PageTableFlags::from_bits(value.get_bits(0..=7) as _).unwrap();
-        Self {
-            ppn2: value.get_bits(28..=53).try_into().unwrap(),
-            ppn1: value.get_bits(19..=27).try_into().unwrap(),
-            ppn0: value.get_bits(10..=18).try_into().unwrap(),
-            flags,
-        }
+        Self(value)
+    }
+}
+
+impl From<PageTableEntry> for u64 {
+    fn from(value: PageTableEntry) -> Self {
+        value.0
     }
 }
 
