@@ -1,7 +1,10 @@
+cargo-features = ["per-package-target"]
+
 [package]
 name = "x86_64"
 version = "0.1.0"
 edition = "2021"
+default-target = "x86_64-unknown-none"
 
 [dependencies]
 bitstruct = "0.1"
