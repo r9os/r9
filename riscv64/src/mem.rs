@@ -86,6 +86,7 @@ impl PageTable {
     }
 
     pub fn dump_entry(&self, at: u16) -> PageTableEntry {
+        assert!(at < 512, "index out of range: page tables always have 512 entries");
         let addr = self.addr + (at as u64 * Self::ENTRY_SIZE);
         let val = unsafe { read_volatile(addr as *const u64) };
         val.into()
