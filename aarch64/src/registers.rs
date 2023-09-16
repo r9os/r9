@@ -1,10 +1,9 @@
-#![allow(dead_code)]
+#![allow(non_upper_case_globals)]
 
+use crate::kmem::PhysAddr;
 use bitstruct::bitstruct;
 use core::fmt;
 use num_enum::TryFromPrimitive;
-
-use crate::mem::PhysAddr;
 
 // GPIO registers
 pub const GPFSEL1: usize = 0x04; // GPIO function select register 1
@@ -249,6 +248,16 @@ bitstruct! {
 
 bitstruct! {
     #[derive(Copy, Clone)]
+    pub struct Vaddr4K2M(pub u64) {
+        offset: u32 = 0..21;
+        l3idx: u16 = 21..30;
+        l2idx: u16 = 30..39;
+        l1idx: u16 = 39..48;
+    }
+}
+
+bitstruct! {
+    #[derive(Copy, Clone)]
     pub struct Vaddr4K1G(pub u64) {
         offset: u32 = 0..30;
         l2idx: u16 = 30..39;
@@ -296,6 +305,18 @@ mod tests {
         assert_eq!(va.l3idx(), 0);
         assert_eq!(va.l4idx(), 128);
         assert_eq!(va.offset(), 168);
+
+        let va = Vaddr4K2M(0xffff_8000_3f00_0000);
+        assert_eq!(va.l1idx(), 256);
+        assert_eq!(va.l2idx(), 0);
+        assert_eq!(va.l3idx(), 504);
+        assert_eq!(va.offset(), 0);
+
+        let va = Vaddr4K2M(0xffff_8000_fe00_0000);
+        assert_eq!(va.l1idx(), 256);
+        assert_eq!(va.l2idx(), 3);
+        assert_eq!(va.l3idx(), 496);
+        assert_eq!(va.offset(), 0);
 
         let va = Vaddr4K1G(0xffff_8000_0000_0000);
         assert_eq!(va.l1idx(), 256);

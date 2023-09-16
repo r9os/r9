@@ -49,8 +49,26 @@ SECTIONS {
 		*(COMMON)
 		. = ALIGN(2097152);
 	}
-	end = .;
+	ebss = .;
 
+	/* Reserve section for kernel heap.  Align to 2MiB to allow us to map as
+	   a 2MiB page. */
+	. = ALIGN(2 * 1024 * 1024);
+	heap = .;
+	. += 64 * 1024 * 1024;
+	eheap = .;
+
+	/* Reserve section for early pagetables.  Align to 2MiB to allow us to map
+	   as a 2MiB page.Note that this won't be needed once we transition to
+	   recursive pagetables. */
+	. = ALIGN(2 * 1024 * 1024);
+	early_pagetables = .;
+	. += 2 * 1024 * 1024;
+	eearly_pagetables = .;
+
+	end = .;
+	PROVIDE(end = .);
+	
 	/DISCARD/ : {
 		*(.eh_frame .note.GNU-stack)
 	}

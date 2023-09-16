@@ -45,11 +45,11 @@ SCTLR_EL1			= (SCTLR_EL1_I|SCTLR_EL1_C|SCTLR_EL1_M)
 
 // Preset memory attributes.  This register stores 8 8-bit presets that are
 // referenced by index in the page table entries:
-//  [0] 0x00 - Device (Non-gathering, non-reordering, no early write acknowledgement (most restrictive))
-//  [1] 0xff - Normal
-MAIR_EL1			= 0xff00
-PT_MAIR_DEVICE			= (0<<2)		// Use device memory attributes
-PT_MAIR_NORMAL			= (1<<2)		// Use normal memory attributes
+//  [0] 0xff - Normal
+//  [1] 0x00 - Device (Non-gathering, non-reordering, no early write acknowledgement (most restrictive))
+MAIR_EL1			= 0x00ff
+PT_MAIR_NORMAL			= (0<<2)		// Use normal memory attributes
+PT_MAIR_DEVICE			= (1<<2)		// Use device memory attributes
 
 PT_PAGE				= 3			// 4KiB granule
 PT_BLOCK			= 1			// 2MiB granule

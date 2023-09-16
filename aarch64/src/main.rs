@@ -3,25 +3,39 @@
 #![cfg_attr(not(test), no_main)]
 #![feature(alloc_error_handler)]
 #![feature(asm_const)]
+#![feature(core_intrinsics)]
 #![feature(stdsimd)]
+#![feature(step_trait)]
+#![feature(strict_provenance)]
 #![forbid(unsafe_op_in_unsafe_fn)]
 
 mod devcons;
 mod io;
+mod kalloc;
+mod kmem;
 mod mailbox;
-mod mem;
 mod param;
 mod registers;
 mod trap;
 mod uartmini;
 mod uartpl011;
+mod vm;
 
 use core::ffi::c_void;
 use port::fdt::DeviceTree;
 use port::println;
+use vm::PageTable;
+
+use crate::kmem::PhysAddr;
+use crate::param::KZERO;
+use crate::vm::kernel_root;
 
 #[cfg(not(test))]
 core::arch::global_asm!(include_str!("l.S"));
+
+type Result<T> = core::result::Result<T, &'static str>;
+
+static mut KPGTBL: PageTable = PageTable::empty();
 
 unsafe fn print_memory_range(name: &str, start: &*const c_void, end: &*const c_void) {
     let start = start as *const _ as u64;
@@ -93,7 +107,18 @@ fn print_board_info() {
 pub extern "C" fn main9(dtb_ptr: u64) {
     trap::init();
 
+    // Parse the DTB before we set up memory so we can correctly map it
     let dt = unsafe { DeviceTree::from_u64(dtb_ptr).unwrap() };
+
+    unsafe {
+        kalloc::free_pages(kmem::early_pages());
+
+        let dtb_phys = PhysAddr::new(dtb_ptr);
+        let edtb_phys = dtb_phys + dt.size() as u64;
+        vm::init(&mut KPGTBL, dtb_phys, edtb_phys);
+        vm::switch(&KPGTBL);
+    }
+
     mailbox::init(&dt);
     devcons::init(&dt);
 
@@ -102,14 +127,17 @@ pub extern "C" fn main9(dtb_ptr: u64) {
     println!("DTB found at: {:#x}", dtb_ptr);
     println!("midr_el1: {:?}", registers::MidrEl1::read());
 
+    println!("DT: {:p}", &dt);
     print_binary_sections();
     print_physical_memory_map();
     print_board_info();
+
+    // Dump out pagetables
+    kernel_root().print_tables(KZERO);
 
     println!("looping now");
 
     #[allow(clippy::empty_loop)]
     loop {}
 }
-
 mod runtime;

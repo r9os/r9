@@ -63,6 +63,10 @@ impl<'a> DeviceTree<'a> {
         FdtHeader::new(uninit_data, false).map(|header| Self { data: uninit_data, header })
     }
 
+    pub fn size(&self) -> usize {
+        self.header.totalsize as usize
+    }
+
     /// Given a pointer to the dtb as a u64, return a DeviceTree struct.
     pub unsafe fn from_u64(ptr: u64) -> Result<Self> {
         let u8ptr = ptr as *const mem::MaybeUninit<u8>;
