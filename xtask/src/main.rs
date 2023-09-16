@@ -398,7 +398,6 @@ fn test(build_params: &BuildParams) -> Result<()> {
     cmd.arg("test");
     cmd.arg("--workspace");
     cmd.arg("--target").arg("x86_64-unknown-linux-gnu");
-    cmd.arg("--config").arg("build.rustflags='--cfg platform=\"virt\"'");
     build_params.add_build_arg(&mut cmd);
     if build_params.verbose {
         println!("Executing {cmd:?}");
