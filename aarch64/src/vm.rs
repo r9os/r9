@@ -6,7 +6,6 @@ use crate::{
         early_pagetables_addr, ebss_addr, eearly_pagetables_addr, eheap_addr, erodata_addr,
         etext_addr, heap_addr, text_addr, PhysAddr,
     },
-    param::KZERO,
     registers::rpi_mmio,
     Result,
 };
@@ -163,8 +162,8 @@ impl Entry {
         PhysAddr::new(self.addr() << 12)
     }
 
-    fn virt_page_addr_with_offset(self, offset: usize) -> usize {
-        self.phys_page_addr().to_virt_with_offset(offset)
+    fn virt_page_addr(self) -> usize {
+        self.phys_page_addr().to_virt()
     }
 }
 
@@ -253,35 +252,33 @@ impl Table {
         Some(&mut self.entries[Self::index(level, va)])
     }
 
-    fn child_table(&self, entry: Entry, kern_offset: usize) -> Option<&Table> {
+    fn child_table(&self, entry: Entry) -> Option<&Table> {
         if !entry.valid() {
             return None;
         }
-        let raw_ptr = entry.virt_page_addr_with_offset(kern_offset);
+        let raw_ptr = entry.virt_page_addr();
         Some(unsafe { &*(raw_ptr as *const Table) })
     }
 
-    fn next(&self, level: Level, va: usize, kern_offset: usize) -> Option<&Table> {
+    fn next(&self, level: Level, va: usize) -> Option<&Table> {
         let idx = Self::index(level, va);
         let entry = self.entries[idx];
-        self.child_table(entry, kern_offset)
+        self.child_table(entry)
     }
 
-    fn next_mut(&mut self, level: Level, va: usize, kern_offset: usize) -> Option<&mut Table> {
+    fn next_mut(&mut self, level: Level, va: usize) -> Option<&mut Table> {
         let index = Self::index(level, va);
         let mut entry = self.entries[index];
         // println!("next_mut(level:{:?}, va:{:016x}, index:{}): entry:{:?}", level, va, index, entry);
         if !entry.valid() {
             let page = kalloc::alloc()?;
             page.clear();
-            entry = Entry::new(PhysAddr::from_offset_ptr(page, kern_offset))
-                .with_valid(true)
-                .with_table(true);
+            entry = Entry::new(PhysAddr::from_ptr(page)).with_valid(true).with_table(true);
             unsafe {
                 write_volatile(&mut self.entries[index], entry);
             }
         }
-        let raw_ptr = entry.virt_page_addr_with_offset(kern_offset);
+        let raw_ptr = entry.virt_page_addr();
         let next_table = unsafe { &mut *(raw_ptr as *mut Table) };
         Some(next_table)
     }
@@ -294,27 +291,21 @@ impl PageTable {
         PageTable { entries: [Entry::empty(); 512] }
     }
 
-    pub fn map_to(
-        &mut self,
-        entry: Entry,
-        va: usize,
-        page_size: PageSize,
-        kern_offset: usize,
-    ) -> Result<()> {
+    pub fn map_to(&mut self, entry: Entry, va: usize, page_size: PageSize) -> Result<()> {
         // println!("map_to(entry: {:?}, va: {:#x}, page_size {:?})", entry, va, page_size);
         let old_entry = match page_size {
             PageSize::Page4K => self
-                .next_mut(Level::Level0, va, kern_offset)
-                .and_then(|t1| t1.next_mut(Level::Level1, va, kern_offset))
-                .and_then(|t2| t2.next_mut(Level::Level2, va, kern_offset))
+                .next_mut(Level::Level0, va)
+                .and_then(|t1| t1.next_mut(Level::Level1, va))
+                .and_then(|t2| t2.next_mut(Level::Level2, va))
                 .and_then(|t3| t3.entry_mut(Level::Level3, va)),
             PageSize::Page2M => self
-                .next_mut(Level::Level0, va, kern_offset)
-                .and_then(|t1| t1.next_mut(Level::Level1, va, kern_offset))
+                .next_mut(Level::Level0, va)
+                .and_then(|t1| t1.next_mut(Level::Level1, va))
                 .and_then(|t2| t2.entry_mut(Level::Level2, va)),
-            PageSize::Page1G => self
-                .next_mut(Level::Level0, va, kern_offset)
-                .and_then(|t1| t1.entry_mut(Level::Level1, va)),
+            PageSize::Page1G => {
+                self.next_mut(Level::Level0, va).and_then(|t1| t1.entry_mut(Level::Level1, va))
+            }
         };
 
         if let Some(old_entry) = old_entry {
@@ -335,35 +326,29 @@ impl PageTable {
         end: PhysAddr,
         entry: Entry,
         page_size: PageSize,
-        kern_offset: usize,
     ) -> Result<()> {
         for pa in PhysAddr::step_by_rounded(start, end, page_size.size()) {
-            self.map_to(
-                entry.with_phys_addr(pa),
-                pa.to_virt_with_offset(kern_offset),
-                page_size,
-                kern_offset,
-            )?;
+            self.map_to(entry.with_phys_addr(pa), pa.to_virt(), page_size)?;
         }
         Ok(())
     }
 
     /// Recursively write out the table and all its children
-    pub fn print_tables(&self, kern_offset: usize) {
+    pub fn print_tables(&self) {
         println!("Root  va:{:p}", self);
-        self.print_table_at_level(Level::Level0, kern_offset);
+        self.print_table_at_level(Level::Level0);
     }
 
     /// Recursively write out the table and all its children
-    fn print_table_at_level(&self, level: Level, kern_offset: usize) {
+    fn print_table_at_level(&self, level: Level) {
         let indent = 2 + level.depth() * 2;
         for (i, &pte) in self.entries.iter().enumerate() {
             if pte.valid() {
-                print_pte(indent, i, pte, kern_offset);
+                print_pte(indent, i, pte);
 
                 if pte.table() {
-                    if let Some(child_table) = self.child_table(pte, kern_offset) {
-                        child_table.print_table_at_level(level.next().unwrap(), kern_offset);
+                    if let Some(child_table) = self.child_table(pte) {
+                        child_table.print_table_at_level(level.next().unwrap());
                     }
                 }
             }
@@ -378,12 +363,12 @@ impl fmt::Debug for PageTable {
 }
 
 /// Helper to print out PTE as part of a table
-fn print_pte(indent: usize, i: usize, pte: Entry, kern_offset: usize) {
+fn print_pte(indent: usize, i: usize, pte: Entry) {
     println!(
         "{:indent$}[{:03}] va:{:#016x} -> pa:({:?}) (pte:{:#016x})",
         "",
         i,
-        pte.virt_page_addr_with_offset(kern_offset),
+        pte.virt_page_addr(),
         pte,
         pte.0,
     );
@@ -392,14 +377,14 @@ fn print_pte(indent: usize, i: usize, pte: Entry, kern_offset: usize) {
 pub unsafe fn init(kpage_table: &mut PageTable, dtb_phys: PhysAddr, edtb_phys: PhysAddr) {
     //use PageFlags as PF;
 
-    let text_phys = PhysAddr::from_offset_virt(text_addr(), KZERO);
-    let etext_phys = PhysAddr::from_offset_virt(etext_addr(), KZERO);
-    let erodata_phys = PhysAddr::from_offset_virt(erodata_addr(), KZERO);
-    let ebss_phys = PhysAddr::from_offset_virt(ebss_addr(), KZERO);
-    let heap_phys = PhysAddr::from_offset_virt(heap_addr(), KZERO);
-    let eheap_phys = PhysAddr::from_offset_virt(eheap_addr(), KZERO);
-    let early_pagetables_phys = PhysAddr::from_offset_virt(early_pagetables_addr(), KZERO);
-    let eearly_pagetables_phys = PhysAddr::from_offset_virt(eearly_pagetables_addr(), KZERO);
+    let text_phys = PhysAddr::from_virt(text_addr());
+    let etext_phys = PhysAddr::from_virt(etext_addr());
+    let erodata_phys = PhysAddr::from_virt(erodata_addr());
+    let ebss_phys = PhysAddr::from_virt(ebss_addr());
+    let heap_phys = PhysAddr::from_virt(heap_addr());
+    let eheap_phys = PhysAddr::from_virt(eheap_addr());
+    let early_pagetables_phys = PhysAddr::from_virt(early_pagetables_addr());
+    let eearly_pagetables_phys = PhysAddr::from_virt(eearly_pagetables_addr());
 
     let mmio = rpi_mmio().expect("mmio base detect failed");
     let mmio_end = PhysAddr::from(mmio + (2 * PAGE_SIZE_2M as u64));
@@ -427,9 +412,7 @@ pub unsafe fn init(kpage_table: &mut PageTable, dtb_phys: PhysAddr, edtb_phys: P
     ];
 
     for (start, end, flags, page_size) in custom_map.iter() {
-        kpage_table
-            .map_phys_range(*start, *end, *flags, *page_size, KZERO)
-            .expect("init mapping failed");
+        kpage_table.map_phys_range(*start, *end, *flags, *page_size).expect("init mapping failed");
     }
 }
 
@@ -445,7 +428,7 @@ fn ttbr1_el1() -> u64 {
 pub unsafe fn switch(kpage_table: &PageTable) {
     #[cfg(not(test))]
     unsafe {
-        let pt_phys = PhysAddr::from_offset_ptr(kpage_table, KZERO).addr();
+        let pt_phys = PhysAddr::from_ptr(kpage_table).addr();
         core::arch::asm!(
             "msr ttbr1_el1, {pt_phys}",
             "dsb ish",
@@ -458,6 +441,6 @@ pub unsafe fn switch(kpage_table: &PageTable) {
 pub fn kernel_root() -> &'static mut PageTable {
     unsafe {
         let ttbr1_el1 = ttbr1_el1();
-        &mut *PhysAddr::new(ttbr1_el1).to_ptr_mut_with_offset::<PageTable>(KZERO)
+        &mut *PhysAddr::new(ttbr1_el1).to_ptr_mut::<PageTable>()
     }
 }
