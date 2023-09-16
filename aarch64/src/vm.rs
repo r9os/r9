@@ -418,13 +418,19 @@ pub unsafe fn init(kpage_table: &mut PageTable, dtb_phys: PhysAddr, edtb_phys: P
 
 /// Return the root kernel page table physical address
 fn ttbr1_el1() -> u64 {
-    let mut addr: u64;
-    unsafe {
-        core::arch::asm!("mrs {value}, ttbr1_el1", value = out(reg) addr);
+    #[cfg(not(test))]
+    {
+        let mut addr: u64;
+        unsafe {
+            core::arch::asm!("mrs {value}, ttbr1_el1", value = out(reg) addr);
+        }
+        addr
     }
-    addr
+    #[cfg(test)]
+    0
 }
 
+#[allow(unused_variables)]
 pub unsafe fn switch(kpage_table: &PageTable) {
     #[cfg(not(test))]
     unsafe {
