@@ -1,4 +1,5 @@
 use crate::io::{read_reg, write_reg};
+use crate::param::KZERO;
 use crate::registers::rpi_mmio;
 use core::mem;
 use core::mem::MaybeUninit;
@@ -24,7 +25,7 @@ pub fn init(_dt: &DeviceTree) {
     *mailbox = Some({
         static mut MAYBE_MAILBOX: MaybeUninit<Mailbox> = MaybeUninit::uninit();
         unsafe {
-            let mmio = rpi_mmio().expect("mmio base detect failed").to_virt();
+            let mmio = rpi_mmio().expect("mmio base detect failed").to_virt_with_offset(KZERO);
             let mbox_range = VirtRange::with_len(mmio + 0xb880, 0x40);
 
             MAYBE_MAILBOX.write(Mailbox { mbox_range });
