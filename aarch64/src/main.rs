@@ -127,7 +127,6 @@ pub extern "C" fn main9(dtb_ptr: u64) {
     println!("DTB found at: {:#x}", dtb_ptr);
     println!("midr_el1: {:?}", registers::MidrEl1::read());
 
-    println!("DT: {:p}", &dt);
     print_binary_sections();
     print_physical_memory_map();
     print_board_info();
