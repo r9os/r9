@@ -1,6 +1,5 @@
 // Racy to start.
 
-use crate::param::KZERO;
 use crate::registers::rpi_mmio;
 use crate::uartmini::MiniUart;
 use core::mem::MaybeUninit;
@@ -35,7 +34,7 @@ use port::mem::VirtRange;
 
 pub fn init(_dt: &DeviceTree) {
     Console::new(|| {
-        let mmio = rpi_mmio().expect("mmio base detect failed").to_virt_with_offset(KZERO);
+        let mmio = rpi_mmio().expect("mmio base detect failed").to_virt();
         let gpio_range = VirtRange::with_len(mmio + 0x20_0000, 0xb4);
         let aux_range = VirtRange::with_len(mmio + 0x21_5000, 0x8);
         let miniuart_range = VirtRange::with_len(mmio + 0x21_5040, 0x40);

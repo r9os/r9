@@ -1,4 +1,4 @@
-use crate::vm::Page4K;
+use crate::{param::KZERO, vm::Page4K};
 use core::{
     fmt,
     iter::{Step, StepBy},
@@ -63,20 +63,20 @@ impl PhysAddr {
         self.0
     }
 
-    pub const fn to_virt_with_offset(&self, offset: usize) -> usize {
-        (self.0 as usize).wrapping_add(offset)
+    pub const fn to_virt(&self) -> usize {
+        (self.0 as usize).wrapping_add(KZERO)
     }
 
-    pub fn from_offset_virt(a: usize, offset: usize) -> Self {
-        Self((a - offset) as u64)
+    pub fn from_virt(a: usize) -> Self {
+        Self((a - KZERO) as u64)
     }
 
-    pub fn from_offset_ptr<T>(a: *const T, offset: usize) -> Self {
-        Self::from_offset_virt(a.addr(), offset)
+    pub fn from_ptr<T>(a: *const T) -> Self {
+        Self::from_virt(a.addr())
     }
 
-    pub const fn to_ptr_mut_with_offset<T>(&self, offset: usize) -> *mut T {
-        self.to_virt_with_offset(offset) as *mut T
+    pub const fn to_ptr_mut<T>(&self) -> *mut T {
+        self.to_virt() as *mut T
     }
 
     pub const fn round_up(&self, step: u64) -> PhysAddr {

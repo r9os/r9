@@ -21,14 +21,12 @@ mod uartmini;
 mod uartpl011;
 mod vm;
 
+use crate::kmem::PhysAddr;
+use crate::vm::kernel_root;
 use core::ffi::c_void;
 use port::fdt::DeviceTree;
 use port::println;
 use vm::PageTable;
-
-use crate::kmem::PhysAddr;
-use crate::param::KZERO;
-use crate::vm::kernel_root;
 
 #[cfg(not(test))]
 core::arch::global_asm!(include_str!("l.S"));
@@ -132,7 +130,7 @@ pub extern "C" fn main9(dtb_ptr: u64) {
     print_board_info();
 
     // Dump out pagetables
-    kernel_root().print_tables(KZERO);
+    kernel_root().print_tables();
 
     println!("looping now");
 
