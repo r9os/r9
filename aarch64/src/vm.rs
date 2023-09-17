@@ -20,6 +20,7 @@ pub const PAGE_SIZE_4K: usize = 4 * 1024;
 pub const PAGE_SIZE_2M: usize = 2 * 1024 * 1024;
 pub const PAGE_SIZE_1G: usize = 1 * 1024 * 1024 * 1024;
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
 pub enum PageSize {
     Page4K,
@@ -271,6 +272,7 @@ impl Table {
         Some(unsafe { &*(raw_ptr as *const Table) })
     }
 
+    #[allow(dead_code)]
     fn next(&self, level: Level, va: usize) -> Option<&Table> {
         let index = Self::index(level, va);
         let entry = self.entries[index];

@@ -179,6 +179,7 @@ bitstruct! {
     }
 }
 
+#[allow(dead_code)]
 impl EsrEl1IssInstructionAbort {
     pub fn from_esr_el1(r: EsrEl1) -> Option<EsrEl1IssInstructionAbort> {
         r.exception_class_enum()
@@ -235,36 +236,6 @@ pub enum InstructionFaultStatusCode {
     UnsupportedAtomicHardwareUpdateFault = 49,
 }
 
-bitstruct! {
-    #[derive(Copy, Clone)]
-    pub struct Vaddr4K4K(pub u64) {
-        offset: u16 = 0..12;
-        l4idx: u16 = 12..21;
-        l3idx: u16 = 21..30;
-        l2idx: u16 = 30..39;
-        l1idx: u16 = 39..48;
-    }
-}
-
-bitstruct! {
-    #[derive(Copy, Clone)]
-    pub struct Vaddr4K2M(pub u64) {
-        offset: u32 = 0..21;
-        l3idx: u16 = 21..30;
-        l2idx: u16 = 30..39;
-        l1idx: u16 = 39..48;
-    }
-}
-
-bitstruct! {
-    #[derive(Copy, Clone)]
-    pub struct Vaddr4K1G(pub u64) {
-        offset: u32 = 0..30;
-        l2idx: u16 = 30..39;
-        l1idx: u16 = 39..48;
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -288,49 +259,5 @@ mod tests {
             EsrEl1IssInstructionAbort::from_esr_el1(r).unwrap().instruction_fault().unwrap(),
             InstructionFaultStatusCode::TranslationFaultLevel0
         );
-    }
-
-    #[test]
-    fn breakdown_vadder() {
-        let va = Vaddr4K4K(0xffff_8000_0000_0000);
-        assert_eq!(va.l1idx(), 256);
-        assert_eq!(va.l2idx(), 0);
-        assert_eq!(va.l3idx(), 0);
-        assert_eq!(va.l4idx(), 0);
-        assert_eq!(va.offset(), 0);
-
-        let va = Vaddr4K4K(0x0000_0000_0008_00a8);
-        assert_eq!(va.l1idx(), 0);
-        assert_eq!(va.l2idx(), 0);
-        assert_eq!(va.l3idx(), 0);
-        assert_eq!(va.l4idx(), 128);
-        assert_eq!(va.offset(), 168);
-
-        let va = Vaddr4K2M(0xffff_8000_3f00_0000);
-        assert_eq!(va.l1idx(), 256);
-        assert_eq!(va.l2idx(), 0);
-        assert_eq!(va.l3idx(), 504);
-        assert_eq!(va.offset(), 0);
-
-        let va = Vaddr4K2M(0xffff_8000_fe00_0000);
-        assert_eq!(va.l1idx(), 256);
-        assert_eq!(va.l2idx(), 3);
-        assert_eq!(va.l3idx(), 496);
-        assert_eq!(va.offset(), 0);
-
-        let va = Vaddr4K1G(0xffff_8000_0000_0000);
-        assert_eq!(va.l1idx(), 256);
-        assert_eq!(va.l2idx(), 0);
-        assert_eq!(va.offset(), 0);
-
-        let va = Vaddr4K1G(0x0000_0000_0008_00a8);
-        assert_eq!(va.l1idx(), 0);
-        assert_eq!(va.l2idx(), 0);
-        assert_eq!(va.offset(), 524456);
-
-        let va = Vaddr4K1G(0xffff_8000_0010_00c8);
-        assert_eq!(va.l1idx(), 256);
-        assert_eq!(va.l2idx(), 0);
-        assert_eq!(va.offset(), 0x1000c8);
     }
 }
