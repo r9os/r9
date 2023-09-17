@@ -31,8 +31,6 @@ use vm::PageTable;
 #[cfg(not(test))]
 core::arch::global_asm!(include_str!("l.S"));
 
-type Result<T> = core::result::Result<T, &'static str>;
-
 static mut KPGTBL: PageTable = PageTable::empty();
 
 unsafe fn print_memory_range(name: &str, start: &*const c_void, end: &*const c_void) {

@@ -10,6 +10,11 @@ struct FreeList {
 }
 unsafe impl Send for FreeList {}
 
+#[derive(Debug)]
+pub enum Error {
+    NoFreeBlocks,
+}
+
 impl FreeList {
     pub fn put(&mut self, page: &mut Page4K) {
         let ptr = (page as *mut Page4K).addr();
@@ -22,13 +27,13 @@ impl FreeList {
         self.next = ptr::NonNull::new(f);
     }
 
-    pub fn get(&mut self) -> Option<&'static mut Page4K> {
-        let mut next = self.next?;
+    pub fn get(&mut self) -> Result<&'static mut Page4K, Error> {
+        let mut next = self.next.ok_or(Error::NoFreeBlocks)?;
         let next = unsafe { next.as_mut() };
         self.next = next.next;
         let pg = unsafe { &mut *(next as *mut FreeList as *mut Page4K) };
         pg.clear();
-        Some(pg)
+        Ok(pg)
     }
 }
 
@@ -41,7 +46,7 @@ pub unsafe fn free_pages(pages: &mut [Page4K]) {
     }
 }
 
-pub fn alloc() -> Option<&'static mut Page4K> {
+pub fn alloc() -> Result<&'static mut Page4K, Error> {
     static mut NODE: LockNode = LockNode::new();
     let mut lock = FREE_LIST.lock(unsafe { &NODE });
     let fl = &mut *lock;

@@ -7,7 +7,6 @@ use crate::{
         etext_addr, heap_addr, text_addr, PhysAddr,
     },
     registers::rpi_mmio,
-    Result,
 };
 use bitstruct::bitstruct;
 use core::fmt;
@@ -16,6 +15,17 @@ use num_enum::{FromPrimitive, IntoPrimitive};
 
 #[cfg(not(test))]
 use port::println;
+
+#[derive(Debug)]
+pub enum VmError {
+    AllocationFailed(kalloc::Error),
+}
+
+impl From<kalloc::Error> for VmError {
+    fn from(err: kalloc::Error) -> VmError {
+        VmError::AllocationFailed(err)
+    }
+}
 
 pub const PAGE_SIZE_4K: usize = 4 * 1024;
 pub const PAGE_SIZE_2M: usize = 2 * 1024 * 1024;
@@ -248,8 +258,8 @@ impl Table {
         }
     }
 
-    pub fn entry_mut(&mut self, level: Level, va: usize) -> Option<&mut Entry> {
-        Some(&mut self.entries[Self::index(level, va)])
+    pub fn entry_mut(&mut self, level: Level, va: usize) -> Result<&mut Entry, VmError> {
+        Ok(&mut self.entries[Self::index(level, va)])
     }
 
     fn child_table(&self, entry: Entry) -> Option<&Table> {
@@ -261,12 +271,14 @@ impl Table {
     }
 
     fn next(&self, level: Level, va: usize) -> Option<&Table> {
-        let idx = Self::index(level, va);
-        let entry = self.entries[idx];
+        let index = Self::index(level, va);
+        let entry = self.entries[index];
         self.child_table(entry)
     }
 
-    fn next_mut(&mut self, level: Level, va: usize) -> Option<&mut Table> {
+    // TODO return Result
+    fn next_mut(&mut self, level: Level, va: usize) -> Result<&mut Table, VmError> {
+        // Try to get a valid page table entry.  If it doesn't exist, create it.
         let index = Self::index(level, va);
         let mut entry = self.entries[index];
         // println!("next_mut(level:{:?}, va:{:016x}, index:{}): entry:{:?}", level, va, index, entry);
@@ -278,9 +290,13 @@ impl Table {
                 write_volatile(&mut self.entries[index], entry);
             }
         }
+
+        // TODO Check that the entry is a table
+
+        // Return the address of the next table, as found in the entry.
         let raw_ptr = entry.virt_page_addr();
         let next_table = unsafe { &mut *(raw_ptr as *mut Table) };
-        Some(next_table)
+        Ok(next_table)
     }
 }
 
@@ -291,7 +307,7 @@ impl PageTable {
         PageTable { entries: [Entry::empty(); 512] }
     }
 
-    pub fn map_to(&mut self, entry: Entry, va: usize, page_size: PageSize) -> Result<()> {
+    pub fn map_to(&mut self, entry: Entry, va: usize, page_size: PageSize) -> Result<(), VmError> {
         // println!("map_to(entry: {:?}, va: {:#x}, page_size {:?})", entry, va, page_size);
         let old_entry = match page_size {
             PageSize::Page4K => self
@@ -308,16 +324,14 @@ impl PageTable {
             }
         };
 
-        if let Some(old_entry) = old_entry {
-            let entry = entry.with_valid(true);
-            // println!("Some {:?}, New {:?}", old_entry, entry);
-            // println!("{:p}", old_entry);
-            unsafe {
-                write_volatile(old_entry, entry);
-            }
-            return Ok(());
+        let old_entry = old_entry?;
+        let entry = entry.with_valid(true);
+        // println!("Some {:?}, New {:?}", old_entry, entry);
+        // println!("{:p}", old_entry);
+        unsafe {
+            write_volatile(old_entry, entry);
         }
-        Err("Allocation failed")
+        return Ok(());
     }
 
     pub fn map_phys_range(
@@ -326,7 +340,7 @@ impl PageTable {
         end: PhysAddr,
         entry: Entry,
         page_size: PageSize,
-    ) -> Result<()> {
+    ) -> Result<(), VmError> {
         for pa in PhysAddr::step_by_rounded(start, end, page_size.size()) {
             self.map_to(entry.with_phys_addr(pa), pa.to_virt(), page_size)?;
         }
