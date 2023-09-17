@@ -16,17 +16,6 @@ use num_enum::{FromPrimitive, IntoPrimitive};
 #[cfg(not(test))]
 use port::println;
 
-#[derive(Debug)]
-pub enum VmError {
-    AllocationFailed(kalloc::Error),
-}
-
-impl From<kalloc::Error> for VmError {
-    fn from(err: kalloc::Error) -> VmError {
-        VmError::AllocationFailed(err)
-    }
-}
-
 pub const PAGE_SIZE_4K: usize = 4 * 1024;
 pub const PAGE_SIZE_2M: usize = 2 * 1024 * 1024;
 pub const PAGE_SIZE_1G: usize = 1 * 1024 * 1024 * 1024;
@@ -243,6 +232,18 @@ impl Level {
     }
 }
 
+#[derive(Debug)]
+pub enum PageTableError {
+    AllocationFailed(kalloc::Error),
+    EntryIsNotTable,
+}
+
+impl From<kalloc::Error> for PageTableError {
+    fn from(err: kalloc::Error) -> PageTableError {
+        PageTableError::AllocationFailed(err)
+    }
+}
+
 #[repr(C, align(4096))]
 pub struct Table {
     entries: [Entry; 512],
@@ -258,7 +259,7 @@ impl Table {
         }
     }
 
-    pub fn entry_mut(&mut self, level: Level, va: usize) -> Result<&mut Entry, VmError> {
+    pub fn entry_mut(&mut self, level: Level, va: usize) -> Result<&mut Entry, PageTableError> {
         Ok(&mut self.entries[Self::index(level, va)])
     }
 
@@ -277,7 +278,7 @@ impl Table {
     }
 
     // TODO return Result
-    fn next_mut(&mut self, level: Level, va: usize) -> Result<&mut Table, VmError> {
+    fn next_mut(&mut self, level: Level, va: usize) -> Result<&mut Table, PageTableError> {
         // Try to get a valid page table entry.  If it doesn't exist, create it.
         let index = Self::index(level, va);
         let mut entry = self.entries[index];
@@ -291,7 +292,9 @@ impl Table {
             }
         }
 
-        // TODO Check that the entry is a table
+        if !entry.table() {
+            return Err(PageTableError::EntryIsNotTable);
+        }
 
         // Return the address of the next table, as found in the entry.
         let raw_ptr = entry.virt_page_addr();
@@ -307,7 +310,12 @@ impl PageTable {
         PageTable { entries: [Entry::empty(); 512] }
     }
 
-    pub fn map_to(&mut self, entry: Entry, va: usize, page_size: PageSize) -> Result<(), VmError> {
+    pub fn map_to(
+        &mut self,
+        entry: Entry,
+        va: usize,
+        page_size: PageSize,
+    ) -> Result<(), PageTableError> {
         // println!("map_to(entry: {:?}, va: {:#x}, page_size {:?})", entry, va, page_size);
         let old_entry = match page_size {
             PageSize::Page4K => self
@@ -340,7 +348,7 @@ impl PageTable {
         end: PhysAddr,
         entry: Entry,
         page_size: PageSize,
-    ) -> Result<(), VmError> {
+    ) -> Result<(), PageTableError> {
         for pa in PhysAddr::step_by_rounded(start, end, page_size.size()) {
             self.map_to(entry.with_phys_addr(pa), pa.to_virt(), page_size)?;
         }
