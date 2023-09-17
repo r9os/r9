@@ -60,7 +60,8 @@ SECTIONS {
 
 	/* Reserve section for early pagetables.  Align to 2MiB to allow us to map
 	   as a 2MiB page.Note that this won't be needed once we transition to
-	   recursive pagetables. */
+	   recursive pagetables.
+	   Note this can go when we use recursive pagetables */
 	. = ALIGN(2 * 1024 * 1024);
 	early_pagetables = .;
 	. += 2 * 1024 * 1024;
