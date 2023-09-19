@@ -3,10 +3,9 @@ use core::fmt::Error;
 use core::fmt::Write;
 
 use port::devcons::Uart;
-use port::fdt::RegBlock;
 
 pub struct Uart16550 {
-    pub ns16550a_reg: RegBlock,
+    base: *mut u8,
 }
 
 impl Write for Uart16550 {
@@ -20,7 +19,7 @@ impl Write for Uart16550 {
 
 impl Uart for Uart16550 {
     fn putb(&self, b: u8) {
-        let ptr = self.ns16550a_reg.addr as *mut u8;
+        let ptr = self.base;
         unsafe {
             ptr.add(0).write_volatile(b);
         }
@@ -28,29 +27,37 @@ impl Uart for Uart16550 {
 }
 
 impl Uart16550 {
-    pub fn new(ns16550a_reg: RegBlock) -> Self {
-        Uart16550 { ns16550a_reg }
+    pub fn new(addr: usize) -> Self {
+        Uart16550 { base: addr as *mut u8 }
     }
 
+    // see also https://www.lookrs232.com/rs232/dlab.htm
     pub fn init(&mut self, baud: u32) {
-        let ptr = self.ns16550a_reg.addr as *mut u8;
+        let ptr = self.base;
+        let divisor: u16 = (2_227_900 / (baud * 16)) as u16; // set baud rate
+        let divisor_least: u8 = (divisor & 0xff).try_into().unwrap();
+        let divisor_most: u8 = (divisor >> 8).try_into().unwrap();
+        let word_length = 3;
         unsafe {
-            let lcr = 3; // word length
-            ptr.add(3).write_volatile(lcr); // set word length
-            ptr.add(2).write_volatile(1); // enable FIFO
-            ptr.add(1).write_volatile(1); // enable receiver interrupts
-            let divisor: u16 = (2_227_900 / (baud * 16)) as u16; // set baud rate
-            let divisor_least: u8 = (divisor & 0xff).try_into().unwrap();
-            let divisor_most: u8 = (divisor >> 8).try_into().unwrap();
-            ptr.add(3).write_volatile(lcr | 1 << 7); // access DLAB
-            ptr.add(0).write_volatile(divisor_least); // DLL
-            ptr.add(1).write_volatile(divisor_most); // DLM
-            ptr.add(3).write_volatile(lcr); // close DLAB
+            // set word length
+            ptr.add(3).write_volatile(word_length);
+            // enable FIFO
+            ptr.add(2).write_volatile(1);
+            // enable receiver interrupts
+            ptr.add(1).write_volatile(1);
+            // access DLAB (Divisor Latch Access Bit)
+            ptr.add(3).write_volatile(word_length | 1 << 7);
+            // divisor low byte
+            ptr.add(0).write_volatile(divisor_least);
+            // divisor high byte
+            ptr.add(1).write_volatile(divisor_most);
+            // close DLAB
+            ptr.add(3).write_volatile(word_length);
         }
     }
 
     pub fn put(&mut self, c: u8) {
-        let ptr = self.ns16550a_reg.addr as *mut u8;
+        let ptr = self.base;
         unsafe {
             ptr.add(0).write_volatile(c);
         }
@@ -58,7 +65,7 @@ impl Uart16550 {
 
     #[allow(dead_code)]
     pub fn get(&mut self) -> Option<u8> {
-        let ptr = self.ns16550a_reg.addr as *mut u8;
+        let ptr = self.base;
         unsafe {
             if ptr.add(5).read_volatile() & 1 == 0 {
                 None

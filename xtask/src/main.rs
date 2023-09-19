@@ -501,7 +501,11 @@ fn run(build_params: &BuildParams) -> Result<()> {
             }
             cmd.arg("-d").arg("guest_errors,unimp");
             cmd.arg("-kernel");
-            cmd.arg(format!("target/{}/{}/riscv64", build_params.target(), build_params.dir()));
+            cmd.arg(format!(
+                "target/{}/{}/riscv64-qemu",
+                build_params.target(),
+                build_params.dir()
+            ));
             cmd.current_dir(workspace());
             if build_params.verbose {
                 println!("Executing {cmd:?}");
