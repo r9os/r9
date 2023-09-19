@@ -319,13 +319,14 @@ pub extern "C" fn main9(hartid: usize, dtb_ptr: u64) -> ! {
     let bpt_addr = unsafe { (&boot_page_table) as *const _ as u64 };
     println!("table addr: {:#x}", bpt_addr);
     let bpt = PageTable::new(bpt_addr);
-    println!("{:?}", bpt.get_entry(0));
-    println!("{:?}", bpt.get_entry(1));
-    println!("{:?}", bpt.get_entry(2));
-    println!("{:?}", bpt.get_entry(508));
-    println!("{:?}", bpt.get_entry(509));
-    println!("{:?}", bpt.get_entry(510));
-    println!("{:?}", bpt.get_entry(511));
+    println!("  0 {:?}", bpt.get_entry(0));
+    println!("  1 {:?}", bpt.get_entry(1));
+    println!("  2 {:?}", bpt.get_entry(2));
+    println!("500 {:?}", bpt.get_entry(500));
+    println!("508 {:?}", bpt.get_entry(508));
+    println!("509 {:?}", bpt.get_entry(509));
+    println!("510 {:?}", bpt.get_entry(510));
+    println!("511 {:?}", bpt.get_entry(511));
 
     #[cfg(not(test))]
     sbi::shutdown();

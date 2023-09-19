@@ -76,9 +76,6 @@ PT_ISH				= (3<<8)		// Inner shareable (shared across CPUs)
 KZERO			= 0xffff800000000000
 MiB				= (1<<20)
 GiB				= (1<<30)
-// offset for initialization code
-KTOFFSET   = 2*MiB 
-KTZERO		= (KZERO + KTOFFSET)	// Virtual base of kernel text
 
 // Constants for early uart setup
 MMIO_BASE_RPI3			= 0x3f000000

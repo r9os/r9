@@ -23,11 +23,20 @@ start:
   // Volume II: RISC-V Privileged Architectures V20211203 p75
   // SXLEN 64, MODE 8: Sv39 aka Page-based 39-bit virtual addressing
 	lui     t0, %hi(boot_page_table)
+
   li      t1, 0xffffffffc0000000 - 0x80000000
-  sub     t0, t0, t1
-  srli    t0, t0, 12 // page size 4k (2^12)
+  // physical address of root page table
+  sub     t3, t0, t1
+  srli    t0, t3, 12 // page size 4k (2^12)
   li      t1, 8 << 60 // mode Sv39
   or      t0, t0, t1
+
+  // last page: 0xffffffff_c0000000 -> 0x80000000 (1G)
+
+  slli    t2, t3, 10
+  ori     t2, t2, 0xcf // VRWXAD
+  sw      t2, 508(t3)
+
   csrw    satp, t0
   sfence.vma
 
@@ -56,13 +65,18 @@ bootstacktop:
 /* PAGING */
 boot_page_table:
 // PTE (Page Table Entry) definition (SV39)
-// NOTE: A page table entry is 8 bytes; 256 entries are 512*8=4k.
+// A virtual address (VA) in SV39 consists of 3 parts plus the final offset.
+// Those parts make up the _virtual page number_ (VPN).
+// Each VPN part is 9 bits long, used to point to an entry in a page table.
+// The VA offset is another 12 bits, so that it can point to any of 4K bytes.
+// 9 + 9 + 9 + 12 = 39
+//
+// NOTE: A page table entry is 8 bytes; 512 entries are 512*8=4k.
 //
 // N is reserved for Svnapot, PBMT is Page-based Memory Types
 //     |  N |  PBMT  | Rsvd.  |
 //     |[63]|[62..61]|[60..54]|
-// The Physical Page Number (PPN) is 9+9+26 bits long,
-// mapped to a 9+9+9 bit Virtual Page Number (VPN).
+// The Physical Page Number (PPN) is 26 + 9 + 9 = 44 bits long.
 //             | PPN[2] | PPN[1] | PPN[0] |
 //             |[53..28]|[27..19]|[18..10]|
 // RSW is reserved for supervisor software control.
