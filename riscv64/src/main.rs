@@ -234,6 +234,10 @@ impl PageTableEntry {
     pub unsafe fn write_to(&self, addr: u64) {
         unsafe { write_volatile(addr as *mut u64, self.serialize()) }
     }
+
+    pub fn get_vaddr(&self) -> u64 {
+        1
+    }
 }
 
 impl From<u64> for PageTableEntry {
@@ -259,12 +263,28 @@ impl PageTable {
         Self { addr }
     }
 
-    pub fn dump_entry(&self, at: u16) -> PageTableEntry {
+    pub fn get_entry(&self, at: u16) -> PageTableEntry {
         let addr = self.addr + (at as u64 * Self::ENTRY_SIZE);
         let val = unsafe { read_volatile(addr as *const u64) };
         val.into()
     }
+
+    fn next(&self) -> u64 {
+        let c_paddr = self.addr;
+        let entry = PageTableEntry {
+            ppn2: 0x30.try_into().unwrap(),
+            ppn1: 0.try_into().unwrap(),
+            ppn0: 0.try_into().unwrap(),
+            flags: PageTableFlags::W.union(PageTableFlags::R),
+        };
+        unsafe {
+            entry.write_to(c_paddr + 8 * ALLOC_I);
+        }
+        entry.get_vaddr()
+    }
 }
+
+static mut ALLOC_I: u64 = 0x100;
 
 #[no_mangle]
 pub extern "C" fn main9(hartid: usize, dtb_ptr: u64) -> ! {
@@ -299,10 +319,13 @@ pub extern "C" fn main9(hartid: usize, dtb_ptr: u64) -> ! {
     let bpt_addr = unsafe { (&boot_page_table) as *const _ as u64 };
     println!("table addr: {:#x}", bpt_addr);
     let bpt = PageTable::new(bpt_addr);
-    println!("{:?}", bpt.dump_entry(508));
-    println!("{:?}", bpt.dump_entry(509));
-    println!("{:?}", bpt.dump_entry(510));
-    println!("{:?}", bpt.dump_entry(511));
+    println!("{:?}", bpt.get_entry(0));
+    println!("{:?}", bpt.get_entry(1));
+    println!("{:?}", bpt.get_entry(2));
+    println!("{:?}", bpt.get_entry(508));
+    println!("{:?}", bpt.get_entry(509));
+    println!("{:?}", bpt.get_entry(510));
+    println!("{:?}", bpt.get_entry(511));
 
     #[cfg(not(test))]
     sbi::shutdown();
