@@ -73,10 +73,12 @@ PT_ISH				= (3<<8)		// Inner shareable (shared across CPUs)
 // This defines the kernel's virtual address location.
 // This value splits a 48 bit address space exactly in half, with the half
 // beginning with 1 going to the kernel.
-KZERO				= 0xffff800000000000
+KZERO			= 0xffff800000000000
 MiB				= (1<<20)
 GiB				= (1<<30)
-KTZERO				= (KZERO + 2*MiB)	// Virtual base of kernel text
+// offset for initialization code
+KTOFFSET   = 2*MiB 
+KTZERO		= (KZERO + KTOFFSET)	// Virtual base of kernel text
 
 // Constants for early uart setup
 MMIO_BASE_RPI3			= 0x3f000000
