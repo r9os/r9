@@ -8,7 +8,7 @@ start:
 	// 1. set sp
 	// sp = bootstack + (hartid + 1) * 0x10000
 	add		t0, a0, 1
-	slli	t0, t0, 16 // ??? this is  * 0x4000, not 0x10000
+	slli	t0, t0, 16
 	lui		sp, %hi(bootstack)
 	add	  sp, sp, t0 // add stack length
 
@@ -33,10 +33,11 @@ start:
 
   // last page: 0xffffffff_c0000000 -> 0x80000000 (1G)
 
-  slli    t2, t3, 10
+  slli    t2, t3, 28
   ori     t2, t2, 0xcf // VRWXAD
-  sw      t2, 508(t3)
+  sw      t2, 8*255(t3) // #255
 
+  sfence.vma
   csrw    satp, t0
   sfence.vma
 

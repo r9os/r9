@@ -190,8 +190,14 @@ bitflags! {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 struct SizedInteger<const N: usize>(u64);
+
+impl<const N: usize> core::fmt::Debug for SizedInteger<N> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{:010x}", self.0)
+    }
+}
 
 #[derive(Debug)]
 struct NumberTooLarge;
@@ -269,6 +275,8 @@ impl PageTable {
         val.into()
     }
 
+    pub fn create_entry(&self) {}
+
     fn next(&self) -> u64 {
         let c_paddr = self.addr;
         let entry = PageTableEntry {
@@ -322,7 +330,10 @@ pub extern "C" fn main9(hartid: usize, dtb_ptr: u64) -> ! {
     println!("  0 {:?}", bpt.get_entry(0));
     println!("  1 {:?}", bpt.get_entry(1));
     println!("  2 {:?}", bpt.get_entry(2));
-    println!("500 {:?}", bpt.get_entry(500));
+    let x1 = read32((bpt_addr + 255 * 8 + 4).try_into().unwrap());
+    let x2 = read32((bpt_addr + 255 * 8).try_into().unwrap());
+    println!("{x1:12x}{x2:12x}");
+    println!("255 {:?}", bpt.get_entry(255));
     println!("508 {:?}", bpt.get_entry(508));
     println!("509 {:?}", bpt.get_entry(509));
     println!("510 {:?}", bpt.get_entry(510));
