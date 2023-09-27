@@ -156,7 +156,7 @@ pub fn early_pages() -> &'static mut [Page4K] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vm;
+    use crate::vm::{self, va_index, Level};
 
     #[test]
     fn physaddr_step() {
@@ -183,5 +183,18 @@ mod tests {
         let pas =
             PhysAddr::step_by_rounded(startpa, endpa, vm::PAGE_SIZE_2M).collect::<Vec<PhysAddr>>();
         assert_eq!(pas, [PhysAddr::new(0x3f000000), PhysAddr::new(0x3f000000 + 2 * 1024 * 1024)]);
+    }
+
+    #[test]
+    fn can_break_down_va() {
+        let va: usize = 0xffff8000049fd000;
+        let va_parts = (
+            va_index(va, Level::Level0),
+            va_index(va, Level::Level1),
+            va_index(va, Level::Level2),
+            va_index(va, Level::Level3),
+        );
+        let expected_parts = (256, 0, 36, 509);
+        assert_eq!(va_parts, expected_parts);
     }
 }

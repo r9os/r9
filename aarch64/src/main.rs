@@ -100,21 +100,13 @@ fn print_board_info() {
 }
 
 #[no_mangle]
-pub extern "C" fn main9(dtb_ptr: u64) {
+pub extern "C" fn main9(dtb_ptr: usize) {
     trap::init();
 
     // Parse the DTB before we set up memory so we can correctly map it
-    let dt = unsafe { DeviceTree::from_u64(dtb_ptr).unwrap() };
+    let dt = unsafe { DeviceTree::from_usize(dtb_ptr).unwrap() };
 
-    unsafe {
-        kalloc::free_pages(kmem::early_pages());
-
-        let dtb_phys = PhysAddr::new(dtb_ptr);
-        let edtb_phys = dtb_phys + dt.size() as u64;
-        vm::init(&mut KPGTBL, dtb_phys, edtb_phys);
-        vm::switch(&KPGTBL);
-    }
-
+    // Set up uart so we can log as early as possible
     mailbox::init(&dt);
     devcons::init(&dt);
 
@@ -123,12 +115,21 @@ pub extern "C" fn main9(dtb_ptr: u64) {
     println!("DTB found at: {:#x}", dtb_ptr);
     println!("midr_el1: {:?}", registers::MidrEl1::read());
 
+    // Map address space accurately using rust VM code to manage page tables
+    unsafe {
+        kalloc::free_pages(kmem::early_pages());
+
+        let dtb_phys = PhysAddr::from_virt(dtb_ptr as usize);
+        let edtb_phys = dtb_phys + dt.size() as u64;
+        vm::init(&mut KPGTBL, dtb_phys, edtb_phys);
+        vm::switch(&KPGTBL);
+    }
+
     print_binary_sections();
     print_physical_memory_map();
     print_board_info();
 
-    // Dump out pagetables
-    kernel_root().print_tables();
+    kernel_root().print_recursive_tables();
 
     println!("looping now");
 

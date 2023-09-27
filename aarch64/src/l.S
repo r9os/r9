@@ -76,7 +76,6 @@ PT_ISH				= (3<<8)		// Inner shareable (shared across CPUs)
 KZERO				= 0xffff800000000000
 MiB				= (1<<20)
 GiB				= (1<<30)
-KTZERO				= (KZERO + 2*MiB)	// Virtual base of kernel text
 
 // Constants for early uart setup
 MMIO_BASE_RPI3			= 0x3f000000
@@ -629,37 +628,46 @@ dnr:	wfe
 // that the aarch64 setup code in l.S is solid, we should disable the uart code
 // and perhaps have something that can be enabled manually for dev purposes only
 // in the future.
+
+// One final note is that we've set up recursive page tables here.  This is to
+// allow us to use the vm code, which assumes recursive pagetables, e.g. for
+// dumping out the page tables.
 .balign 4096
 kernelpt4:
 	.space	(256*8)
 	.quad	(kernelpt3 - KZERO) + (PT_PAGE)		// [256] (for kernel + mmio)
-	.space	(255*8)
+	.space	(254*8)
+	.quad	(kernelpt4 - KZERO) + (PT_AF|PT_PAGE)	// [511] (recursive entry)
 
 .balign 4096
 kernelpt3:
  	.quad	(0*2*GiB) + (PT_BLOCK|PT_AF|PT_AP_KERNEL_RW|PT_ISH|PT_UXN|PT_MAIR_NORMAL)	// [0] (for kernel)
 	.space	(2*8)
 	.quad	(kernelpt2 - KZERO) + (PT_PAGE)		// [3] (for mmio)
-	.space	(508*8)
+	.space	(507*8)
+	.quad	(kernelpt3 - KZERO) + (PT_AF|PT_PAGE)	// [511] (recursive entry)
 
 .balign 4096
 kernelpt2:
 	.space	(496*8)
  	.quad	(MMIO_BASE_RPI4) + (PT_BLOCK|PT_AF|PT_AP_KERNEL_RW|PT_ISH|PT_UXN|PT_PXN|PT_MAIR_DEVICE)		// [496] (for mmio)
  	.quad	(MMIO_BASE_RPI4 + GPIO) + (PT_BLOCK|PT_AF|PT_AP_KERNEL_RW|PT_ISH|PT_UXN|PT_PXN|PT_MAIR_DEVICE)	// [497] (for mmio)
-	.space	(14*8)
+	.space	(13*8)
+	.quad	(kernelpt2 - KZERO) + (PT_AF|PT_PAGE)	// [511] (recursive entry)
 
 // Early page tables for identity mapping the kernel physical addresses.
 // Once we've jumped to the higher half, this will no longer be used.
 .balign 4096
 physicalpt4:
 	.quad	(physicalpt3 - KZERO) + (PT_PAGE)	// [0] (for kernel)
-	.space	(511*8)
+	.space	(510*8)
+	.quad	(physicalpt4 - KZERO) + (PT_AF|PT_PAGE)	// [511] (recursive entry)
 
 .balign 4096
 physicalpt3:
  	.quad	(0*2*GiB) + (PT_BLOCK|PT_AF|PT_AP_KERNEL_RW|PT_ISH|PT_UXN|PT_MAIR_NORMAL)	// [0] (for kernel)
-	.space	(511*8)
+	.space	(510*8)
+	.quad	(physicalpt3 - KZERO) + (PT_AF|PT_PAGE)	// [511] (recursive entry)
 
 .bss
 .balign	4096
