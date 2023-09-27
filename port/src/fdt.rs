@@ -67,8 +67,8 @@ impl<'a> DeviceTree<'a> {
         self.header.totalsize as usize
     }
 
-    /// Given a pointer to the dtb as a u64, return a DeviceTree struct.
-    pub unsafe fn from_u64(ptr: u64) -> Result<Self> {
+    /// Given a pointer to the dtb as a usize, return a DeviceTree struct.
+    pub unsafe fn from_usize(ptr: usize) -> Result<Self> {
         let u8ptr = ptr as *const mem::MaybeUninit<u8>;
 
         // Extract the real length from the header
