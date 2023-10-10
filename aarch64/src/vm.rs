@@ -115,6 +115,7 @@ impl Entry {
             .with_uxn(true)
             .with_pxn(true)
             .with_mair_index(Mair::Normal)
+            .with_valid(true)
     }
 
     fn ro_kernel_data() -> Self {
@@ -125,6 +126,7 @@ impl Entry {
             .with_uxn(true)
             .with_pxn(true)
             .with_mair_index(Mair::Normal)
+            .with_valid(true)
     }
 
     fn ro_kernel_text() -> Self {
@@ -135,6 +137,7 @@ impl Entry {
             .with_uxn(true)
             .with_pxn(false)
             .with_mair_index(Mair::Normal)
+            .with_valid(true)
     }
 
     fn ro_kernel_device() -> Self {
@@ -145,12 +148,14 @@ impl Entry {
             .with_uxn(true)
             .with_pxn(true)
             .with_mair_index(Mair::Device)
+            .with_valid(true)
     }
 
     const fn with_phys_addr(self, pa: PhysAddr) -> Self {
         Entry(self.0).with_addr(pa.addr() >> 12)
     }
 
+    /// Return the physical page address pointed to by this entry
     fn phys_page_addr(self) -> PhysAddr {
         PhysAddr::new(self.addr() << 12)
     }
@@ -235,6 +240,34 @@ pub fn va_index(va: usize, level: Level) -> usize {
     }
 }
 
+#[cfg(test)]
+fn va_indices(va: usize) -> (usize, usize, usize, usize) {
+    (
+        va_index(va, Level::Level0),
+        va_index(va, Level::Level1),
+        va_index(va, Level::Level2),
+        va_index(va, Level::Level3),
+    )
+}
+
+fn recursive_table_addr(va: usize, level: Level) -> usize {
+    let indices_mask = 0x0000_ffff_ffff_f000;
+    let indices = va & indices_mask;
+    let shift = match level {
+        Level::Level0 => 36,
+        Level::Level1 => 27,
+        Level::Level2 => 18,
+        Level::Level3 => 9,
+    };
+    let recursive_indices = match level {
+        Level::Level0 => (511 << 39) | (511 << 30) | (511 << 21) | (511 << 12),
+        Level::Level1 => (511 << 39) | (511 << 30) | (511 << 21),
+        Level::Level2 => (511 << 39) | (511 << 30),
+        Level::Level3 => 511 << 39,
+    };
+    0xffff_0000_0000_0000 | recursive_indices | ((indices >> shift) & indices_mask)
+}
+
 #[derive(Debug)]
 pub enum PageTableError {
     AllocationFailed(kalloc::Error),
@@ -257,38 +290,21 @@ impl Table {
         Ok(&mut self.entries[va_index(va, level)])
     }
 
-    // TODO remove?
-    fn child_table(&self, entry: Entry) -> Option<&Table> {
-        if !entry.valid() {
-            return None;
-        }
-        let raw_ptr = entry.virt_page_addr();
-        Some(unsafe { &*(raw_ptr as *const Table) })
-    }
-
-    #[allow(dead_code)]
-    fn next(&self, level: Level, va: usize) -> Option<&Table> {
-        let index = va_index(va, level);
-        let entry = self.entries[index];
-        self.child_table(entry)
-    }
-
+    /// Return the next table in the walk.  If it doesn't exist, create it.
     fn next_mut(&mut self, level: Level, va: usize) -> Result<&mut Table, PageTableError> {
         // Try to get a valid page table entry.  If it doesn't exist, create it.
         let index = va_index(va, level);
         let mut entry = self.entries[index];
         if !entry.valid() {
-            // Create a new recursive page table
+            // Create a new recursive page table.  (Note every recursive entry
+            // must have the 'accessed' flag set)  At this point the address
+            // doesn't need to be recursive because we just allocated it from
+            // a mapped area of memory.
             let table = Self::alloc_pagetable()?;
-            entry = Entry::rw_kernel_data()
-                .with_phys_addr(PhysAddr::from_ptr(table))
-                .with_valid(true)
-                .with_table(true);
+            entry =
+                Entry::rw_kernel_data().with_phys_addr(PhysAddr::from_ptr(table)).with_table(true);
             unsafe {
                 write_volatile(&mut self.entries[index], entry);
-                // Write the recursive entry.  Note that every recursive entry
-                // must have the 'accessed' flag set, which we do in setting up
-                // the entry above.
                 write_volatile(&mut table.entries[511], entry);
             }
         }
@@ -297,10 +313,9 @@ impl Table {
             return Err(PageTableError::EntryIsNotTable);
         }
 
-        // Return the address of the next table, as found in the entry.
-        let raw_ptr = entry.virt_page_addr();
-        let next_table = unsafe { &mut *(raw_ptr as *mut Table) };
-        Ok(next_table)
+        // Return the address of the next table as a recursive address
+        let recursive_page_addr = recursive_table_addr(va, level.next().unwrap());
+        Ok(unsafe { &mut *(recursive_page_addr as *mut Table) })
     }
 
     fn alloc_pagetable() -> Result<&'static mut Table, PageTableError> {
@@ -317,13 +332,30 @@ impl PageTable {
         PageTable { entries: [Entry::empty(); 512] }
     }
 
-    pub fn map_to(
+    /// Ensure there's a mapping from va to entry, creating any intermediate
+    /// page tables that don't already exist.  If a mapping already exists,
+    /// replace it.
+    fn map_to(
         &mut self,
         entry: Entry,
         va: usize,
         page_size: PageSize,
     ) -> Result<(), PageTableError> {
-        let old_entry = match page_size {
+        // We change the last entry of the root page table to the address of
+        // self for the duration of this method.  This allows us to work with
+        // this hierarchy of pagetables even if it's not the current translation
+        // table.  We *must* return it to its original state on exit.
+        let old_recursive_entry = kernel_root().entries[511];
+        let temp_recursive_entry =
+            Entry::rw_kernel_data().with_phys_addr(PhysAddr::from_ptr(self)).with_table(true);
+
+        unsafe {
+            write_volatile(&mut kernel_root().entries[511], temp_recursive_entry);
+            // TODO Need to invalidate the single cache entry
+            invalidate_all_tlb_entries();
+        };
+
+        let dest_entry = match page_size {
             PageSize::Page4K => self
                 .next_mut(Level::Level0, va)
                 .and_then(|t1| t1.next_mut(Level::Level1, va))
@@ -338,11 +370,14 @@ impl PageTable {
             }
         };
 
-        let old_entry = old_entry?;
-        let entry = entry.with_valid(true);
         unsafe {
-            write_volatile(old_entry, entry);
+            write_volatile(dest_entry?, entry);
+            // Return the recursive entry to its original state
+            write_volatile(&mut kernel_root().entries[511], old_recursive_entry);
+            // TODO Need to invalidate the single cache entry
+            invalidate_all_tlb_entries();
         }
+
         return Ok(());
     }
 
@@ -415,11 +450,16 @@ fn print_pte(indent: usize, i: usize, pte: Entry) {
 }
 
 pub unsafe fn init(kpage_table: &mut PageTable, dtb_phys: PhysAddr, edtb_phys: PhysAddr) {
+    // We use recursive page tables, but we have to be careful in the init call,
+    // since the kpage_table is not currently pointed to by ttbr1_el1.  Any
+    // recursive addressing of (511, 511, 511, 511) always points to the
+    // physical address of the root page table, which isn't what we want here
+    // because kpage_table hasn't been switched to yet.
+
     // Write the recursive entry
     unsafe {
         let entry = Entry::rw_kernel_data()
             .with_phys_addr(PhysAddr::from_ptr(kpage_table))
-            .with_valid(true)
             .with_table(true);
         write_volatile(&mut kpage_table.entries[511], entry);
     }
@@ -496,7 +536,57 @@ pub unsafe fn switch(kpage_table: &PageTable) {
     }
 }
 
+#[allow(unused_variables)]
+pub unsafe fn invalidate_all_tlb_entries() {
+    #[cfg(not(test))]
+    unsafe {
+        // https://forum.osdev.org/viewtopic.php?t=36412&p=303237
+        core::arch::asm!(
+            "tlbi vmalle1", // invalidate all TLB entries
+            "dsb ish",      // ensure write has completed
+            "isb"
+        ); // synchronize context and ensure that no instructions
+           // are fetched using the old translation
+    }
+}
+
 /// Return the root kernel page table
 pub fn kernel_root() -> &'static mut PageTable {
     unsafe { &mut *PhysAddr::new(ttbr1_el1()).to_ptr_mut::<PageTable>() }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn can_break_down_va() {
+        assert_eq!(va_indices(0xffff8000049fd000), (256, 0, 36, 509));
+    }
+
+    #[test]
+    fn test_to_use_for_debugging_vaddrs() {
+        assert_eq!(va_indices(0xffff8000049fd000), (256, 0, 36, 509));
+    }
+
+    #[test]
+    fn test_recursive_table_addr() {
+        assert_eq!(va_indices(0xffff800008000000), (256, 0, 64, 0));
+        assert_eq!(
+            va_indices(recursive_table_addr(0xffff800008000000, Level::Level0)),
+            (511, 511, 511, 511)
+        );
+        assert_eq!(
+            va_indices(recursive_table_addr(0xffff800008000000, Level::Level1)),
+            (511, 511, 511, 256)
+        );
+        assert_eq!(
+            va_indices(recursive_table_addr(0xffff800008000000, Level::Level2)),
+            (511, 511, 256, 0)
+        );
+        assert_eq!(
+            va_indices(recursive_table_addr(0xffff800008000000, Level::Level3)),
+            (511, 256, 0, 64)
+        );
+    }
 }
