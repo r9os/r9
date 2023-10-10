@@ -20,8 +20,8 @@ use port::fdt::DeviceTree;
 core::arch::global_asm!(include_str!("l.S"));
 
 #[no_mangle]
-pub extern "C" fn main9(hartid: usize, dtb_ptr: u64) -> ! {
-    let dt = unsafe { DeviceTree::from_u64(dtb_ptr).unwrap() };
+pub extern "C" fn main9(hartid: usize, dtb_ptr: usize) -> ! {
+    let dt = unsafe { DeviceTree::from_usize(dtb_ptr).unwrap() };
     crate::devcons::init(&dt);
     platform_init();
 
