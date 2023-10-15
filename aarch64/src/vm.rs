@@ -272,6 +272,7 @@ fn recursive_table_addr(va: usize, level: Level) -> usize {
 pub enum PageTableError {
     AllocationFailed(kalloc::Error),
     EntryIsNotTable,
+    PhysRangeIsZero,
 }
 
 impl From<kalloc::Error> for PageTableError {
@@ -394,11 +395,16 @@ impl PageTable {
         end: PhysAddr,
         entry: Entry,
         page_size: PageSize,
-    ) -> Result<(), PageTableError> {
+    ) -> Result<(usize, usize), PageTableError> {
+        let mut startva = None;
+        let mut endva = 0;
         for pa in PhysAddr::step_by_rounded(start, end, page_size.size()) {
-            self.map_to(entry.with_phys_addr(pa), pa.to_virt(), page_size)?;
+            let va = pa.to_virt();
+            self.map_to(entry.with_phys_addr(pa), va, page_size)?;
+            startva.get_or_insert(va);
+            endva = va + page_size.size();
         }
-        Ok(())
+        startva.map(|startva| (startva, endva)).ok_or(PageTableError::PhysRangeIsZero)
     }
 
     /// Recursively write out the table and all its children
@@ -479,30 +485,28 @@ pub unsafe fn init(kpage_table: &mut PageTable, dtb_phys: PhysAddr, edtb_phys: P
         // Note that the first page is left unmapped to try and
         // catch null pointer dereferences in unsafe code: defense
         // in depth!
-
-        // DTB
-        (dtb_phys, edtb_phys, Entry::ro_kernel_data(), PageSize::Page4K),
-        // Kernel text
-        (text_phys, etext_phys, Entry::ro_kernel_text(), PageSize::Page2M),
-        // Kernel read-only data
-        (etext_phys, erodata_phys, Entry::ro_kernel_data(), PageSize::Page2M),
-        // Kernel BSS
-        (erodata_phys, ebss_phys, Entry::rw_kernel_data(), PageSize::Page2M),
-        // Kernel heap
-        (heap_phys, eheap_phys, Entry::rw_kernel_data(), PageSize::Page2M),
-        // MMIO
-        (mmio, mmio_end, Entry::ro_kernel_device(), PageSize::Page2M),
+        ("DTB", dtb_phys, edtb_phys, Entry::ro_kernel_data(), PageSize::Page4K),
+        ("Kernel Text", text_phys, etext_phys, Entry::ro_kernel_text(), PageSize::Page2M),
+        ("Kernel Data", etext_phys, erodata_phys, Entry::ro_kernel_data(), PageSize::Page2M),
+        ("Kernel BSS", erodata_phys, ebss_phys, Entry::rw_kernel_data(), PageSize::Page2M),
+        ("Kernel Heap", heap_phys, eheap_phys, Entry::rw_kernel_data(), PageSize::Page2M),
+        ("MMIO", mmio, mmio_end, Entry::ro_kernel_device(), PageSize::Page2M),
     ];
 
-    for (start, end, flags, page_size) in custom_map.iter() {
+    for (name, start, end, flags, page_size) in custom_map.iter() {
+        let mapped_range = kpage_table
+            .map_phys_range(*start, *end, *flags, *page_size)
+            .expect("init mapping failed");
         println!(
-            "Mapping {:#018x} - {:#018x} flags: {:?} page_size: {:?}",
+            "Mapped {:16} {:#018x}-{:#018x} to {:#018x}-{:#018x} flags: {:?} page_size: {:?}",
+            name,
             start.addr(),
             end.addr(),
+            mapped_range.0,
+            mapped_range.1,
             flags,
             page_size
         );
-        kpage_table.map_phys_range(*start, *end, *flags, *page_size).expect("init mapping failed");
     }
 }
 
