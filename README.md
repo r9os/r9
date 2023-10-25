@@ -24,8 +24,12 @@ Right now, r9 is not self-hosting.
 
 `cargo xtask dist`, which `cargo xtask qemu` and 
 `cargo xtask qemukvm` depend on, requires `llvm-objcopy`. 
-This is expected to live in the rust toolchain path. If 
-you get `No such file or directory (os error 2)` messages, 
+This is expected to live in the rust toolchain path.  You can install by running:
+```
+rustup component add llvm-tools
+```
+
+If you get `No such file or directory (os error 2)` messages, 
 then install `llvm` separate from the rust toolchain and set:
 ```
 OBJCOPY=$(which llvm-objcopy) cargo xtask qemukvm

@@ -6,7 +6,7 @@ use alloc::alloc::{GlobalAlloc, Layout};
 use core::panic::PanicInfo;
 
 #[panic_handler]
-pub extern "C" fn panic(_info: &PanicInfo) -> ! {
+pub fn panic(_info: &PanicInfo) -> ! {
     #[allow(clippy::empty_loop)]
     loop {}
 }

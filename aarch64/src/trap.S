@@ -99,6 +99,7 @@
 /// Each entry is 16 instructions/128 bytes.
 /// Ventry handles alignment of individual entries.
 .balign	2048
+.globl exception_vectors
 exception_vectors:
 	// Current EL with SP0
 	ventry	sync_invalid_el1t			// Synchronous EL1t

@@ -2,7 +2,7 @@
 //!
 //! Chapter 5: Legacy Extensions
 
-#![cfg_attr(not(target_arch = "riscv64"), allow(dead_code))]
+#![allow(dead_code)]
 
 const SBI_SET_TIMER: usize = 0;
 const SBI_CONSOLE_PUTCHAR: usize = 1;
