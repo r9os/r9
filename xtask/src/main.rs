@@ -35,6 +35,7 @@ impl fmt::Display for Arch {
     }
 }
 
+// TODO This is becoming a bag of random fields - maybe turn into an enum
 struct BuildParams {
     arch: Arch,
     profile: Profile,
@@ -42,11 +43,16 @@ struct BuildParams {
     wait_for_gdb: bool,
     config: Configuration,
     dump_dtb: String,
+    json_output: bool,
 }
 
 impl BuildParams {
     fn new(matches: &clap::ArgMatches) -> Self {
-        let profile = if matches.get_flag("release") { Profile::Release } else { Profile::Debug };
+        let profile = if matches.try_contains_id("release").unwrap_or(false) {
+            Profile::Release
+        } else {
+            Profile::Debug
+        };
         let verbose = matches.get_flag("verbose");
         let arch = matches.try_get_one("arch").ok().flatten().unwrap_or(&Arch::X86_64);
         let wait_for_gdb =
@@ -67,7 +73,9 @@ impl BuildParams {
             config_file
         ));
 
-        Self { arch: *arch, profile, verbose, wait_for_gdb, dump_dtb, config }
+        let json_output = matches.try_contains_id("json").unwrap_or(false);
+
+        Self { arch: *arch, profile, verbose, wait_for_gdb, dump_dtb, config, json_output }
     }
 
     fn dir(&self) -> &'static str {
@@ -165,6 +173,12 @@ fn main() {
             ]),
         )
         .subcommand(
+            clap::Command::new("check")
+                .about("Runs check")
+                .args(&[clap::arg!(--json "Output messages as json")])
+                .args(&[clap::arg!(--verbose "Print commands")]),
+        )
+        .subcommand(
             clap::Command::new("qemu").about("Run r9 under QEMU").args(&[
                 clap::arg!(--release "Build a release version").conflicts_with("debug"),
                 clap::arg!(--debug "Build a debug version").conflicts_with("release"),
@@ -201,6 +215,7 @@ fn main() {
         Some(("dist", m)) => dist(&BuildParams::new(m)),
         Some(("test", m)) => test(&BuildParams::new(m)),
         Some(("clippy", m)) => clippy(&BuildParams::new(m)),
+        Some(("check", m)) => check(&BuildParams::new(m)),
         Some(("qemu", m)) => run(&BuildParams::new(m)),
         Some(("qemukvm", m)) => accelrun(&BuildParams::new(m)),
         Some(("clean", _)) => clean(),
@@ -426,7 +441,88 @@ fn clippy(build_params: &BuildParams) -> Result<()> {
     }
     let status = annotated_status(&mut cmd)?;
     if !status.success() {
-        return Err("build kernel failed".into());
+        return Err("clippy failed".into());
+    }
+    Ok(())
+}
+
+fn check(build_params: &BuildParams) -> Result<()> {
+    let all_check_args = vec![
+        vec!["check", "--package", "aarch64", "--bins"],
+        vec!["check", "--package", "x86_64", "--bins"],
+        vec!["check", "--package", "riscv64", "--bins"],
+        vec!["check", "--package", "port", "--lib"],
+        vec![
+            "check",
+            "--package",
+            "aarch64",
+            "--tests",
+            "--benches",
+            "--target",
+            "aarch64-unknown-linux-gnu",
+        ],
+        vec![
+            "check",
+            "--package",
+            "x86_64",
+            "--tests",
+            "--benches",
+            "--target",
+            "x86_64-unknown-linux-gnu",
+        ],
+        vec![
+            "check",
+            "--package",
+            "riscv64",
+            "--tests",
+            "--benches",
+            "--target",
+            "riscv64gc-unknown-linux-gnu",
+        ],
+        vec![
+            "check",
+            "--package",
+            "port",
+            "--tests",
+            "--benches",
+            "--target",
+            "aarch64-unknown-linux-gnu",
+        ],
+        vec![
+            "check",
+            "--package",
+            "port",
+            "--tests",
+            "--benches",
+            "--target",
+            "x86_64-unknown-linux-gnu",
+        ],
+        vec![
+            "check",
+            "--package",
+            "port",
+            "--tests",
+            "--benches",
+            "--target",
+            "riscv64gc-unknown-linux-gnu",
+        ],
+    ];
+
+    for check_args in all_check_args {
+        let mut cmd = Command::new(cargo());
+        cmd.args(check_args);
+        if build_params.json_output {
+            cmd.arg("--message-format=json").arg("--quiet");
+        }
+        cmd.current_dir(workspace());
+
+        if build_params.verbose {
+            println!("Executing {cmd:?}");
+        }
+        let status = annotated_status(&mut cmd)?;
+        if !status.success() {
+            return Err("check failed".into());
+        }
     }
     Ok(())
 }

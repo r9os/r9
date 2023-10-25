@@ -1,0 +1,9 @@
+{
+    "git.alwaysSignOff": true,
+    "rust-analyzer.check.overrideCommand": [
+        "cargo",
+        "xtask",
+        "check",
+        "--json"
+    ]
+}
