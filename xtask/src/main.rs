@@ -1,3 +1,5 @@
+use crate::config::{generate_args, read_config, Configuration};
+use rustup_configurator::Triple;
 use std::{
     env, fmt,
     path::{Path, PathBuf},
@@ -5,7 +7,6 @@ use std::{
 };
 
 mod config;
-use crate::config::{generate_args, read_config, Configuration};
 
 type DynError = Box<dyn std::error::Error>;
 type Result<T> = std::result::Result<T, DynError>;
@@ -73,7 +74,9 @@ impl BuildParams {
             config_file
         ));
 
-        let json_output = matches.try_contains_id("json").unwrap_or(false);
+        // This is a very awkward way to check a boolean which may not exist...
+        let json_output = matches.try_contains_id("json").unwrap_or(false)
+            && matches.value_source("json") != Some(clap::parser::ValueSource::DefaultValue);
 
         Self { arch: *arch, profile, verbose, wait_for_gdb, dump_dtb, config, json_output }
     }
@@ -105,6 +108,42 @@ impl BuildParams {
             "TARGET",
             format!("{}-unknown-none-elf", self.arch.to_string().to_lowercase()).as_str(),
         )
+    }
+}
+
+struct RustupState {
+    installed_targets: Vec<Triple>,
+    curr_toolchain: String,
+}
+
+impl RustupState {
+    /// Runs rustup command to get a list of all installed toolchains.
+    /// Also caches the current toolchain.
+    fn new() -> Self {
+        Self {
+            installed_targets: rustup_configurator::installed().unwrap(),
+            curr_toolchain: env::var("RUSTUP_TOOLCHAIN").unwrap(),
+        }
+    }
+
+    /// For the given arch, return a compatible toolchain triple that is
+    /// installed and can be used by cargo check.  It will prefer the default
+    /// toolchain if it's a match, otherwise it will look for the
+    /// <arch-unknown-linux-gnu> toolchain.
+    fn std_supported_target(&self, arch: &str) -> Option<&Triple> {
+        let arch = Self::target_arch(arch);
+        self.installed_targets.iter().filter(|&t| t.architecture.to_string() == arch).find(|&t| {
+            self.curr_toolchain.ends_with(&t.to_string())
+                || t.to_string() == arch.to_owned() + "-unknown-linux-gnu"
+        })
+    }
+
+    /// Return the arch in a form compatible with the supported targets and toolchains
+    fn target_arch(arch: &str) -> &str {
+        match arch {
+            "riscv64" => "riscv64gc",
+            _ => arch,
+        }
     }
 }
 
@@ -172,12 +211,10 @@ fn main() {
                 clap::arg!(--verbose "Print commands"),
             ]),
         )
-        .subcommand(
-            clap::Command::new("check")
-                .about("Runs check")
-                .args(&[clap::arg!(--json "Output messages as json")])
-                .args(&[clap::arg!(--verbose "Print commands")]),
-        )
+        .subcommand(clap::Command::new("check").about("Runs check").args(&[
+            clap::arg!(--json "Output messages as json"),
+            clap::arg!(--verbose "Print commands"),
+        ]))
         .subcommand(
             clap::Command::new("qemu").about("Run r9 under QEMU").args(&[
                 clap::arg!(--release "Build a release version").conflicts_with("debug"),
@@ -407,19 +444,47 @@ fn dist(build_params: &BuildParams) -> Result<()> {
     Ok(())
 }
 
+/// Run tests for the current host toolchain.
 fn test(build_params: &BuildParams) -> Result<()> {
-    let mut cmd = Command::new(cargo());
-    cmd.current_dir(workspace());
-    cmd.arg("test");
-    cmd.arg("--workspace");
-    cmd.arg("--target").arg("x86_64-unknown-linux-gnu");
-    build_params.add_build_arg(&mut cmd);
-    if build_params.verbose {
-        println!("Executing {cmd:?}");
+    let mut all_cmd_args = Vec::new();
+
+    all_cmd_args.push(vec![
+        "test".to_string(),
+        "--package".to_string(),
+        "port".to_string(),
+        "--lib".to_string(),
+    ]);
+
+    let rustup_state = RustupState::new();
+
+    let arch = std::env::consts::ARCH;
+    if let Some(target) = rustup_state.std_supported_target(arch) {
+        all_cmd_args.push(vec![
+            "test".to_string(),
+            "--package".to_string(),
+            arch.to_string(),
+            "--bins".to_string(),
+            "--target".to_string(),
+            target.to_string(),
+        ]);
     }
-    let status = annotated_status(&mut cmd)?;
-    if !status.success() {
-        return Err("test failed".into());
+
+    for cmd_args in all_cmd_args {
+        let mut cmd = Command::new(cargo());
+        cmd.current_dir(workspace());
+
+        cmd.args(cmd_args);
+        if build_params.json_output {
+            cmd.arg("--message-format=json").arg("--quiet");
+        }
+
+        if build_params.verbose {
+            println!("Executing {cmd:?}");
+        }
+        let status = annotated_status(&mut cmd)?;
+        if !status.success() {
+            return Err("check failed".into());
+        }
     }
     Ok(())
 }
@@ -446,71 +511,69 @@ fn clippy(build_params: &BuildParams) -> Result<()> {
     Ok(())
 }
 
+/// Run check for all packages for all relevant toolchains.
+/// This assumes that the <arch>-unknown-linux-gnu toolchain has been installed
+/// for any arch we care about.
 fn check(build_params: &BuildParams) -> Result<()> {
-    let all_check_args = vec![
-        vec!["check", "--package", "aarch64", "--bins"],
-        vec!["check", "--package", "x86_64", "--bins"],
-        vec!["check", "--package", "riscv64", "--bins"],
-        vec!["check", "--package", "port", "--lib"],
+    // To run check for bins and lib we use the default toolchain, which has
+    // been set to the OS-independent arch toolchain in each Cargo.toml file.
+    // The same applies to tests and benches for non-arch-specific lib packages.
+    let bins_lib_package_cmd_args = vec![
         vec![
-            "check",
-            "--package",
-            "aarch64",
-            "--tests",
-            "--benches",
-            "--target",
-            "aarch64-unknown-linux-gnu",
+            "check".to_string(),
+            "--package".to_string(),
+            "aarch64".to_string(),
+            "--bins".to_string(),
         ],
         vec![
-            "check",
-            "--package",
-            "x86_64",
-            "--tests",
-            "--benches",
-            "--target",
-            "x86_64-unknown-linux-gnu",
+            "check".to_string(),
+            "--package".to_string(),
+            "riscv64".to_string(),
+            "--bins".to_string(),
         ],
         vec![
-            "check",
-            "--package",
-            "riscv64",
-            "--tests",
-            "--benches",
-            "--target",
-            "riscv64gc-unknown-linux-gnu",
+            "check".to_string(),
+            "--package".to_string(),
+            "x86_64".to_string(),
+            "--bins".to_string(),
         ],
         vec![
-            "check",
-            "--package",
-            "port",
-            "--tests",
-            "--benches",
-            "--target",
-            "aarch64-unknown-linux-gnu",
-        ],
-        vec![
-            "check",
-            "--package",
-            "port",
-            "--tests",
-            "--benches",
-            "--target",
-            "x86_64-unknown-linux-gnu",
-        ],
-        vec![
-            "check",
-            "--package",
-            "port",
-            "--tests",
-            "--benches",
-            "--target",
-            "riscv64gc-unknown-linux-gnu",
+            "check".to_string(),
+            "--package".to_string(),
+            "port".to_string(),
+            "--lib".to_string(),
+            "--tests".to_string(),
+            "--benches".to_string(),
         ],
     ];
 
-    for check_args in all_check_args {
+    let rustup_state = RustupState::new();
+
+    // However, running check for tests and benches in arch packages requires
+    // that we use a toolchain with `std`, so we need an OS-specific toolchain.
+    // If the arch matches that of the current toolchain, then that will be used
+    // for check.  Otherwise we'll always default to <arch>-unknown-linux-gnu.
+    let mut benches_tests_package_cmd_args = Vec::new();
+
+    for arch in ["aarch64", "riscv64", "x86_64"] {
+        let Some(target) = rustup_state.std_supported_target(arch) else {
+            continue;
+        };
+
+        benches_tests_package_cmd_args.push(vec![
+            "check".to_string(),
+            "--package".to_string(),
+            arch.to_string(),
+            "--tests".to_string(),
+            "--benches".to_string(),
+            "--target".to_string(),
+            target.to_string(),
+        ]);
+    }
+
+    for cmd_args in [bins_lib_package_cmd_args, benches_tests_package_cmd_args].concat() {
         let mut cmd = Command::new(cargo());
-        cmd.args(check_args);
+        cmd.args(cmd_args);
         if build_params.json_output {
             cmd.arg("--message-format=json").arg("--quiet");
         }
