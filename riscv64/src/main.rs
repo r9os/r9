@@ -271,8 +271,9 @@ impl PageTable {
 
     pub fn get_entry(&self, at: u16) -> PageTableEntry {
         let addr = self.addr + (at as u64 * Self::ENTRY_SIZE);
-        let val = unsafe { read_volatile(addr as *const u64) };
-        val.into()
+        let high = unsafe { read_volatile((addr + 4) as *const u64) };
+        let low = unsafe { read_volatile(addr as *const u64) };
+        ((high << 32) | low).into()
     }
 
     pub fn create_entry(&self) {}
@@ -330,15 +331,33 @@ pub extern "C" fn main9(hartid: usize, dtb_ptr: u64) -> ! {
     println!("  0 {:?}", bpt.get_entry(0));
     println!("  1 {:?}", bpt.get_entry(1));
     println!("  2 {:?}", bpt.get_entry(2));
-    let x1 = read32((bpt_addr + 255 * 8 + 4).try_into().unwrap());
-    let x2 = read32((bpt_addr + 255 * 8).try_into().unwrap());
-    println!("{x1:12x}{x2:12x}");
+    println!();
+    println!();
+
+    let hi = read32((bpt_addr + 255 * 8 + 4).try_into().unwrap());
+    let lo = read32((bpt_addr + 255 * 8).try_into().unwrap());
+    println!("   {hi:08x} {lo:08x}");
     println!("255 {:?}", bpt.get_entry(255));
+
+    println!();
+    println!();
     println!("508 {:?}", bpt.get_entry(508));
     println!("509 {:?}", bpt.get_entry(509));
     println!("510 {:?}", bpt.get_entry(510));
     println!("511 {:?}", bpt.get_entry(511));
+    println!();
+    println!();
 
+    // fixed 25 bits, used 39 bits
+    const VFIXED: usize = 0xff_ff_ff_80__00_00_00_00;
+    let ppn2 = 255 << (9 + 9 + 12);
+    let ppn1 = 255 << (9 + 12);
+    let ppn0 = 255 << 12;
+    let poff = 0x0;
+    let vaddr = VFIXED | ppn2 | ppn1 | ppn0 | poff;
+    println!("{vaddr:016x}");
+    let x1 = read32(vaddr);
+    println!("{x1:08x}");
     #[cfg(not(test))]
     sbi::shutdown();
     #[cfg(test)]

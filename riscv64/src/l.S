@@ -23,19 +23,23 @@ start:
   // Volume II: RISC-V Privileged Architectures V20211203 p75
   // SXLEN 64, MODE 8: Sv39 aka Page-based 39-bit virtual addressing
 	lui     t0, %hi(boot_page_table)
+  // page size is 4k (2^12) - drop lowest 12 bits
+  srli    t4, t0, 12
 
+  // subtract offset to get the physical address of the root page table
   li      t1, 0xffffffffc0000000 - 0x80000000
-  // physical address of root page table
-  sub     t3, t0, t1
-  srli    t0, t3, 12 // page size 4k (2^12)
+  sub     t2, t0, t1
+
+  // page size is 4k (2^12) - drop lowest 12 bits
+  srli    t3, t2, 12
+  // final SATP
   li      t1, 8 << 60 // mode Sv39
-  or      t0, t0, t1
+  or      t0, t3, t1
 
-  // last page: 0xffffffff_c0000000 -> 0x80000000 (1G)
-
-  slli    t2, t3, 28
-  ori     t2, t2, 0xcf // VRWXAD
-  sw      t2, 8*255(t3) // #255
+  // t3 holds the root page table physical address divided by 4k; shift for flags
+  slli    t1, t4, 10
+  ori     t1, t4, 0xc1 // DAGU XWRV
+  sd      t1, 8*255(t2) // #255
 
   sfence.vma
   csrw    satp, t0
