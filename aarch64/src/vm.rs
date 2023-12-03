@@ -470,35 +470,40 @@ pub unsafe fn init(kpage_table: &mut PageTable, dtb_phys: PhysAddr, edtb_phys: P
         write_volatile(&mut kpage_table.entries[511], entry);
     }
 
-    let text_phys = PhysAddr::from_virt(text_addr());
-    let etext_phys = PhysAddr::from_virt(etext_addr());
-    let erodata_phys = PhysAddr::from_virt(erodata_addr());
-    let ebss_phys = PhysAddr::from_virt(ebss_addr());
-    let heap_phys = PhysAddr::from_virt(heap_addr());
-    let eheap_phys = PhysAddr::from_virt(eheap_addr());
+    // TODO We don't actualy unmap the first page...  We should to achieve:
+    // Note that the first page is left unmapped to try and
+    // catch null pointer dereferences in unsafe code: defense
+    // in depth!
+    let custom_map = {
+        let text_phys = PhysAddr::from_virt(text_addr());
+        let etext_phys = PhysAddr::from_virt(etext_addr());
+        let erodata_phys = PhysAddr::from_virt(erodata_addr());
+        let ebss_phys = PhysAddr::from_virt(ebss_addr());
+        let heap_phys = PhysAddr::from_virt(heap_addr());
+        let eheap_phys = PhysAddr::from_virt(eheap_addr());
 
-    let mmio = rpi_mmio().expect("mmio base detect failed");
-    let mmio_end = PhysAddr::from(mmio + (2 * PAGE_SIZE_2M as u64));
+        let mmio = rpi_mmio().expect("mmio base detect failed");
+        let mmio_end = PhysAddr::from(mmio + (2 * PAGE_SIZE_2M as u64));
 
-    let custom_map = [
-        // TODO We don't actualy unmap the first page...  We should to achieve:
-        // Note that the first page is left unmapped to try and
-        // catch null pointer dereferences in unsafe code: defense
-        // in depth!
-        ("DTB", dtb_phys, edtb_phys, Entry::ro_kernel_data(), PageSize::Page4K),
-        ("Kernel Text", text_phys, etext_phys, Entry::ro_kernel_text(), PageSize::Page2M),
-        ("Kernel Data", etext_phys, erodata_phys, Entry::ro_kernel_data(), PageSize::Page2M),
-        ("Kernel BSS", erodata_phys, ebss_phys, Entry::rw_kernel_data(), PageSize::Page2M),
-        ("Kernel Heap", heap_phys, eheap_phys, Entry::rw_kernel_data(), PageSize::Page2M),
-        ("MMIO", mmio, mmio_end, Entry::ro_kernel_device(), PageSize::Page2M),
-    ];
+        let mut map = [
+            ("DTB", dtb_phys, edtb_phys, Entry::ro_kernel_data(), PageSize::Page4K),
+            ("Kernel Text", text_phys, etext_phys, Entry::ro_kernel_text(), PageSize::Page2M),
+            ("Kernel Data", etext_phys, erodata_phys, Entry::ro_kernel_data(), PageSize::Page2M),
+            ("Kernel BSS", erodata_phys, ebss_phys, Entry::rw_kernel_data(), PageSize::Page2M),
+            ("Kernel Heap", heap_phys, eheap_phys, Entry::rw_kernel_data(), PageSize::Page2M),
+            ("MMIO", mmio, mmio_end, Entry::ro_kernel_device(), PageSize::Page2M),
+        ];
+        map.sort_by_key(|a| a.1);
+        map
+    };
 
+    println!("Memory map:");
     for (name, start, end, flags, page_size) in custom_map.iter() {
         let mapped_range = kpage_table
             .map_phys_range(*start, *end, *flags, *page_size)
             .expect("init mapping failed");
         println!(
-            "Mapped {:16} {:#018x}-{:#018x} to {:#018x}-{:#018x} flags: {:?} page_size: {:?}",
+            "  {:14}{:#018x}-{:#018x} to {:#018x}-{:#018x} flags: {:?} page_size: {:?}",
             name,
             start.addr(),
             end.addr(),

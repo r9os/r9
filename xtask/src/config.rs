@@ -75,23 +75,25 @@ pub struct Configuration {
     pub link: Option<HashMap<String, String>>,
 }
 
-pub fn read_config(filename: String) -> Configuration {
-    let contents = match fs::read_to_string(filename.clone()) {
-        Ok(c) => c,
-        Err(_) => {
-            eprintln!("Could not read file `{filename}`");
-            exit(1);
-        }
-    };
-    let config: Configuration = match toml::from_str(&contents) {
-        Ok(d) => d,
-        Err(e) => {
-            eprintln!("TOML: Unable to load data from `{}`", filename);
-            eprintln!("{e}");
-            exit(1);
-        }
-    };
-    config
+impl Configuration {
+    pub fn load(filename: String) -> Self {
+        let contents = match fs::read_to_string(filename.clone()) {
+            Ok(c) => c,
+            Err(_) => {
+                eprintln!("Could not read file `{filename}`");
+                exit(1);
+            }
+        };
+        let config: Configuration = match toml::from_str(&contents) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("TOML: Unable to load data from `{}`", filename);
+                eprintln!("{e}");
+                exit(1);
+            }
+        };
+        config
+    }
 }
 
 /// task could be 'build', 'clippy'
