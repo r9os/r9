@@ -50,7 +50,7 @@ pub fn eearly_pagetables_addr() -> usize {
     unsafe { eearly_pagetables.as_ptr().addr() }
 }
 
-#[derive(Clone, Copy, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, PartialEq, PartialOrd, Eq, Ord)]
 #[repr(transparent)]
 pub struct PhysAddr(u64);
 

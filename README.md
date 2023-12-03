@@ -22,8 +22,7 @@ Right now, r9 is not self-hosting.
 
 ## Runtime Dependencies
 
-`cargo xtask dist`, which `cargo xtask qemu` and 
-`cargo xtask qemukvm` depend on, requires `llvm-objcopy`. 
+`cargo xtask dist`, which `cargo xtask qemu` depends on, requires `llvm-objcopy`. 
 This is expected to live in the rust toolchain path.  You can install by running:
 ```
 rustup component add llvm-tools
@@ -47,6 +46,7 @@ R9 can be run using qemu for the various supported architectures:
 |----|-----------|
 |aarch64|cargo xtask qemu --arch aarch64 --verbose|
 |x86-64|cargo xtask qemu --arch x86-64 --verbose|
+|x86-64 (with kvm)|cargo xtask qemu --arch x86-64 --kvm --verbose|
 |riscv|cargo xtask qemu --arch riscv64 --verbose|
 
 ## Running on Real Hardware™️
