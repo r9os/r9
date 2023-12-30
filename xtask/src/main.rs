@@ -1,10 +1,11 @@
 use crate::config::{generate_args, Configuration};
-use rustup_configurator::Triple;
 use std::{
     env, fmt,
     path::{Path, PathBuf},
     process::{self, Command},
+    str::FromStr,
 };
+use target_lexicon::Triple;
 
 mod config;
 
@@ -84,9 +85,23 @@ impl RustupState {
     /// Also caches the current toolchain.
     fn new() -> Self {
         Self {
-            installed_targets: rustup_configurator::installed().unwrap(),
+            installed_targets: Self::installed_rustup_targets().unwrap(),
             curr_toolchain: env::var("RUSTUP_TOOLCHAIN").unwrap(),
         }
+    }
+
+    /// Call `rustup target list --installed` to get all installed target triples
+    fn installed_rustup_targets() -> Result<Vec<Triple>> {
+        let output =
+            Command::new("rustup").arg("target").arg("list").arg("--installed").output()?;
+        if !output.status.success() {
+            return Err(String::from_utf8(output.stdout.clone())?.into());
+        }
+
+        Ok(String::from_utf8(output.stdout.clone())?
+            .lines()
+            .flat_map(|line| Triple::from_str(line))
+            .collect())
     }
 
     /// For the given arch, return a compatible toolchain triple that is
@@ -692,7 +707,7 @@ impl TestStep {
             }
             let status = annotated_status(&mut cmd)?;
             if !status.success() {
-                return Err("check failed".into());
+                return Err("test failed".into());
             }
         }
         Ok(())
