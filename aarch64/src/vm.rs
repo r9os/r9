@@ -2,7 +2,7 @@
 
 use crate::{
     kalloc,
-    kmem::{ebss_addr, eheap_addr, erodata_addr, etext_addr, heap_addr, text_addr, PhysAddr},
+    kmem::{ebss_addr, erodata_addr, etext_addr, text_addr, PhysAddr},
     registers::rpi_mmio,
 };
 use bitstruct::bitstruct;
@@ -240,6 +240,7 @@ pub fn va_index(va: usize, level: Level) -> usize {
     }
 }
 
+/// Returns a tuple of page table indices for the given virtual address
 #[cfg(test)]
 fn va_indices(va: usize) -> (usize, usize, usize, usize) {
     (
@@ -250,6 +251,8 @@ fn va_indices(va: usize) -> (usize, usize, usize, usize) {
     )
 }
 
+/// Return the virtual address for the page table at level `level` for the
+/// given virtual address, assuming the use of recursive page tables.
 fn recursive_table_addr(va: usize, level: Level) -> usize {
     let indices_mask = 0x0000_ffff_ffff_f000;
     let indices = va & indices_mask;
@@ -287,8 +290,12 @@ pub struct Table {
 }
 
 impl Table {
+    /// Return a mutable entry from the table based on the virtual address and
+    /// the level.  (It uses the level to extract the index from the correct
+    /// part of the virtual address).
     pub fn entry_mut(&mut self, level: Level, va: usize) -> Result<&mut Entry, PageTableError> {
-        Ok(&mut self.entries[va_index(va, level)])
+        let idx = va_index(va, level);
+        Ok(&mut self.entries[idx])
     }
 
     /// Return the next table in the walk.  If it doesn't exist, create it.
@@ -297,16 +304,12 @@ impl Table {
         let index = va_index(va, level);
         let mut entry = self.entries[index];
         if !entry.valid() {
-            // Create a new recursive page table.  (Note every recursive entry
-            // must have the 'accessed' flag set)  At this point the address
-            // doesn't need to be recursive because we just allocated it from
-            // a mapped area of memory.
+            // Create a new page table and write the entry into the parent table
             let table = Self::alloc_pagetable()?;
             entry =
                 Entry::rw_kernel_data().with_phys_addr(PhysAddr::from_ptr(table)).with_table(true);
             unsafe {
                 write_volatile(&mut self.entries[index], entry);
-                write_volatile(&mut table.entries[511], entry);
             }
         }
 
@@ -346,6 +349,7 @@ impl PageTable {
         // self for the duration of this method.  This allows us to work with
         // this hierarchy of pagetables even if it's not the current translation
         // table.  We *must* return it to its original state on exit.
+        // TODO Only do this if self != kernel_root()
         let old_recursive_entry = kernel_root().entries[511];
         let temp_recursive_entry =
             Entry::rw_kernel_data().with_phys_addr(PhysAddr::from_ptr(self)).with_table(true);
@@ -375,7 +379,7 @@ impl PageTable {
             write_volatile(dest_entry?, entry);
             // Return the recursive entry to its original state
             write_volatile(&mut kernel_root().entries[511], old_recursive_entry);
-            // TODO Need to invalidate the single cache entry
+            // TODO Need to invalidate the single cache entry (+ optionally the recursive entry)
             invalidate_all_tlb_entries();
         }
 
@@ -407,7 +411,7 @@ impl PageTable {
         startva.map(|startva| (startva, endva)).ok_or(PageTableError::PhysRangeIsZero)
     }
 
-    /// Recursively write out the table and all its children
+    /// Recursively write out all the tables and all its children
     pub fn print_recursive_tables(&self) {
         println!("Root va:{:p}", self);
         self.print_table_at_level(Level::Level0, 0xffff_ffff_ffff_f000);
@@ -479,8 +483,6 @@ pub unsafe fn init(kpage_table: &mut PageTable, dtb_phys: PhysAddr, edtb_phys: P
         let etext_phys = PhysAddr::from_virt(etext_addr());
         let erodata_phys = PhysAddr::from_virt(erodata_addr());
         let ebss_phys = PhysAddr::from_virt(ebss_addr());
-        let heap_phys = PhysAddr::from_virt(heap_addr());
-        let eheap_phys = PhysAddr::from_virt(eheap_addr());
 
         let mmio = rpi_mmio().expect("mmio base detect failed");
         let mmio_end = PhysAddr::from(mmio + (2 * PAGE_SIZE_2M as u64));
@@ -490,7 +492,6 @@ pub unsafe fn init(kpage_table: &mut PageTable, dtb_phys: PhysAddr, edtb_phys: P
             ("Kernel Text", text_phys, etext_phys, Entry::ro_kernel_text(), PageSize::Page2M),
             ("Kernel Data", etext_phys, erodata_phys, Entry::ro_kernel_data(), PageSize::Page2M),
             ("Kernel BSS", erodata_phys, ebss_phys, Entry::rw_kernel_data(), PageSize::Page2M),
-            ("Kernel Heap", heap_phys, eheap_phys, Entry::rw_kernel_data(), PageSize::Page2M),
             ("MMIO", mmio, mmio_end, Entry::ro_kernel_device(), PageSize::Page2M),
         ];
         map.sort_by_key(|a| a.1);
@@ -529,6 +530,7 @@ fn ttbr1_el1() -> u64 {
     0
 }
 
+// TODO this should just call invalidate_all_tlb_entries afterwards?
 #[allow(unused_variables)]
 pub unsafe fn switch(kpage_table: &PageTable) {
     #[cfg(not(test))]
@@ -537,7 +539,7 @@ pub unsafe fn switch(kpage_table: &PageTable) {
         // https://forum.osdev.org/viewtopic.php?t=36412&p=303237
         core::arch::asm!(
             "msr ttbr1_el1, {pt_phys}",
-            "tlbi vmalle1", // invalidate all TLB entries
+            "tlbi vmalle1is", // invalidate all TLB entries
             "dsb ish",      // ensure write has completed
             "isb",          // synchronize context and ensure that no instructions
                             // are fetched using the old translation
@@ -551,8 +553,8 @@ pub unsafe fn invalidate_all_tlb_entries() {
     unsafe {
         // https://forum.osdev.org/viewtopic.php?t=36412&p=303237
         core::arch::asm!(
-            "tlbi vmalle1", // invalidate all TLB entries
-            "dsb ish",      // ensure write has completed
+            "tlbi vmalle1is", // invalidate all TLB entries
+            "dsb ish",        // ensure write has completed
             "isb"
         ); // synchronize context and ensure that no instructions
            // are fetched using the old translation

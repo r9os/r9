@@ -635,7 +635,7 @@ dnr:	wfe
 .balign 4096
 kernelpt4:
 	.space	(256*8)
-	.quad	(kernelpt3 - KZERO) + (PT_PAGE)		// [256] (for kernel + mmio)
+	.quad	(kernelpt3 - KZERO) + (PT_AF|PT_PAGE)	// [256] (for kernel + mmio)
 	.space	(254*8)
 	.quad	(kernelpt4 - KZERO) + (PT_AF|PT_PAGE)	// [511] (recursive entry)
 
@@ -643,31 +643,27 @@ kernelpt4:
 kernelpt3:
  	.quad	(0*2*GiB) + (PT_BLOCK|PT_AF|PT_AP_KERNEL_RW|PT_ISH|PT_UXN|PT_MAIR_NORMAL)	// [0] (for kernel)
 	.space	(2*8)
-	.quad	(kernelpt2 - KZERO) + (PT_PAGE)		// [3] (for mmio)
-	.space	(507*8)
-	.quad	(kernelpt3 - KZERO) + (PT_AF|PT_PAGE)	// [511] (recursive entry)
+	.quad	(kernelpt2 - KZERO) + (PT_AF|PT_PAGE)	// [3] (for mmio)
+	.space	(508*8)
 
 .balign 4096
 kernelpt2:
 	.space	(496*8)
  	.quad	(MMIO_BASE_RPI4) + (PT_BLOCK|PT_AF|PT_AP_KERNEL_RW|PT_ISH|PT_UXN|PT_PXN|PT_MAIR_DEVICE)		// [496] (for mmio)
  	.quad	(MMIO_BASE_RPI4 + GPIO) + (PT_BLOCK|PT_AF|PT_AP_KERNEL_RW|PT_ISH|PT_UXN|PT_PXN|PT_MAIR_DEVICE)	// [497] (for mmio)
-	.space	(13*8)
-	.quad	(kernelpt2 - KZERO) + (PT_AF|PT_PAGE)	// [511] (recursive entry)
+	.space	(14*8)
 
 // Early page tables for identity mapping the kernel physical addresses.
 // Once we've jumped to the higher half, this will no longer be used.
 .balign 4096
 physicalpt4:
-	.quad	(physicalpt3 - KZERO) + (PT_PAGE)	// [0] (for kernel)
-	.space	(510*8)
-	.quad	(physicalpt4 - KZERO) + (PT_AF|PT_PAGE)	// [511] (recursive entry)
+	.quad	(physicalpt3 - KZERO) + (PT_AF|PT_PAGE)	// [0] (for kernel)
+	.space	(511*8)
 
 .balign 4096
 physicalpt3:
  	.quad	(0*2*GiB) + (PT_BLOCK|PT_AF|PT_AP_KERNEL_RW|PT_ISH|PT_UXN|PT_MAIR_NORMAL)	// [0] (for kernel)
-	.space	(510*8)
-	.quad	(physicalpt3 - KZERO) + (PT_AF|PT_PAGE)	// [511] (recursive entry)
+	.space	(511*8)
 
 .bss
 .balign	4096
