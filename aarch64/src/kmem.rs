@@ -14,8 +14,6 @@ extern "C" {
     static ebss: [u64; 0];
     static early_pagetables: [u64; 0];
     static eearly_pagetables: [u64; 0];
-    static heap: [u64; 0];
-    static eheap: [u64; 0];
 }
 
 pub fn text_addr() -> usize {
@@ -32,14 +30,6 @@ pub fn erodata_addr() -> usize {
 
 pub fn ebss_addr() -> usize {
     unsafe { ebss.as_ptr().addr() }
-}
-
-pub fn heap_addr() -> usize {
-    unsafe { heap.as_ptr().addr() }
-}
-
-pub fn eheap_addr() -> usize {
-    unsafe { eheap.as_ptr().addr() }
 }
 
 pub fn early_pagetables_addr() -> usize {
