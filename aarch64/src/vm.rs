@@ -18,7 +18,7 @@ pub const PAGE_SIZE_2M: usize = 2 * 1024 * 1024;
 pub const PAGE_SIZE_1G: usize = 1 * 1024 * 1024 * 1024;
 
 #[allow(dead_code)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PageSize {
     Page4K,
     Page2M,
@@ -91,7 +91,7 @@ bitstruct! {
     #[repr(transparent)]
     pub struct Entry(u64) {
         valid: bool = 0;
-        table: bool = 1;
+        page_or_table: bool = 1;
         mair_index: Mair = 2..5;
         non_secure: bool = 5;
         access_permission: AccessPermission = 6..8;
@@ -163,6 +163,10 @@ impl Entry {
     fn virt_page_addr(self) -> usize {
         self.phys_page_addr().to_virt()
     }
+
+    fn table(self, level: Level) -> bool {
+        self.page_or_table() && level != Level::Level3
+    }
 }
 
 impl fmt::Debug for Entry {
@@ -173,10 +177,10 @@ impl fmt::Debug for Entry {
         } else {
             write!(f, " Invalid")?;
         }
-        if self.table() {
-            write!(f, " Table")?;
+        if self.page_or_table() {
+            write!(f, " Page/Table")?;
         } else {
-            write!(f, " Page")?;
+            write!(f, " Block")?;
         }
         write!(f, " {:?}", self.mair_index())?;
         if self.non_secure() {
@@ -306,14 +310,15 @@ impl Table {
         if !entry.valid() {
             // Create a new page table and write the entry into the parent table
             let table = Self::alloc_pagetable()?;
-            entry =
-                Entry::rw_kernel_data().with_phys_addr(PhysAddr::from_ptr(table)).with_table(true);
+            entry = Entry::rw_kernel_data()
+                .with_phys_addr(PhysAddr::from_ptr(table))
+                .with_page_or_table(true);
             unsafe {
                 write_volatile(&mut self.entries[index], entry);
             }
         }
 
-        if !entry.table() {
+        if !entry.table(level) {
             return Err(PageTableError::EntryIsNotTable);
         }
 
@@ -351,8 +356,9 @@ impl PageTable {
         // table.  We *must* return it to its original state on exit.
         // TODO Only do this if self != kernel_root()
         let old_recursive_entry = kernel_root().entries[511];
-        let temp_recursive_entry =
-            Entry::rw_kernel_data().with_phys_addr(PhysAddr::from_ptr(self)).with_table(true);
+        let temp_recursive_entry = Entry::rw_kernel_data()
+            .with_phys_addr(PhysAddr::from_ptr(self))
+            .with_page_or_table(true);
 
         unsafe {
             write_volatile(&mut kernel_root().entries[511], temp_recursive_entry);
@@ -374,6 +380,10 @@ impl PageTable {
                 self.next_mut(Level::Level0, va).and_then(|t1| t1.entry_mut(Level::Level1, va))
             }
         };
+
+        // Entries at level 3 should have the page flag set
+        let entry =
+            if page_size == PageSize::Page4K { entry.with_page_or_table(true) } else { entry };
 
         unsafe {
             write_volatile(dest_entry?, entry);
@@ -423,10 +433,10 @@ impl PageTable {
         println!("{:indent$}Table {:?} va:{:p}", "", level, self);
         for (i, &pte) in self.entries.iter().enumerate() {
             if pte.valid() {
-                print_pte(indent, i, pte);
+                print_pte(indent, i, level, pte);
 
                 // Recurse into child table (unless it's the recursive index)
-                if i != 511 && pte.table() {
+                if i != 511 && pte.table(level) {
                     let next_nevel = level.next().unwrap();
                     let child_va = (table_va << 9) | (i << 12);
                     let child_table = unsafe { &*(child_va as *const PageTable) };
@@ -444,8 +454,8 @@ impl fmt::Debug for PageTable {
 }
 
 /// Helper to print out PTE as part of a table
-fn print_pte(indent: usize, i: usize, pte: Entry) {
-    if pte.table() {
+fn print_pte(indent: usize, i: usize, level: Level, pte: Entry) {
+    if pte.table(level) {
         println!("{:indent$}[{:03}] Table {:?} (pte:{:#016x})", "", i, pte, pte.0,);
     } else {
         println!(
@@ -470,7 +480,7 @@ pub unsafe fn init(kpage_table: &mut PageTable, dtb_phys: PhysAddr, edtb_phys: P
     unsafe {
         let entry = Entry::rw_kernel_data()
             .with_phys_addr(PhysAddr::from_ptr(kpage_table))
-            .with_table(true);
+            .with_page_or_table(true);
         write_volatile(&mut kpage_table.entries[511], entry);
     }
 
