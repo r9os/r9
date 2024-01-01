@@ -21,7 +21,7 @@ mod uartmini;
 mod uartpl011;
 mod vm;
 
-use crate::kmem::PhysAddr;
+use crate::kmem::{PhysAddr, PhysRange};
 use crate::vm::kernel_root;
 use core::ffi::c_void;
 use port::fdt::DeviceTree;
@@ -99,12 +99,14 @@ fn print_board_info() {
     println!("  Firmware Revision: {fw_revision:#010x}");
 }
 
+/// dtb_va is the virtual address of the DTB structure.  The physical address is
+/// assumed to be dtb_va-KZERO.
 #[no_mangle]
-pub extern "C" fn main9(dtb_ptr: usize) {
+pub extern "C" fn main9(dtb_va: usize) {
     trap::init();
 
     // Parse the DTB before we set up memory so we can correctly map it
-    let dt = unsafe { DeviceTree::from_usize(dtb_ptr).unwrap() };
+    let dt = unsafe { DeviceTree::from_usize(dtb_va).unwrap() };
 
     // Set up uart so we can log as early as possible
     mailbox::init(&dt);
@@ -112,16 +114,15 @@ pub extern "C" fn main9(dtb_ptr: usize) {
 
     println!();
     println!("r9 from the Internet");
-    println!("DTB found at: {:#x}", dtb_ptr);
+    println!("DTB found at: {:#x}", dtb_va);
     println!("midr_el1: {:?}", registers::MidrEl1::read());
 
     // Map address space accurately using rust VM code to manage page tables
     unsafe {
         kalloc::free_pages(kmem::early_pages());
 
-        let dtb_phys = PhysAddr::from_virt(dtb_ptr as usize);
-        let edtb_phys = dtb_phys + dt.size() as u64;
-        vm::init(&mut KPGTBL, dtb_phys, edtb_phys);
+        let dtb_range = PhysRange::with_len(PhysAddr::from_virt(dtb_va).addr(), dt.size());
+        vm::init(&dt, &mut KPGTBL, dtb_range);
         vm::switch(&KPGTBL);
     }
 

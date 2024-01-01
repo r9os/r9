@@ -1,11 +1,10 @@
 // Racy to start.
 
-use crate::registers::rpi_mmio;
+use crate::param::KZERO;
 use crate::uartmini::MiniUart;
 use core::mem::MaybeUninit;
 use port::devcons::Console;
 use port::fdt::DeviceTree;
-use port::mem::VirtRange;
 
 // The aarch64 devcons implementation is focussed on Raspberry Pi 3, 4 for now.
 
@@ -32,16 +31,10 @@ use port::mem::VirtRange;
 //     https://wiki.osdev.org/Detecting_Raspberry_Pi_Board
 // - Break out mailbox, gpio code
 
-pub fn init(_dt: &DeviceTree) {
+pub fn init(dt: &DeviceTree) {
     Console::new(|| {
-        let mmio = rpi_mmio().expect("mmio base detect failed").to_virt();
-        let gpio_range = VirtRange::with_len(mmio + 0x20_0000, 0xb4);
-        let aux_range = VirtRange::with_len(mmio + 0x21_5000, 0x8);
-        let miniuart_range = VirtRange::with_len(mmio + 0x21_5040, 0x40);
-
-        let uart = MiniUart { gpio_range, aux_range, miniuart_range };
-        //let uart = MiniUart::new(dt);
-        // uart.init();
+        let uart = MiniUart::new(dt, KZERO);
+        uart.init();
 
         static mut UART: MaybeUninit<MiniUart> = MaybeUninit::uninit();
         unsafe {

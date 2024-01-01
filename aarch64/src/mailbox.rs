@@ -1,5 +1,5 @@
 use crate::io::{read_reg, write_reg};
-use crate::registers::rpi_mmio;
+use crate::param::KZERO;
 use core::mem;
 use core::mem::MaybeUninit;
 use port::fdt::DeviceTree;
@@ -18,17 +18,13 @@ static MAILBOX: Lock<Option<&'static mut Mailbox>> = Lock::new("mailbox", None);
 /// Mailbox init.  Mainly initialises a lock to ensure only one mailbox request
 /// can be made at a time.  We have no heap at this point, so creating a mailbox
 /// that can be initialised based off the devicetree is rather convoluted.
-pub fn init(_dt: &DeviceTree) {
+pub fn init(dt: &DeviceTree) {
     static mut NODE: LockNode = LockNode::new();
     let mut mailbox = MAILBOX.lock(unsafe { &NODE });
     *mailbox = Some({
         static mut MAYBE_MAILBOX: MaybeUninit<Mailbox> = MaybeUninit::uninit();
         unsafe {
-            let mmio = rpi_mmio().expect("mmio base detect failed").to_virt();
-            let mbox_range = VirtRange::with_len(mmio + 0xb880, 0x40);
-
-            MAYBE_MAILBOX.write(Mailbox { mbox_range });
-            //MAYBE_MAILBOX.write(Mailbox::new(dt, KZERO));
+            MAYBE_MAILBOX.write(Mailbox::new(dt, KZERO));
             MAYBE_MAILBOX.assume_init_mut()
         }
     });
@@ -40,9 +36,8 @@ struct Mailbox {
     pub mbox_range: VirtRange,
 }
 
-#[allow(dead_code)]
 impl Mailbox {
-    fn new(dt: &DeviceTree, mmio_virt_offset: u64) -> Mailbox {
+    fn new(dt: &DeviceTree, mmio_virt_offset: usize) -> Mailbox {
         Mailbox {
             mbox_range: VirtRange::from(
                 &dt.find_compatible("brcm,bcm2835-mbox")
@@ -50,7 +45,7 @@ impl Mailbox {
                     .and_then(|uart| dt.property_translated_reg_iter(uart).next())
                     .and_then(|reg| reg.regblock())
                     .unwrap()
-                    .with_offset(mmio_virt_offset),
+                    .with_offset(mmio_virt_offset as u64),
             ),
         }
     }

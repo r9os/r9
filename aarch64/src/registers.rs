@@ -1,6 +1,6 @@
 #![allow(non_upper_case_globals)]
 
-use crate::kmem::PhysAddr;
+use crate::{kmem::PhysRange, vm::PAGE_SIZE_2M};
 use bitstruct::bitstruct;
 use core::fmt;
 use num_enum::TryFromPrimitive;
@@ -90,18 +90,19 @@ pub enum PartNum {
 }
 
 impl PartNum {
-    /// Return the physical MMIO base address for the Raspberry Pi MMIO
-    pub fn mmio(&self) -> Option<PhysAddr> {
+    /// Return the physical MMIO base range for the Raspberry Pi MMIO
+    pub fn mmio(&self) -> Option<PhysRange> {
+        let len = 2 * PAGE_SIZE_2M;
         match self {
-            Self::RaspberryPi1 => Some(PhysAddr::new(0x20000000)),
-            Self::RaspberryPi2 | Self::RaspberryPi3 => Some(PhysAddr::new(0x3f000000)),
-            Self::RaspberryPi4 => Some(PhysAddr::new(0xfe000000)),
+            Self::RaspberryPi1 => Some(PhysRange::with_len(0x20000000, len)),
+            Self::RaspberryPi2 | Self::RaspberryPi3 => Some(PhysRange::with_len(0x3f000000, len)),
+            Self::RaspberryPi4 => Some(PhysRange::with_len(0xfe000000, len)),
             Self::Unknown => None,
         }
     }
 }
 
-pub fn rpi_mmio() -> Option<PhysAddr> {
+pub fn rpi_mmio() -> Option<PhysRange> {
     MidrEl1::read().partnum_enum().ok().and_then(|p| p.mmio())
 }
 
