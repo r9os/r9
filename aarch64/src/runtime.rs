@@ -16,7 +16,7 @@ use port::mem::VirtRange;
 //  - Add support for raspi4
 #[panic_handler]
 pub fn panic(info: &PanicInfo) -> ! {
-    let mmio = rpi_mmio().expect("mmio base detect failed").to_virt();
+    let mmio = rpi_mmio().expect("mmio base detect failed").start().to_virt();
 
     let gpio_range = VirtRange::with_len(mmio + 0x200000, 0xb4);
     let aux_range = VirtRange::with_len(mmio + 0x215000, 0x8);

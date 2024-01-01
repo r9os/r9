@@ -1,3 +1,5 @@
+use port::fdt::RegBlock;
+
 use crate::{param::KZERO, vm::Page4K};
 use core::{
     fmt,
@@ -76,16 +78,6 @@ impl PhysAddr {
     pub const fn round_down(&self, step: u64) -> PhysAddr {
         PhysAddr(self.0 & !(step - 1))
     }
-
-    pub fn step_by_rounded(
-        startpa: PhysAddr,
-        endpa: PhysAddr,
-        step_size: usize,
-    ) -> StepBy<Range<Self>> {
-        let startpa = startpa.round_down(step_size as u64);
-        let endpa = endpa.round_up(step_size as u64);
-        (startpa..endpa).step_by(step_size)
-    }
 }
 
 impl ops::Add<u64> for PhysAddr {
@@ -125,6 +117,46 @@ impl fmt::Debug for PhysAddr {
     }
 }
 
+pub struct PhysRange(pub Range<PhysAddr>);
+
+impl PhysRange {
+    pub fn with_len(start: u64, len: usize) -> Self {
+        Self(PhysAddr(start)..PhysAddr(start + len as u64))
+    }
+
+    #[allow(dead_code)]
+    pub fn offset_addr(&self, offset: u64) -> Option<PhysAddr> {
+        let addr = self.0.start + offset;
+        if self.0.contains(&addr) {
+            Some(addr)
+        } else {
+            None
+        }
+    }
+
+    pub fn start(&self) -> PhysAddr {
+        self.0.start
+    }
+
+    pub fn end(&self) -> PhysAddr {
+        self.0.end
+    }
+
+    pub fn step_by_rounded(&self, step_size: usize) -> StepBy<Range<PhysAddr>> {
+        let startpa = self.start().round_down(step_size as u64);
+        let endpa = self.end().round_up(step_size as u64);
+        (startpa..endpa).step_by(step_size)
+    }
+}
+
+impl From<&RegBlock> for PhysRange {
+    fn from(r: &RegBlock) -> Self {
+        let start = PhysAddr(r.addr);
+        let end = start + r.len.unwrap_or(0);
+        PhysRange(start..end)
+    }
+}
+
 unsafe fn page_slice_mut<'a>(pstart: *mut Page4K, pend: *mut Page4K) -> &'a mut [Page4K] {
     let ustart = pstart.addr();
     let uend = pend.addr();
@@ -150,28 +182,25 @@ mod tests {
 
     #[test]
     fn physaddr_step() {
-        let startpa = PhysAddr::new(4096);
-        let endpa = PhysAddr::new(4096 * 3);
-        let pas =
-            PhysAddr::step_by_rounded(startpa, endpa, vm::PAGE_SIZE_4K).collect::<Vec<PhysAddr>>();
+        let range = PhysRange(PhysAddr::new(4096)..PhysAddr::new(4096 * 3));
+        let pas = range.step_by_rounded(vm::PAGE_SIZE_4K).collect::<Vec<PhysAddr>>();
         assert_eq!(pas, [PhysAddr::new(4096), PhysAddr::new(4096 * 2)]);
     }
 
     #[test]
     fn physaddr_step_rounds_up_and_down() {
-        let startpa = PhysAddr::new(9000); // Should round down to 8192
-        let endpa = PhysAddr::new(5000 * 3); // Should round up to 16384
-        let pas =
-            PhysAddr::step_by_rounded(startpa, endpa, vm::PAGE_SIZE_4K).collect::<Vec<PhysAddr>>();
+        // Start should round down to 8192
+        // End should round up to 16384
+        let range = PhysRange(PhysAddr::new(9000)..PhysAddr::new(5000 * 3));
+        let pas = range.step_by_rounded(vm::PAGE_SIZE_4K).collect::<Vec<PhysAddr>>();
         assert_eq!(pas, [PhysAddr::new(4096 * 2), PhysAddr::new(4096 * 3)]);
     }
 
     #[test]
     fn physaddr_step_2m() {
-        let startpa = PhysAddr::new(0x3f000000);
-        let endpa = PhysAddr::new(0x3f000000 + 4 * 1024 * 1024);
-        let pas =
-            PhysAddr::step_by_rounded(startpa, endpa, vm::PAGE_SIZE_2M).collect::<Vec<PhysAddr>>();
+        let range =
+            PhysRange(PhysAddr::new(0x3f000000)..PhysAddr::new(0x3f000000 + 4 * 1024 * 1024));
+        let pas = range.step_by_rounded(vm::PAGE_SIZE_2M).collect::<Vec<PhysAddr>>();
         assert_eq!(pas, [PhysAddr::new(0x3f000000), PhysAddr::new(0x3f000000 + 2 * 1024 * 1024)]);
     }
 }

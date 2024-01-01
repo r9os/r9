@@ -20,7 +20,7 @@ pub struct MiniUart {
 
 #[allow(dead_code)]
 impl MiniUart {
-    pub fn new(dt: &DeviceTree, mmio_virt_offset: u64) -> MiniUart {
+    pub fn new(dt: &DeviceTree, mmio_virt_offset: usize) -> MiniUart {
         // TODO use aliases?
         let gpio_range = VirtRange::from(
             &dt.find_compatible("brcm,bcm2835-gpio")
@@ -28,7 +28,7 @@ impl MiniUart {
                 .and_then(|uart| dt.property_translated_reg_iter(uart).next())
                 .and_then(|reg| reg.regblock())
                 .unwrap()
-                .with_offset(mmio_virt_offset),
+                .with_offset(mmio_virt_offset as u64),
         );
 
         // Find a compatible aux
@@ -38,7 +38,7 @@ impl MiniUart {
                 .and_then(|uart| dt.property_translated_reg_iter(uart).next())
                 .and_then(|reg| reg.regblock())
                 .unwrap()
-                .with_offset(mmio_virt_offset),
+                .with_offset(mmio_virt_offset as u64),
         );
 
         // Find a compatible miniuart
@@ -48,7 +48,7 @@ impl MiniUart {
                 .and_then(|uart| dt.property_translated_reg_iter(uart).next())
                 .and_then(|reg| reg.regblock())
                 .unwrap()
-                .with_offset(mmio_virt_offset),
+                .with_offset(mmio_virt_offset as u64),
         );
 
         MiniUart { gpio_range, aux_range, miniuart_range }

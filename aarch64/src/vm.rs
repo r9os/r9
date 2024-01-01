@@ -2,13 +2,14 @@
 
 use crate::{
     kalloc,
-    kmem::{ebss_addr, erodata_addr, etext_addr, text_addr, PhysAddr},
+    kmem::{ebss_addr, erodata_addr, etext_addr, text_addr, PhysAddr, PhysRange},
     registers::rpi_mmio,
 };
 use bitstruct::bitstruct;
 use core::fmt;
 use core::ptr::write_volatile;
 use num_enum::{FromPrimitive, IntoPrimitive};
+use port::fdt::DeviceTree;
 
 #[cfg(not(test))]
 use port::println;
@@ -405,14 +406,13 @@ impl PageTable {
     /// fails.
     pub fn map_phys_range(
         &mut self,
-        start: PhysAddr,
-        end: PhysAddr,
+        range: &PhysRange,
         entry: Entry,
         page_size: PageSize,
     ) -> Result<(usize, usize), PageTableError> {
         let mut startva = None;
         let mut endva = 0;
-        for pa in PhysAddr::step_by_rounded(start, end, page_size.size()) {
+        for pa in range.step_by_rounded(page_size.size()) {
             let va = pa.to_virt();
             self.map_to(entry.with_phys_addr(pa), va, page_size)?;
             startva.get_or_insert(va);
@@ -469,7 +469,7 @@ fn print_pte(indent: usize, i: usize, level: Level, pte: Entry) {
     }
 }
 
-pub unsafe fn init(kpage_table: &mut PageTable, dtb_phys: PhysAddr, edtb_phys: PhysAddr) {
+pub unsafe fn init(dt: &DeviceTree, kpage_table: &mut PageTable, dtb_range: PhysRange) {
     // We use recursive page tables, but we have to be careful in the init call,
     // since the kpage_table is not currently pointed to by ttbr1_el1.  Any
     // recursive addressing of (511, 511, 511, 511) always points to the
@@ -489,35 +489,39 @@ pub unsafe fn init(kpage_table: &mut PageTable, dtb_phys: PhysAddr, edtb_phys: P
     // catch null pointer dereferences in unsafe code: defense
     // in depth!
     let custom_map = {
-        let text_phys = PhysAddr::from_virt(text_addr());
-        let etext_phys = PhysAddr::from_virt(etext_addr());
-        let erodata_phys = PhysAddr::from_virt(erodata_addr());
-        let ebss_phys = PhysAddr::from_virt(ebss_addr());
+        let text_range =
+            PhysRange(PhysAddr::from_virt(text_addr())..PhysAddr::from_virt(etext_addr()));
+        let data_range = PhysRange::with_len(
+            PhysAddr::from_virt(etext_addr()).addr(),
+            erodata_addr() - etext_addr(),
+        );
+        let bss_range = PhysRange::with_len(
+            PhysAddr::from_virt(erodata_addr()).addr(),
+            ebss_addr() - erodata_addr(),
+        );
 
-        let mmio = rpi_mmio().expect("mmio base detect failed");
-        let mmio_end = PhysAddr::from(mmio + (2 * PAGE_SIZE_2M as u64));
+        let mmio_range = rpi_mmio().expect("mmio base detect failed");
 
         let mut map = [
-            ("DTB", dtb_phys, edtb_phys, Entry::ro_kernel_data(), PageSize::Page4K),
-            ("Kernel Text", text_phys, etext_phys, Entry::ro_kernel_text(), PageSize::Page2M),
-            ("Kernel Data", etext_phys, erodata_phys, Entry::ro_kernel_data(), PageSize::Page2M),
-            ("Kernel BSS", erodata_phys, ebss_phys, Entry::rw_kernel_data(), PageSize::Page2M),
-            ("MMIO", mmio, mmio_end, Entry::ro_kernel_device(), PageSize::Page2M),
+            ("DTB", dtb_range, Entry::ro_kernel_data(), PageSize::Page4K),
+            ("Kernel Text", text_range, Entry::ro_kernel_text(), PageSize::Page2M),
+            ("Kernel Data", data_range, Entry::ro_kernel_data(), PageSize::Page2M),
+            ("Kernel BSS", bss_range, Entry::rw_kernel_data(), PageSize::Page2M),
+            ("MMIO", mmio_range, Entry::ro_kernel_device(), PageSize::Page2M),
         ];
-        map.sort_by_key(|a| a.1);
+        map.sort_by_key(|a| a.1.start());
         map
     };
 
     println!("Memory map:");
-    for (name, start, end, flags, page_size) in custom_map.iter() {
-        let mapped_range = kpage_table
-            .map_phys_range(*start, *end, *flags, *page_size)
-            .expect("init mapping failed");
+    for (name, range, flags, page_size) in custom_map.iter() {
+        let mapped_range =
+            kpage_table.map_phys_range(range, *flags, *page_size).expect("init mapping failed");
         println!(
             "  {:14}{:#018x}-{:#018x} to {:#018x}-{:#018x} flags: {:?} page_size: {:?}",
             name,
-            start.addr(),
-            end.addr(),
+            range.start().addr(),
+            range.end().addr(),
             mapped_range.0,
             mapped_range.1,
             flags,
