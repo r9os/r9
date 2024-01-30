@@ -98,10 +98,7 @@ impl RustupState {
             return Err(String::from_utf8(output.stdout.clone())?.into());
         }
 
-        Ok(String::from_utf8(output.stdout.clone())?
-            .lines()
-            .flat_map(|line| Triple::from_str(line))
-            .collect())
+        Ok(String::from_utf8(output.stdout.clone())?.lines().flat_map(Triple::from_str).collect())
     }
 
     /// For the given arch, return a compatible toolchain triple that is
@@ -506,7 +503,7 @@ impl QemuStep {
                 //cmd.arg("-curses");
                 // cmd.arg("-bios").arg("none");
                 let dump_dtb = &self.dump_dtb;
-                if dump_dtb != "" {
+                if !dump_dtb.is_empty() {
                     cmd.arg("-machine").arg(format!("virt,dumpdtb={dump_dtb}"));
                 } else {
                     cmd.arg("-machine").arg("virt");

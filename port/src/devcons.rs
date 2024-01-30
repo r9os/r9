@@ -32,8 +32,8 @@ impl Console {
     where
         F: FnOnce() -> &'static mut dyn Uart,
     {
-        static mut NODE: LockNode = LockNode::new();
-        let mut cons = CONS.lock(unsafe { &NODE });
+        let node = LockNode::new();
+        let mut cons = CONS.lock(&node);
         *cons = Some(uart_fn());
         Self
     }
@@ -41,8 +41,8 @@ impl Console {
     pub fn putstr(&mut self, s: &str) {
         // XXX: Just for testing.
 
-        static mut NODE: LockNode = LockNode::new();
-        let mut uart_guard = CONS.lock(unsafe { &NODE });
+        let node = LockNode::new();
+        let mut uart_guard = CONS.lock(&node);
         let uart = uart_guard.as_deref_mut().unwrap();
         for b in s.bytes() {
             putb(uart, b);

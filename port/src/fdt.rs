@@ -68,6 +68,9 @@ impl<'a> DeviceTree<'a> {
     }
 
     /// Given a pointer to the dtb as a usize, return a DeviceTree struct.
+    ///
+    /// # Safety
+    /// The caller must ensure that `ptr` is a valid virtual address.
     pub unsafe fn from_usize(ptr: usize) -> Result<Self> {
         let u8ptr = ptr as *const mem::MaybeUninit<u8>;
 
@@ -79,8 +82,7 @@ impl<'a> DeviceTree<'a> {
         let len = dtb_for_header.header.totalsize as usize;
 
         // Extract the buffer for real
-        let dtb_buf: &[mem::MaybeUninit<u8>] =
-            unsafe { core::slice::from_raw_parts(u8ptr as *const MaybeUninit<u8>, len) };
+        let dtb_buf: &[mem::MaybeUninit<u8>] = unsafe { core::slice::from_raw_parts(u8ptr, len) };
         FdtHeader::new(dtb_buf, false).map(|header| Self { data: dtb_buf, header })
     }
 
@@ -158,7 +160,7 @@ impl<'a> DeviceTree<'a> {
 
     pub fn property_value_as_u32(&self, prop: &Property) -> Option<u32> {
         let value_end = prop.value_start + prop.value_len;
-        self.structs().get(prop.value_start..value_end).and_then(|bs| bytes_to_u32(bs))
+        self.structs().get(prop.value_start..value_end).and_then(bytes_to_u32)
     }
 
     pub fn property_value_as_u32_iter(&self, prop: &Property) -> impl Iterator<Item = u32> + '_ {
@@ -170,7 +172,7 @@ impl<'a> DeviceTree<'a> {
             }
             let (start, end) = (value_i, value_i + 4);
             value_i = end;
-            return self.structs().get(start..end).and_then(|bs| bytes_to_u32(bs));
+            return self.structs().get(start..end).and_then(bytes_to_u32);
         })
     }
 
@@ -191,7 +193,7 @@ impl<'a> DeviceTree<'a> {
         let bytes_fn = if num_cells == 1 { bytes_to_u32_as_u64 } else { bytes_to_u64 };
         let start = value_i;
         let end = value_i + (num_cells * 4);
-        self.structs().get(start..end).and_then(|bs| bytes_fn(bs))
+        self.structs().get(start..end).and_then(bytes_fn)
     }
 
     /// Return the reg values as u64 whether the size is 1 or 2 cells.
@@ -542,7 +544,7 @@ impl<'a> DeviceTree<'a> {
     }
 
     fn parse_token(structs: &[mem::MaybeUninit<u8>], i: usize) -> Option<FdtToken> {
-        let token = structs.get(i..).and_then(|bs| bytes_to_u32(bs));
+        let token = structs.get(i..).and_then(bytes_to_u32);
 
         match token {
             Some(0x1) => {
@@ -562,8 +564,8 @@ impl<'a> DeviceTree<'a> {
             }
             Some(0x2) => Some(FdtToken::EndNode(FdtTokenContext { start: i, total_len: 4 })),
             Some(0x3) => {
-                let len = structs.get((i + 4)..).and_then(|bs| bytes_to_u32(bs)).unwrap_or(0);
-                let nameoff = structs.get((i + 8)..).and_then(|bs| bytes_to_u32(bs)).unwrap_or(0);
+                let len = structs.get((i + 4)..).and_then(bytes_to_u32).unwrap_or(0);
+                let nameoff = structs.get((i + 8)..).and_then(bytes_to_u32).unwrap_or(0);
                 Some(FdtToken::Prop(FdtPropContext {
                     start: i,
                     name_start: nameoff as usize,

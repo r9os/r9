@@ -5,6 +5,8 @@ use bitflags::bitflags;
 use core::ptr::NonNull;
 use core::result::Result;
 
+pub struct Error {}
+
 pub struct Chan {
     _offset: u64,
     _devoffset: u64,
@@ -59,18 +61,18 @@ pub trait Dev {
     fn shutdown();
     fn attach(spec: &[u8]) -> Chan;
     fn walk(&self, c: &Chan, nc: &mut Chan, name: &[&[u8]]) -> Walkqid;
-    fn stat(&self, c: &Chan, sb: &mut [u8]) -> Result<(), ()>;
+    fn stat(&self, c: &Chan, sb: &mut [u8]) -> Result<(), Error>;
     fn open(&mut self, c: &Chan, mode: u32) -> Chan;
     fn create(&mut self, c: &mut Chan, name: &[u8], mode: Mode, perms: u32);
     fn close(&mut self, c: Chan);
-    fn read(&mut self, c: &mut Chan, buf: &mut [u8], offset: u64) -> Result<u64, ()>;
-    fn bread(&mut self, c: &mut Chan, bnum: u64, offset: u64) -> Result<Block, ()>;
-    fn write(&mut self, c: &mut Chan, buf: &[u8], offset: u64) -> Result<u64, ()>;
-    fn bwrite(&mut self, c: &mut Chan, block: &Block, offset: u64) -> Result<u64, ()>;
+    fn read(&mut self, c: &mut Chan, buf: &mut [u8], offset: u64) -> Result<u64, Error>;
+    fn bread(&mut self, c: &mut Chan, bnum: u64, offset: u64) -> Result<Block, Error>;
+    fn write(&mut self, c: &mut Chan, buf: &[u8], offset: u64) -> Result<u64, Error>;
+    fn bwrite(&mut self, c: &mut Chan, block: &Block, offset: u64) -> Result<u64, Error>;
     fn remove(&mut self, c: &mut Chan);
-    fn wstat(&mut self, c: &mut Chan, sb: &[u8]) -> Result<(), ()>;
+    fn wstat(&mut self, c: &mut Chan, sb: &[u8]) -> Result<(), Error>;
     fn power(&mut self, on: bool);
-    fn config(&mut self /* other args */) -> Result<(), ()>;
+    fn config(&mut self /* other args */) -> Result<(), Error>;
 }
 
 pub struct Block {

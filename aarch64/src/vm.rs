@@ -14,9 +14,9 @@ use port::fdt::DeviceTree;
 #[cfg(not(test))]
 use port::println;
 
-pub const PAGE_SIZE_4K: usize = 4 * 1024;
-pub const PAGE_SIZE_2M: usize = 2 * 1024 * 1024;
-pub const PAGE_SIZE_1G: usize = 1 * 1024 * 1024 * 1024;
+pub const PAGE_SIZE_4K: usize = 4 << 10;
+pub const PAGE_SIZE_2M: usize = 2 << 20;
+pub const PAGE_SIZE_1G: usize = 1 << 30;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -76,10 +76,10 @@ pub enum AccessPermission {
 #[repr(u8)]
 pub enum Shareable {
     #[num_enum(default)]
-    NonShareable = 0, // Non-shareable (single core)
-    Unpredictable = 1,  // Unpredicatable!
-    OuterShareable = 2, // Outer shareable (shared across CPUs, GPU)
-    InnerShareable = 3, // Inner shareable (shared across CPUs)
+    Non = 0, // Non-shareable (single core)
+    Unpredictable = 1, // Unpredicatable!
+    Outer = 2,         // Outer shareable (shared across CPUs, GPU)
+    Inner = 3,         // Inner shareable (shared across CPUs)
 }
 
 bitstruct! {
@@ -111,7 +111,7 @@ impl Entry {
 
     fn rw_kernel_data() -> Self {
         Entry(0)
-            .with_shareable(Shareable::InnerShareable)
+            .with_shareable(Shareable::Inner)
             .with_accessed(true)
             .with_uxn(true)
             .with_pxn(true)
@@ -122,7 +122,7 @@ impl Entry {
     fn ro_kernel_data() -> Self {
         Entry(0)
             .with_access_permission(AccessPermission::PrivRo)
-            .with_shareable(Shareable::InnerShareable)
+            .with_shareable(Shareable::Inner)
             .with_accessed(true)
             .with_uxn(true)
             .with_pxn(true)
@@ -133,7 +133,7 @@ impl Entry {
     fn ro_kernel_text() -> Self {
         Entry(0)
             .with_access_permission(AccessPermission::PrivRw)
-            .with_shareable(Shareable::InnerShareable)
+            .with_shareable(Shareable::Inner)
             .with_accessed(true)
             .with_uxn(true)
             .with_pxn(false)
@@ -144,7 +144,7 @@ impl Entry {
     fn ro_kernel_device() -> Self {
         Entry(0)
             .with_access_permission(AccessPermission::PrivRw)
-            .with_shareable(Shareable::InnerShareable)
+            .with_shareable(Shareable::Inner)
             .with_accessed(true)
             .with_uxn(true)
             .with_pxn(true)
@@ -162,7 +162,7 @@ impl Entry {
     }
 
     fn virt_page_addr(self) -> usize {
-        self.phys_page_addr().to_virt()
+        self.phys_page_addr().as_virt()
     }
 
     fn table(self, level: Level) -> bool {
@@ -394,7 +394,7 @@ impl PageTable {
             invalidate_all_tlb_entries();
         }
 
-        return Ok(());
+        Ok(())
     }
 
     /// Map the physical range using the requested page size.
@@ -413,7 +413,7 @@ impl PageTable {
         let mut startva = None;
         let mut endva = 0;
         for pa in range.step_by_rounded(page_size.size()) {
-            let va = pa.to_virt();
+            let va = pa.as_virt();
             self.map_to(entry.with_phys_addr(pa), va, page_size)?;
             startva.get_or_insert(va);
             endva = va + page_size.size();
@@ -469,7 +469,7 @@ fn print_pte(indent: usize, i: usize, level: Level, pte: Entry) {
     }
 }
 
-pub unsafe fn init(dt: &DeviceTree, kpage_table: &mut PageTable, dtb_range: PhysRange) {
+pub unsafe fn init(_dt: &DeviceTree, kpage_table: &mut PageTable, dtb_range: PhysRange) {
     // We use recursive page tables, but we have to be careful in the init call,
     // since the kpage_table is not currently pointed to by ttbr1_el1.  Any
     // recursive addressing of (511, 511, 511, 511) always points to the
@@ -577,7 +577,7 @@ pub unsafe fn invalidate_all_tlb_entries() {
 
 /// Return the root kernel page table
 pub fn kernel_root() -> &'static mut PageTable {
-    unsafe { &mut *PhysAddr::new(ttbr1_el1()).to_ptr_mut::<PageTable>() }
+    unsafe { &mut *PhysAddr::new(ttbr1_el1()).as_ptr_mut::<PageTable>() }
 }
 
 #[cfg(test)]
