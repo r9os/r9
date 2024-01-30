@@ -67,5 +67,7 @@ fn trap(frame: &mut TrapFrame) {
     // Just print out the frame and loop for now
     // TODO Make it a little prettier and more space efficient
     println!("{:#x?}", frame);
-    loop {}
+    loop {
+        core::hint::spin_loop();
+    }
 }

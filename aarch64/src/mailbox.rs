@@ -19,8 +19,8 @@ static MAILBOX: Lock<Option<&'static mut Mailbox>> = Lock::new("mailbox", None);
 /// can be made at a time.  We have no heap at this point, so creating a mailbox
 /// that can be initialised based off the devicetree is rather convoluted.
 pub fn init(dt: &DeviceTree) {
-    static mut NODE: LockNode = LockNode::new();
-    let mut mailbox = MAILBOX.lock(unsafe { &NODE });
+    let node = LockNode::new();
+    let mut mailbox = MAILBOX.lock(&node);
     *mailbox = Some({
         static mut MAYBE_MAILBOX: MaybeUninit<Mailbox> = MaybeUninit::uninit();
         unsafe {
@@ -124,8 +124,8 @@ where
     let size = mem::size_of::<Message<T, U>>() as u32;
     let req = Request::<Tag<T>> { size, code, tags: *tags };
     let mut msg = MessageWithTags { request: req };
-    static mut NODE: LockNode = LockNode::new();
-    let mut mailbox = MAILBOX.lock(unsafe { &NODE });
+    let node = LockNode::new();
+    let mut mailbox = MAILBOX.lock(&node);
     mailbox.as_deref_mut().unwrap().request(&mut msg);
     let res = unsafe { msg.response };
     res.tags.body

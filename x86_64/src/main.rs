@@ -1,7 +1,8 @@
 #![feature(alloc_error_handler)]
 #![feature(asm_const)]
 #![feature(naked_functions)]
-#![cfg_attr(not(any(test, feature = "cargo-clippy")), no_std)]
+#![feature(sync_unsafe_cell)]
+#![cfg_attr(not(any(test)), no_std)]
 #![cfg_attr(not(test), no_main)]
 #![allow(clippy::upper_case_acronyms)]
 #![forbid(unsafe_op_in_unsafe_fn)]
@@ -40,7 +41,7 @@ pub extern "C" fn main9() {
     println!("looping now");
     let mut ctx = Label::new();
     let mut thr = Label::new();
-    thr.pc = jumpback as u64;
+    thr.pc = jumpback as usize as u64;
     unsafe {
         thr.sp = &mut THRSTACK[1023] as *mut _ as u64;
         CTX = &mut ctx as *mut _ as u64;

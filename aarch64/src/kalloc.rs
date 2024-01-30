@@ -39,7 +39,7 @@ impl FreeList {
 
 pub unsafe fn free_pages(pages: &mut [Page4K]) {
     static mut NODE: LockNode = LockNode::new();
-    let mut lock = FREE_LIST.lock(unsafe { &NODE });
+    let mut lock = FREE_LIST.lock(unsafe { &*ptr::addr_of!(NODE) });
     let fl = &mut *lock;
     for page in pages.iter_mut() {
         fl.put(page);
@@ -48,7 +48,7 @@ pub unsafe fn free_pages(pages: &mut [Page4K]) {
 
 pub fn alloc() -> Result<&'static mut Page4K, Error> {
     static mut NODE: LockNode = LockNode::new();
-    let mut lock = FREE_LIST.lock(unsafe { &NODE });
+    let mut lock = FREE_LIST.lock(unsafe { &*ptr::addr_of!(NODE) });
     let fl = &mut *lock;
     fl.get()
 }

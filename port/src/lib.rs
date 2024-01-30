@@ -1,5 +1,5 @@
 #![allow(clippy::upper_case_acronyms)]
-#![cfg_attr(not(any(test, feature = "cargo-clippy")), no_std)]
+#![cfg_attr(not(any(test)), no_std)]
 #![feature(maybe_uninit_slice)]
 #![forbid(unsafe_op_in_unsafe_fn)]
 

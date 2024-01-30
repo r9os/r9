@@ -1,5 +1,6 @@
 #![allow(clippy::upper_case_acronyms)]
-#![cfg_attr(not(any(test, feature = "cargo-clippy")), no_std)]
+#![allow(internal_features)]
+#![cfg_attr(not(any(test)), no_std)]
 #![cfg_attr(not(test), no_main)]
 #![feature(alloc_error_handler)]
 #![feature(asm_const)]
@@ -24,6 +25,7 @@ mod vm;
 use crate::kmem::{PhysAddr, PhysRange};
 use crate::vm::kernel_root;
 use core::ffi::c_void;
+use core::ptr;
 use port::fdt::DeviceTree;
 use port::println;
 use vm::PageTable;
@@ -122,8 +124,8 @@ pub extern "C" fn main9(dtb_va: usize) {
         kalloc::free_pages(kmem::early_pages());
 
         let dtb_range = PhysRange::with_len(PhysAddr::from_virt(dtb_va).addr(), dt.size());
-        vm::init(&dt, &mut KPGTBL, dtb_range);
-        vm::switch(&KPGTBL);
+        vm::init(&dt, &mut *ptr::addr_of_mut!(KPGTBL), dtb_range);
+        vm::switch(&*ptr::addr_of!(KPGTBL));
     }
 
     print_binary_sections();

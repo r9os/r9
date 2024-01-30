@@ -55,7 +55,7 @@ impl PhysAddr {
         self.0
     }
 
-    pub const fn to_virt(&self) -> usize {
+    pub const fn as_virt(&self) -> usize {
         (self.0 as usize).wrapping_add(KZERO)
     }
 
@@ -67,8 +67,8 @@ impl PhysAddr {
         Self::from_virt(a.addr())
     }
 
-    pub const fn to_ptr_mut<T>(&self) -> *mut T {
-        self.to_virt() as *mut T
+    pub const fn as_ptr_mut<T>(&self) -> *mut T {
+        self.as_virt() as *mut T
     }
 
     pub const fn round_up(&self, step: u64) -> PhysAddr {
@@ -102,11 +102,11 @@ impl Step for PhysAddr {
     }
 
     fn forward_checked(startpa: Self, count: usize) -> Option<Self> {
-        startpa.0.checked_add(count as u64).map(|x| PhysAddr(x))
+        startpa.0.checked_add(count as u64).map(PhysAddr)
     }
 
     fn backward_checked(startpa: Self, count: usize) -> Option<Self> {
-        startpa.0.checked_sub(count as u64).map(|x| PhysAddr(x))
+        startpa.0.checked_sub(count as u64).map(PhysAddr)
     }
 }
 
