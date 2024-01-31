@@ -2,6 +2,7 @@
 
 extern crate alloc;
 
+use crate::kmem::physaddr_as_virt;
 use crate::registers::rpi_mmio;
 use crate::uartmini::MiniUart;
 use alloc::alloc::{GlobalAlloc, Layout};
@@ -16,7 +17,7 @@ use port::mem::VirtRange;
 //  - Add support for raspi4
 #[panic_handler]
 pub fn panic(info: &PanicInfo) -> ! {
-    let mmio = rpi_mmio().expect("mmio base detect failed").start().as_virt();
+    let mmio = physaddr_as_virt(rpi_mmio().expect("mmio base detect failed").start());
 
     let gpio_range = VirtRange::with_len(mmio + 0x200000, 0xb4);
     let aux_range = VirtRange::with_len(mmio + 0x215000, 0x8);

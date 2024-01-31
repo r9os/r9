@@ -2,21 +2,23 @@
 
 use crate::{
     kalloc,
-    kmem::{ebss_addr, erodata_addr, etext_addr, text_addr, PhysAddr, PhysRange},
+    kmem::{
+        ebss_addr, erodata_addr, etext_addr, from_ptr_to_physaddr, from_virt_to_physaddr,
+        physaddr_as_ptr_mut, physaddr_as_virt, text_addr,
+    },
     registers::rpi_mmio,
 };
 use bitstruct::bitstruct;
 use core::fmt;
 use core::ptr::write_volatile;
 use num_enum::{FromPrimitive, IntoPrimitive};
-use port::fdt::DeviceTree;
+use port::{
+    fdt::DeviceTree,
+    mem::{PhysAddr, PhysRange, PAGE_SIZE_1G, PAGE_SIZE_2M, PAGE_SIZE_4K},
+};
 
 #[cfg(not(test))]
 use port::println;
-
-pub const PAGE_SIZE_4K: usize = 4 << 10;
-pub const PAGE_SIZE_2M: usize = 2 << 20;
-pub const PAGE_SIZE_1G: usize = 1 << 30;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -162,7 +164,7 @@ impl Entry {
     }
 
     fn virt_page_addr(self) -> usize {
-        self.phys_page_addr().as_virt()
+        physaddr_as_virt(self.phys_page_addr())
     }
 
     fn table(self, level: Level) -> bool {
@@ -312,7 +314,7 @@ impl Table {
             // Create a new page table and write the entry into the parent table
             let table = Self::alloc_pagetable()?;
             entry = Entry::rw_kernel_data()
-                .with_phys_addr(PhysAddr::from_ptr(table))
+                .with_phys_addr(from_ptr_to_physaddr(table))
                 .with_page_or_table(true);
             unsafe {
                 write_volatile(&mut self.entries[index], entry);
@@ -358,7 +360,7 @@ impl PageTable {
         // TODO Only do this if self != kernel_root()
         let old_recursive_entry = kernel_root().entries[511];
         let temp_recursive_entry = Entry::rw_kernel_data()
-            .with_phys_addr(PhysAddr::from_ptr(self))
+            .with_phys_addr(from_ptr_to_physaddr(self))
             .with_page_or_table(true);
 
         unsafe {
@@ -413,7 +415,7 @@ impl PageTable {
         let mut startva = None;
         let mut endva = 0;
         for pa in range.step_by_rounded(page_size.size()) {
-            let va = pa.as_virt();
+            let va = physaddr_as_virt(pa);
             self.map_to(entry.with_phys_addr(pa), va, page_size)?;
             startva.get_or_insert(va);
             endva = va + page_size.size();
@@ -479,7 +481,7 @@ pub unsafe fn init(_dt: &DeviceTree, kpage_table: &mut PageTable, dtb_range: Phy
     // Write the recursive entry
     unsafe {
         let entry = Entry::rw_kernel_data()
-            .with_phys_addr(PhysAddr::from_ptr(kpage_table))
+            .with_phys_addr(from_ptr_to_physaddr(kpage_table))
             .with_page_or_table(true);
         write_volatile(&mut kpage_table.entries[511], entry);
     }
@@ -490,13 +492,13 @@ pub unsafe fn init(_dt: &DeviceTree, kpage_table: &mut PageTable, dtb_range: Phy
     // in depth!
     let custom_map = {
         let text_range =
-            PhysRange(PhysAddr::from_virt(text_addr())..PhysAddr::from_virt(etext_addr()));
+            PhysRange(from_virt_to_physaddr(text_addr())..from_virt_to_physaddr(etext_addr()));
         let data_range = PhysRange::with_len(
-            PhysAddr::from_virt(etext_addr()).addr(),
+            from_virt_to_physaddr(etext_addr()).addr(),
             erodata_addr() - etext_addr(),
         );
         let bss_range = PhysRange::with_len(
-            PhysAddr::from_virt(erodata_addr()).addr(),
+            from_virt_to_physaddr(erodata_addr()).addr(),
             ebss_addr() - erodata_addr(),
         );
 
@@ -549,7 +551,7 @@ fn ttbr1_el1() -> u64 {
 pub unsafe fn switch(kpage_table: &PageTable) {
     #[cfg(not(test))]
     unsafe {
-        let pt_phys = PhysAddr::from_ptr(kpage_table).addr();
+        let pt_phys = from_ptr_to_physaddr(kpage_table).addr();
         // https://forum.osdev.org/viewtopic.php?t=36412&p=303237
         core::arch::asm!(
             "msr ttbr1_el1, {pt_phys}",
@@ -577,7 +579,7 @@ pub unsafe fn invalidate_all_tlb_entries() {
 
 /// Return the root kernel page table
 pub fn kernel_root() -> &'static mut PageTable {
-    unsafe { &mut *PhysAddr::new(ttbr1_el1()).as_ptr_mut::<PageTable>() }
+    unsafe { &mut *physaddr_as_ptr_mut::<PageTable>(PhysAddr::new(ttbr1_el1())) }
 }
 
 #[cfg(test)]

@@ -1,6 +1,9 @@
-use crate::vm::{Page4K, PAGE_SIZE_4K};
+use crate::vm::Page4K;
 use core::ptr;
-use port::mcslock::{Lock, LockNode};
+use port::{
+    mcslock::{Lock, LockNode},
+    mem::PAGE_SIZE_4K,
+};
 
 static FREE_LIST: Lock<FreeList> = Lock::new("kmem", FreeList { next: None });
 
