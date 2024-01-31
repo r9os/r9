@@ -6,7 +6,6 @@
 #![feature(asm_const)]
 #![feature(core_intrinsics)]
 #![feature(stdsimd)]
-#![feature(step_trait)]
 #![feature(strict_provenance)]
 #![forbid(unsafe_op_in_unsafe_fn)]
 
@@ -22,11 +21,12 @@ mod uartmini;
 mod uartpl011;
 mod vm;
 
-use crate::kmem::{PhysAddr, PhysRange};
+use crate::kmem::from_virt_to_physaddr;
 use crate::vm::kernel_root;
 use core::ffi::c_void;
 use core::ptr;
 use port::fdt::DeviceTree;
+use port::mem::PhysRange;
 use port::println;
 use vm::PageTable;
 
@@ -123,7 +123,7 @@ pub extern "C" fn main9(dtb_va: usize) {
     unsafe {
         kalloc::free_pages(kmem::early_pages());
 
-        let dtb_range = PhysRange::with_len(PhysAddr::from_virt(dtb_va).addr(), dt.size());
+        let dtb_range = PhysRange::with_len(from_virt_to_physaddr(dtb_va).addr(), dt.size());
         vm::init(&dt, &mut *ptr::addr_of_mut!(KPGTBL), dtb_range);
         vm::switch(&*ptr::addr_of!(KPGTBL));
     }

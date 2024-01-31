@@ -1,9 +1,9 @@
 #![allow(non_upper_case_globals)]
 
-use crate::{kmem::PhysRange, vm::PAGE_SIZE_2M};
 use bitstruct::bitstruct;
 use core::fmt;
 use num_enum::TryFromPrimitive;
+use port::mem::{PhysRange, PAGE_SIZE_2M};
 
 // GPIO registers
 pub const GPFSEL1: usize = 0x04; // GPIO function select register 1
