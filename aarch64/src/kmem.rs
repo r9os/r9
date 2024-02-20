@@ -1,7 +1,5 @@
-use port::mem::PhysAddr;
-
-use crate::{param::KZERO, vm::Page4K};
-use core::{mem, slice};
+use crate::param::KZERO;
+use port::mem::{PhysAddr, PhysRange};
 
 // These map to definitions in kernel.ld
 extern "C" {
@@ -52,20 +50,9 @@ pub fn from_ptr_to_physaddr<T>(a: *const T) -> PhysAddr {
     from_virt_to_physaddr(a.addr())
 }
 
-unsafe fn page_slice_mut<'a>(pstart: *mut Page4K, pend: *mut Page4K) -> &'a mut [Page4K] {
-    let ustart = pstart.addr();
-    let uend = pend.addr();
-    const PAGE_SIZE: usize = mem::size_of::<Page4K>();
-    assert_eq!(ustart % PAGE_SIZE, 0, "page_slice_mut: unaligned start page");
-    assert_eq!(uend % PAGE_SIZE, 0, "page_slice_mut: unaligned end page");
-    assert!(ustart < uend, "page_slice_mut: bad range");
-
-    let len = (uend - ustart) / PAGE_SIZE;
-    unsafe { slice::from_raw_parts_mut(ustart as *mut Page4K, len) }
-}
-
-pub fn early_pages() -> &'static mut [Page4K] {
-    let early_start = early_pagetables_addr() as *mut Page4K;
-    let early_end = eearly_pagetables_addr() as *mut Page4K;
-    unsafe { page_slice_mut(early_start, early_end) }
+pub fn early_pages_range() -> PhysRange {
+    PhysRange::new(
+        from_virt_to_physaddr(early_pagetables_addr()),
+        from_virt_to_physaddr(eearly_pagetables_addr()),
+    )
 }

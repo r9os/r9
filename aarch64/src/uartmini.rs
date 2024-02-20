@@ -11,7 +11,6 @@ use crate::registers::{
 /// MiniUart is assigned to UART1 on the Raspberry Pi.  It is easier to use with
 /// real hardware, as it requires no additional configuration.  Conversely, it's
 /// harded to use with QEMU, as it can't be used with the `nographic` switch.
-#[allow(dead_code)]
 pub struct MiniUart {
     pub gpio_range: VirtRange,
     pub aux_range: VirtRange,

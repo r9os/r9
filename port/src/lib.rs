@@ -1,9 +1,11 @@
 #![allow(clippy::upper_case_acronyms)]
 #![cfg_attr(not(any(test)), no_std)]
+#![feature(inline_const)]
 #![feature(maybe_uninit_slice)]
 #![feature(step_trait)]
 #![forbid(unsafe_op_in_unsafe_fn)]
 
+pub mod bitmapalloc;
 pub mod dat;
 pub mod devcons;
 pub mod fdt;
