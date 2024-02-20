@@ -44,7 +44,7 @@ impl From<&RegBlock> for VirtRange {
 
 #[derive(Clone, Copy, PartialEq, PartialOrd, Eq, Ord)]
 #[repr(transparent)]
-pub struct PhysAddr(u64);
+pub struct PhysAddr(pub u64);
 
 impl PhysAddr {
     pub const fn new(value: u64) -> Self {
@@ -56,10 +56,12 @@ impl PhysAddr {
     }
 
     pub const fn round_up(&self, step: u64) -> PhysAddr {
+        assert!(step.is_power_of_two());
         PhysAddr((self.0 + step - 1) & !(step - 1))
     }
 
     pub const fn round_down(&self, step: u64) -> PhysAddr {
+        assert!(step.is_power_of_two());
         PhysAddr(self.0 & !(step - 1))
     }
 }
@@ -104,6 +106,14 @@ impl fmt::Debug for PhysAddr {
 pub struct PhysRange(pub Range<PhysAddr>);
 
 impl PhysRange {
+    pub fn new(start: PhysAddr, end: PhysAddr) -> Self {
+        Self(start..end)
+    }
+
+    pub fn with_end(start: u64, end: u64) -> Self {
+        Self(PhysAddr(start)..PhysAddr(end))
+    }
+
     pub fn with_len(start: u64, len: usize) -> Self {
         Self(PhysAddr(start)..PhysAddr(start + len as u64))
     }
@@ -126,10 +136,21 @@ impl PhysRange {
         self.0.end
     }
 
+    pub fn size(&self) -> usize {
+        (self.0.end.addr() - self.0.start.addr()) as usize
+    }
+
     pub fn step_by_rounded(&self, step_size: usize) -> StepBy<Range<PhysAddr>> {
         let startpa = self.start().round_down(step_size as u64);
         let endpa = self.end().round_up(step_size as u64);
         (startpa..endpa).step_by(step_size)
+    }
+}
+
+impl fmt::Display for PhysRange {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:#016x}..{:#016x}", self.0.start.addr(), self.0.end.addr())?;
+        Ok(())
     }
 }
 

@@ -4,7 +4,7 @@ use core::mem;
 use core::mem::MaybeUninit;
 use port::fdt::DeviceTree;
 use port::mcslock::{Lock, LockNode};
-use port::mem::VirtRange;
+use port::mem::{PhysAddr, PhysRange, VirtRange};
 
 const MBOX_READ: usize = 0x00;
 const MBOX_STATUS: usize = 0x18;
@@ -191,7 +191,7 @@ pub struct MemoryInfo {
     pub end: u32,
 }
 
-pub fn get_arm_memory() -> MemoryInfo {
+pub fn get_arm_memory() -> PhysRange {
     let tags = Tag::<EmptyRequest> {
         tag_id0: TagId::GetArmMemory,
         tag_buffer_size0: 12,
@@ -204,10 +204,10 @@ pub fn get_arm_memory() -> MemoryInfo {
     let size = res.size;
     let end = start + size;
 
-    MemoryInfo { start, size, end }
+    PhysRange::new(PhysAddr::new(start as u64), PhysAddr::new(end as u64))
 }
 
-pub fn get_vc_memory() -> MemoryInfo {
+pub fn get_vc_memory() -> PhysRange {
     let tags = Tag::<EmptyRequest> {
         tag_id0: TagId::GetVcMemory,
         tag_buffer_size0: 12,
@@ -220,7 +220,7 @@ pub fn get_vc_memory() -> MemoryInfo {
     let size = res.size;
     let end = start + size;
 
-    MemoryInfo { start, size, end }
+    PhysRange::new(PhysAddr::new(start as u64), PhysAddr::new(end as u64))
 }
 
 pub fn get_firmware_revision() -> u32 {

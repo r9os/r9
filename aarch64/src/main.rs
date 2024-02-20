@@ -5,15 +5,16 @@
 #![feature(alloc_error_handler)]
 #![feature(asm_const)]
 #![feature(core_intrinsics)]
+#![feature(inline_const)]
 #![feature(stdsimd)]
 #![feature(strict_provenance)]
 #![forbid(unsafe_op_in_unsafe_fn)]
 
 mod devcons;
 mod io;
-mod kalloc;
 mod kmem;
 mod mailbox;
+mod pagealloc;
 mod param;
 mod registers;
 mod trap;
@@ -39,7 +40,7 @@ unsafe fn print_memory_range(name: &str, start: &*const c_void, end: &*const c_v
     let start = start as *const _ as u64;
     let end = end as *const _ as u64;
     let size = end - start;
-    println!("  {name}{start:#x}-{end:#x} ({size:#x})");
+    println!("  {name}{start:#x}..{end:#x} ({size:#x})");
 }
 
 fn print_binary_sections() {
@@ -67,12 +68,17 @@ fn print_binary_sections() {
     }
 }
 
-fn print_physical_memory_map() {
+fn print_memory_info() {
     println!("Physical memory map:");
-    let mailbox::MemoryInfo { start, size, end } = mailbox::get_arm_memory();
-    println!("  Memory:\t{start:#018x}-{end:#018x} ({size:#x})");
-    let mailbox::MemoryInfo { start, size, end } = mailbox::get_vc_memory();
-    println!("  Video:\t{start:#018x}-{end:#018x} ({size:#x})");
+    let arm_mem = mailbox::get_arm_memory();
+    println!("  Memory:\t{arm_mem} ({:#x})", arm_mem.size());
+    let vc_mem = mailbox::get_vc_memory();
+    println!("  Video:\t{vc_mem} ({:#x})", vc_mem.size());
+
+    println!("Memory usage::");
+    let (used, total) = pagealloc::usage_bytes();
+    println!("  Used:\t\t{used:#016x}");
+    println!("  Total:\t{total:#016x}");
 }
 
 // https://github.com/raspberrypi/documentation/blob/develop/documentation/asciidoc/computers/raspberry-pi/revision-codes.adoc
@@ -121,15 +127,15 @@ pub extern "C" fn main9(dtb_va: usize) {
 
     // Map address space accurately using rust VM code to manage page tables
     unsafe {
-        kalloc::free_pages(kmem::early_pages());
-
         let dtb_range = PhysRange::with_len(from_virt_to_physaddr(dtb_va).addr(), dt.size());
-        vm::init(&dt, &mut *ptr::addr_of_mut!(KPGTBL), dtb_range);
+        vm::init(&mut *ptr::addr_of_mut!(KPGTBL), dtb_range, mailbox::get_arm_memory());
         vm::switch(&*ptr::addr_of!(KPGTBL));
     }
 
+    // From this point we can use the global allocator
+
     print_binary_sections();
-    print_physical_memory_map();
+    print_memory_info();
     print_board_info();
 
     kernel_root().print_recursive_tables();

@@ -1,11 +1,11 @@
 #![allow(non_upper_case_globals)]
 
 use crate::{
-    kalloc,
     kmem::{
         ebss_addr, erodata_addr, etext_addr, from_ptr_to_physaddr, from_virt_to_physaddr,
         physaddr_as_ptr_mut, physaddr_as_virt, text_addr,
     },
+    pagealloc,
     registers::rpi_mmio,
 };
 use bitstruct::bitstruct;
@@ -13,7 +13,7 @@ use core::fmt;
 use core::ptr::write_volatile;
 use num_enum::{FromPrimitive, IntoPrimitive};
 use port::{
-    fdt::DeviceTree,
+    bitmapalloc::BitmapPageAllocError,
     mem::{PhysAddr, PhysRange, PAGE_SIZE_1G, PAGE_SIZE_2M, PAGE_SIZE_4K},
 };
 
@@ -48,12 +48,6 @@ impl Page4K {
             core::intrinsics::volatile_set_memory(&mut self.0, 0u8, 1);
         }
     }
-
-    pub fn scribble(&mut self) {
-        unsafe {
-            core::intrinsics::volatile_set_memory(self, 0b1010_1010u8, 1);
-        }
-    }
 }
 
 #[derive(Debug, IntoPrimitive, FromPrimitive)]
@@ -79,7 +73,7 @@ pub enum AccessPermission {
 pub enum Shareable {
     #[num_enum(default)]
     Non = 0, // Non-shareable (single core)
-    Unpredictable = 1, // Unpredicatable!
+    Unpredictable = 1, // Unpredictable!
     Outer = 2,         // Outer shareable (shared across CPUs, GPU)
     Inner = 3,         // Inner shareable (shared across CPUs)
 }
@@ -280,13 +274,13 @@ fn recursive_table_addr(va: usize, level: Level) -> usize {
 
 #[derive(Debug)]
 pub enum PageTableError {
-    AllocationFailed(kalloc::Error),
+    AllocationFailed(BitmapPageAllocError),
     EntryIsNotTable,
     PhysRangeIsZero,
 }
 
-impl From<kalloc::Error> for PageTableError {
-    fn from(err: kalloc::Error) -> PageTableError {
+impl From<BitmapPageAllocError> for PageTableError {
+    fn from(err: BitmapPageAllocError) -> PageTableError {
         PageTableError::AllocationFailed(err)
     }
 }
@@ -331,7 +325,7 @@ impl Table {
     }
 
     fn alloc_pagetable() -> Result<&'static mut Table, PageTableError> {
-        let page = kalloc::alloc()?;
+        let page = pagealloc::allocate()?;
         page.clear();
         Ok(unsafe { &mut *(page as *mut Page4K as *mut Table) })
     }
@@ -471,7 +465,9 @@ fn print_pte(indent: usize, i: usize, level: Level, pte: Entry) {
     }
 }
 
-pub unsafe fn init(_dt: &DeviceTree, kpage_table: &mut PageTable, dtb_range: PhysRange) {
+pub unsafe fn init(kpage_table: &mut PageTable, dtb_range: PhysRange, available_mem: PhysRange) {
+    pagealloc::init_page_allocator();
+
     // We use recursive page tables, but we have to be careful in the init call,
     // since the kpage_table is not currently pointed to by ttbr1_el1.  Any
     // recursive addressing of (511, 511, 511, 511) always points to the
@@ -486,10 +482,7 @@ pub unsafe fn init(_dt: &DeviceTree, kpage_table: &mut PageTable, dtb_range: Phy
         write_volatile(&mut kpage_table.entries[511], entry);
     }
 
-    // TODO We don't actualy unmap the first page...  We should to achieve:
-    // Note that the first page is left unmapped to try and
-    // catch null pointer dereferences in unsafe code: defense
-    // in depth!
+    // TODO leave the first page unmapped to catch null pointer dereferences in unsafe code
     let custom_map = {
         let text_range =
             PhysRange(from_virt_to_physaddr(text_addr())..from_virt_to_physaddr(etext_addr()));
@@ -519,8 +512,9 @@ pub unsafe fn init(_dt: &DeviceTree, kpage_table: &mut PageTable, dtb_range: Phy
     for (name, range, flags, page_size) in custom_map.iter() {
         let mapped_range =
             kpage_table.map_phys_range(range, *flags, *page_size).expect("init mapping failed");
+
         println!(
-            "  {:14}{:#018x}-{:#018x} to {:#018x}-{:#018x} flags: {:?} page_size: {:?}",
+            "  {:14}{:#018x}..{:#018x} to {:#018x}..{:#018x} flags: {:?} page_size: {:?}",
             name,
             range.start().addr(),
             range.end().addr(),
@@ -529,6 +523,11 @@ pub unsafe fn init(_dt: &DeviceTree, kpage_table: &mut PageTable, dtb_range: Phy
             flags,
             page_size
         );
+    }
+
+    if let Err(err) = pagealloc::free_unused_ranges(&available_mem, custom_map.map(|m| m.1).iter())
+    {
+        panic!("Couldn't mark unused pages as free: err: {:?}", err);
     }
 }
 
