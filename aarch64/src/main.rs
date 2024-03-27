@@ -21,6 +21,7 @@ mod trap;
 mod uartmini;
 mod uartpl011;
 mod vm;
+mod vmalloc;
 
 use crate::kmem::from_virt_to_physaddr;
 use crate::vm::kernel_root;
@@ -55,6 +56,8 @@ fn print_binary_sections() {
         static edata: *const c_void;
         static bss: *const c_void;
         static end: *const c_void;
+        static heap: *const c_void;
+        static eheap: *const c_void;
     }
 
     println!("Binary sections:");
@@ -64,6 +67,7 @@ fn print_binary_sections() {
         print_memory_range("rodata:\t", &rodata, &erodata);
         print_memory_range("data:\t\t", &data, &edata);
         print_memory_range("bss:\t\t", &bss, &end);
+        print_memory_range("heap:\t\t", &heap, &eheap);
         print_memory_range("total:\t", &boottext, &end);
     }
 }

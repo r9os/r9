@@ -32,6 +32,10 @@ impl VirtRange {
     pub fn end(&self) -> usize {
         self.0.end
     }
+
+    pub fn size(&self) -> usize {
+        self.0.end - self.0.start
+    }
 }
 
 impl From<&RegBlock> for VirtRange {
