@@ -23,10 +23,9 @@ mod vmalloc;
 
 use crate::kmem::from_virt_to_physaddr;
 use crate::vm::kernel_root;
-use core::ffi::c_void;
 use core::ptr;
 use port::fdt::DeviceTree;
-use port::mem::PhysRange;
+use port::mem::{PhysRange, VirtRange};
 use port::println;
 use vm::PageTable;
 
@@ -35,38 +34,23 @@ core::arch::global_asm!(include_str!("l.S"));
 
 static mut KPGTBL: PageTable = PageTable::empty();
 
-unsafe fn print_memory_range(name: &str, start: &*const c_void, end: &*const c_void) {
-    let start = start as *const _ as u64;
-    let end = end as *const _ as u64;
-    let size = end - start;
+unsafe fn print_memory_range(name: &str, range: VirtRange) {
+    let start = range.start();
+    let end = range.end();
+    let size = range.size();
     println!("  {name}{start:#x}..{end:#x} ({size:#x})");
 }
 
 fn print_binary_sections() {
-    extern "C" {
-        static boottext: *const c_void;
-        static eboottext: *const c_void;
-        static text: *const c_void;
-        static etext: *const c_void;
-        static rodata: *const c_void;
-        static erodata: *const c_void;
-        static data: *const c_void;
-        static edata: *const c_void;
-        static bss: *const c_void;
-        static end: *const c_void;
-        static heap: *const c_void;
-        static eheap: *const c_void;
-    }
-
     println!("Binary sections:");
     unsafe {
-        print_memory_range("boottext:\t", &boottext, &eboottext);
-        print_memory_range("text:\t\t", &text, &etext);
-        print_memory_range("rodata:\t", &rodata, &erodata);
-        print_memory_range("data:\t\t", &data, &edata);
-        print_memory_range("bss:\t\t", &bss, &end);
-        print_memory_range("heap:\t\t", &heap, &eheap);
-        print_memory_range("total:\t", &boottext, &end);
+        print_memory_range("boottext:\t", kmem::boottext_virtrange());
+        print_memory_range("text:\t\t", kmem::text_virtrange());
+        print_memory_range("rodata:\t", kmem::rodata_virtrange());
+        print_memory_range("data:\t\t", kmem::data_virtrange());
+        print_memory_range("bss:\t\t", kmem::bss_virtrange());
+        print_memory_range("heap:\t\t", kmem::heap_virtrange());
+        print_memory_range("total:\t", kmem::total_virtrange());
     }
 }
 

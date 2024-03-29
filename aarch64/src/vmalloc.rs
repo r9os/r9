@@ -5,7 +5,7 @@ use port::{
     mcslock::{Lock, LockNode},
 };
 
-use crate::kmem::kernel_heap_virtrange;
+use crate::kmem::heap_virtrange;
 
 static VMALLOC: Lock<Option<&'static mut VmAlloc>> = Lock::new("vmalloc", None);
 
@@ -15,7 +15,7 @@ struct VmAlloc {
 
 impl VmAlloc {
     fn new() -> Self {
-        let heap_range = kernel_heap_virtrange();
+        let heap_range = heap_virtrange();
         let quantum = 4096;
         Self {
             _heap_arena: Arena::new_with_static_range(
