@@ -350,9 +350,9 @@ pub extern "C" fn main9(hartid: usize, dtb_ptr: u64) -> ! {
 
     // fixed 25 bits, used 39 bits
     const VFIXED: usize = 0xff_ff_ff_80__00_00_00_00;
-    let ppn2 = 255 << (9 + 9 + 12);
-    let ppn1 = 255 << (9 + 12);
-    let ppn0 = 255 << 12;
+    let ppn2 = 0x1ff << (9 + 9 + 12);
+    let ppn1 = 0x1f8 << (9 + 12);
+    let ppn0 = 0; // 0x1ff << 12;
     let poff = 0x0;
     let vaddr = VFIXED | ppn2 | ppn1 | ppn0 | poff;
     println!("{vaddr:016x}");
