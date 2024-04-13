@@ -295,6 +295,14 @@ impl PageTable {
 
 static mut ALLOC_I: u64 = 0x100;
 
+fn print_entry(pt: &PageTable, pt_addr: u64, entry_n: u16) {
+    let addr = pt_addr + entry_n as u64 * 8;
+    let hi = read32((addr + 4).try_into().unwrap());
+    let lo = read32((addr).try_into().unwrap());
+    println!(" PTE {entry_n} @0x{addr:016x}: 0x{hi:08x}{lo:08x}");
+    println!("     {:?}", pt.get_entry(entry_n));
+}
+
 #[no_mangle]
 pub extern "C" fn main9(hartid: usize, dtb_ptr: u64) -> ! {
     // devcons::init_sbi();
@@ -326,38 +334,40 @@ pub extern "C" fn main9(hartid: usize, dtb_ptr: u64) -> ! {
     }
 
     let bpt_addr = unsafe { (&boot_page_table) as *const _ as u64 };
-    println!("table addr: {:#x}", bpt_addr);
+    println!("boot page table @ 0x{bpt_addr:#016x}");
+
     let bpt = PageTable::new(bpt_addr);
-    println!("  0 {:?}", bpt.get_entry(0));
-    println!("  1 {:?}", bpt.get_entry(1));
-    println!("  2 {:?}", bpt.get_entry(2));
-    println!();
-    println!();
-
-    let hi = read32((bpt_addr + 255 * 8 + 4).try_into().unwrap());
-    let lo = read32((bpt_addr + 255 * 8).try_into().unwrap());
-    println!("   {hi:08x} {lo:08x}");
-    println!("255 {:?}", bpt.get_entry(255));
 
     println!();
+    print_entry(&bpt, bpt_addr, 0);
+    print_entry(&bpt, bpt_addr, 1);
+    print_entry(&bpt, bpt_addr, 2);
+    print_entry(&bpt, bpt_addr, 3);
     println!();
-    println!("508 {:?}", bpt.get_entry(508));
-    println!("509 {:?}", bpt.get_entry(509));
-    println!("510 {:?}", bpt.get_entry(510));
-    println!("511 {:?}", bpt.get_entry(511));
+
+    print_entry(&bpt, bpt_addr, 255);
+    println!();
+
+    print_entry(&bpt, bpt_addr, 508);
+    print_entry(&bpt, bpt_addr, 509);
+    print_entry(&bpt, bpt_addr, 510);
+    print_entry(&bpt, bpt_addr, 511);
     println!();
     println!();
 
     // fixed 25 bits, used 39 bits
+    // construct 0xffff_ffff_ff00_0000
+    // This is where the DTB should be
     const VFIXED: usize = 0xff_ff_ff_80__00_00_00_00;
     let ppn2 = 0x1ff << (9 + 9 + 12);
     let ppn1 = 0x1f8 << (9 + 12);
     let ppn0 = 0; // 0x1ff << 12;
     let poff = 0x0;
     let vaddr = VFIXED | ppn2 | ppn1 | ppn0 | poff;
-    println!("{vaddr:016x}");
-    let x1 = read32(vaddr);
-    println!("{x1:08x}");
+
+    let val1 = read32(vaddr);
+    let val1 = u32::from_be(val1);
+    println!(" 0x{vaddr:016x}: 0x{val1:08x}");
     #[cfg(not(test))]
     sbi::shutdown();
     #[cfg(test)]
