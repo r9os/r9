@@ -237,12 +237,12 @@ impl PageTableEntry {
         out
     }
 
-    pub unsafe fn write_to(&self, addr: u64) {
+    pub fn write_to(&self, addr: u64) {
         unsafe { write_volatile(addr as *mut u64, self.serialize()) }
     }
 
     pub fn get_vaddr(&self) -> u64 {
-        1
+        phys_to_virt(self.serialize() as usize) as u64
     }
 }
 
@@ -281,19 +281,19 @@ impl PageTable {
     fn next(&self) -> u64 {
         let c_paddr = self.addr;
         let entry = PageTableEntry {
-            ppn2: 0x30.try_into().unwrap(),
+            ppn2: 0.try_into().unwrap(),
             ppn1: 0.try_into().unwrap(),
-            ppn0: 0.try_into().unwrap(),
+            ppn0: 0x30.try_into().unwrap(),
             flags: PageTableFlags::W.union(PageTableFlags::R),
         };
         unsafe {
-            entry.write_to(c_paddr + 8 * ALLOC_I);
+            entry.write_to(c_paddr + Self::ENTRY_SIZE * ALLOC_I);
         }
         entry.get_vaddr()
     }
 }
 
-static mut ALLOC_I: u64 = 0x100;
+static mut ALLOC_I: u64 = 100;
 
 fn print_entry(pt: &PageTable, pt_addr: u64, entry_n: u16) {
     let addr = pt_addr + entry_n as u64 * 8;
@@ -357,7 +357,7 @@ pub extern "C" fn main9(hartid: usize, dtb_ptr: u64) -> ! {
 
     // fixed 25 bits, used 39 bits
     // construct 0xffff_ffff_ff00_0000
-    // This is where the DTB should be
+    // This is where the DTB should be remapped
     const VFIXED: usize = 0xff_ff_ff_80__00_00_00_00;
     let ppn2 = 0x1ff << (9 + 9 + 12);
     let ppn1 = 0x1f8 << (9 + 12);
@@ -365,9 +365,40 @@ pub extern "C" fn main9(hartid: usize, dtb_ptr: u64) -> ! {
     let poff = 0x0;
     let vaddr = VFIXED | ppn2 | ppn1 | ppn0 | poff;
 
+    // DTB original
+    let val0 = read32(dtb_ptr as usize);
+    let val0 = u32::from_be(val0);
+    println!(" 0x{dtb_ptr:016x}: 0x{val0:08x}");
+    // DTB remapped
     let val1 = read32(vaddr);
     let val1 = u32::from_be(val1);
     println!(" 0x{vaddr:016x}: 0x{val1:08x}");
+
+    // .........
+
+    println!();
+    let ppn2 = 0x1ff << (9 + 9 + 12);
+    let ppn1 = 0x1ff << (9 + 12);
+    let ppn0 = 0x1ff << 12;
+    let poff = 0x0;
+    let vaddr = VFIXED | ppn2 | ppn1 | ppn0 | poff;
+
+    let val2 = read32(vaddr as usize);
+    println!(" 0x{vaddr:016x}: 0x{val2:08x}");
+    write32(vaddr, 0x1234_5678);
+    let val2 = read32(vaddr as usize);
+    println!(" 0x{vaddr:016x}: 0x{val2:08x}");
+
+    // Let's create a new PTE :)
+    print_entry(&bpt, bpt_addr, 100);
+    let vaddr = bpt.next() as usize;
+    println!(" got 0x{vaddr:016x}");
+    print_entry(&bpt, bpt_addr, 100);
+
+    // Read from the virtual address we got, see if we can write to it...
+    write32(vaddr, 0x1234_5678);
+    print_entry(&bpt, bpt_addr, 100);
+
     #[cfg(not(test))]
     sbi::shutdown();
     #[cfg(test)]
