@@ -1,4 +1,5 @@
 #![feature(alloc_error_handler)]
+#![feature(stdsimd)]
 #![feature(asm_const)]
 #![feature(panic_info_message)]
 #![feature(ptr_to_from_bits)]
@@ -13,12 +14,10 @@ mod runtime;
 mod sbi;
 mod uart16550;
 
-use bit_field::BitField;
-use bitflags::{bitflags, Flags};
 use port::{print, println};
 
 use crate::{
-    memory::phys_to_virt,
+    memory::{phys_to_virt, PageTable, PageTableEntry, VirtualAddress},
     platform::{devcons, platform_init},
 };
 use core::{ffi::c_void, ptr::read_volatile, ptr::write_volatile, slice};
@@ -176,131 +175,9 @@ fn where_are_we() {
     println!("YOU ARE HERE (approx.): {p:#x?}");
 }
 
-bitflags! {
-    #[derive(Debug)]
-    pub struct PageTableFlags: u8 {
-        const D = 1 << 7;
-        const A = 1 << 6;
-        const G = 1 << 5;
-        const U = 1 << 4;
-        const X = 1 << 3;
-        const W = 1 << 2;
-        const R = 1 << 1;
-        const V = 1;
-    }
-}
-
-#[derive(Clone, Copy)]
-struct SizedInteger<const N: usize>(u64);
-
-impl<const N: usize> core::fmt::Debug for SizedInteger<N> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{:010x}", self.0)
-    }
-}
-
-#[derive(Debug)]
-struct NumberTooLarge;
-
-impl<const N: usize> TryFrom<u64> for SizedInteger<N> {
-    type Error = NumberTooLarge;
-
-    fn try_from(value: u64) -> Result<Self, Self::Error> {
-        if (value.leading_zeros() as usize) < 64 - N {
-            return Err(NumberTooLarge);
-        }
-        Ok(Self(value))
-    }
-}
-
-impl<const N: usize> From<SizedInteger<N>> for u64 {
-    fn from(value: SizedInteger<N>) -> Self {
-        value.0
-    }
-}
-
-#[derive(Debug)]
-struct PageTableEntry {
-    ppn2: SizedInteger<26>,
-    ppn1: SizedInteger<9>,
-    ppn0: SizedInteger<9>,
-    flags: PageTableFlags,
-}
-
-impl PageTableEntry {
-    pub fn serialize(&self) -> u64 {
-        let mut out = 0u64;
-        out.set_bits(0..=7, self.flags.bits() as _);
-        out.set_bits(10..=18, self.ppn0.into());
-        out.set_bits(19..=27, self.ppn1.into());
-        out.set_bits(28..=53, self.ppn2.into());
-        out
-    }
-
-    pub fn write_to(&self, addr: u64) {
-        unsafe { write_volatile(addr as *mut u64, self.serialize()) }
-    }
-
-    pub fn get_vaddr(&self) -> u64 {
-        phys_to_virt(self.serialize() as usize) as u64
-    }
-}
-
-impl From<u64> for PageTableEntry {
-    fn from(value: u64) -> Self {
-        let flags = PageTableFlags::from_bits(value.get_bits(0..=7) as _).unwrap();
-        Self {
-            ppn2: value.get_bits(28..=53).try_into().unwrap(),
-            ppn1: value.get_bits(19..=27).try_into().unwrap(),
-            ppn0: value.get_bits(10..=18).try_into().unwrap(),
-            flags,
-        }
-    }
-}
-
-struct PageTable {
-    addr: u64,
-}
-
-impl PageTable {
-    const ENTRY_SIZE: u64 = 8;
-
-    pub fn new(addr: u64) -> Self {
-        Self { addr }
-    }
-
-    pub fn get_entry(&self, at: u16) -> PageTableEntry {
-        let addr = self.addr + (at as u64 * Self::ENTRY_SIZE);
-        let high = unsafe { read_volatile((addr + 4) as *const u64) };
-        let low = unsafe { read_volatile(addr as *const u64) };
-        ((high << 32) | low).into()
-    }
-
-    pub fn create_entry(&self) {}
-
-    fn next(&self) -> u64 {
-        let c_paddr = self.addr;
-        let entry = PageTableEntry {
-            ppn2: 0.try_into().unwrap(),
-            ppn1: 0.try_into().unwrap(),
-            ppn0: 0x30.try_into().unwrap(),
-            flags: PageTableFlags::W.union(PageTableFlags::R),
-        };
-        unsafe {
-            entry.write_to(c_paddr + Self::ENTRY_SIZE * ALLOC_I);
-        }
-        entry.get_vaddr()
-    }
-}
-
-static mut ALLOC_I: u64 = 100;
-
-fn print_entry(pt: &PageTable, pt_addr: u64, entry_n: u16) {
-    let addr = pt_addr + entry_n as u64 * 8;
-    let hi = read32((addr + 4).try_into().unwrap());
-    let lo = read32((addr).try_into().unwrap());
-    println!(" PTE {entry_n} @0x{addr:016x}: 0x{hi:08x}{lo:08x}");
-    println!("     {:?}", pt.get_entry(entry_n));
+fn flush_tlb() {
+    // unsafe { core::arch::riscv64::sinval_vma_all() }
+    unsafe { core::arch::asm!("sfence.vma") }
 }
 
 #[no_mangle]
@@ -329,29 +206,31 @@ pub extern "C" fn main9(hartid: usize, dtb_ptr: u64) -> ! {
         where_are_we();
     }
 
+    println!();
+    println!();
+
     extern "C" {
         static boot_page_table: *const c_void;
     }
 
     let bpt_addr = unsafe { (&boot_page_table) as *const _ as u64 };
-    println!("boot page table @ 0x{bpt_addr:#016x}");
-
     let bpt = PageTable::new(bpt_addr);
+    println!(" boot page table @ 0x{:016x} (0x{:08x})", bpt.get_vaddr(), bpt.get_paddr());
 
     println!();
-    print_entry(&bpt, bpt_addr, 0);
-    print_entry(&bpt, bpt_addr, 1);
-    print_entry(&bpt, bpt_addr, 2);
-    print_entry(&bpt, bpt_addr, 3);
+    bpt.print_entry(0);
+    bpt.print_entry(1);
+    bpt.print_entry(2);
+    bpt.print_entry(3);
     println!();
 
-    print_entry(&bpt, bpt_addr, 255);
+    bpt.print_entry(255);
     println!();
 
-    print_entry(&bpt, bpt_addr, 508);
-    print_entry(&bpt, bpt_addr, 509);
-    print_entry(&bpt, bpt_addr, 510);
-    print_entry(&bpt, bpt_addr, 511);
+    bpt.print_entry(508);
+    bpt.print_entry(509);
+    bpt.print_entry(510);
+    bpt.print_entry(511);
     println!();
     println!();
 
@@ -375,63 +254,121 @@ pub extern "C" fn main9(hartid: usize, dtb_ptr: u64) -> ! {
     println!(" 0x{vaddr:016x}: 0x{val1:08x}");
 
     // .........
+    if false {
+        let a = 0x8020_0000;
+        let v = read32(a);
+        println!("{a:016x} : {v:08x}");
+        let a = phys_to_virt(a);
+        let v = read32(a);
+        println!("{a:016x} : {v:08x}");
+    }
 
     println!();
+    println!("    ======= virtual address construction pt 1");
+    // 0xfffffffffffff000
     let ppn2 = 0x1ff << (9 + 9 + 12);
     let ppn1 = 0x1ff << (9 + 12);
     let ppn0 = 0x1ff << 12;
     let poff = 0x0;
-    let vaddr = VFIXED | ppn2 | ppn1 | ppn0 | poff;
+    let va = VFIXED | ppn2 | ppn1 | ppn0 | poff;
+    let vaddr = VirtualAddress::from(va as u64);
+    println!(" 0x{va:016x} = {vaddr:?}");
+    let val = read32(va);
+    println!("   0x{val:08x}");
+    write32(va, 0x1234_5678);
+    let val = read32(va);
+    println!("   0x{val:08x}");
+    println!();
 
-    let val2 = read32(vaddr as usize);
-    println!(" 0x{vaddr:016x}: 0x{val2:08x}");
-    write32(vaddr, 0x1234_5678);
-    let val2 = read32(vaddr as usize);
-    println!(" 0x{vaddr:016x}: 0x{val2:08x}");
+    if false {
+        // let va = 0xffff_ffff__c060_2ffc;
+    }
 
-    // Let's create a new PTE :)
-    print_entry(&bpt, bpt_addr, 100);
-    let vaddr = bpt.next() as usize;
-    println!(" got 0x{vaddr:016x}");
-    print_entry(&bpt, bpt_addr, 100);
+    if false {
+        // Let's create a new PTE :)
+        bpt.print_entry(100);
+        let pt = bpt.create_pt_at(0x8200_0000);
+        println!(" new pt @ {:016x} ({:08x})", pt.get_vaddr(), pt.get_paddr());
+        bpt.print_entry(100);
+        println!();
+    }
 
-    // Read from the virtual address we got, see if we can write to it...
-    write32(vaddr, 0x1234_5678);
-    print_entry(&bpt, bpt_addr, 100);
+    if false {
+        bpt.print_entry(150);
+        let npt = bpt.create_next_level();
+        println!(" new level pt @ {:016x} ({:08x})", npt.get_vaddr(), npt.get_paddr());
+        println!(" boot page table: ");
+        bpt.print_entry(150);
+        println!(" new page table: ");
+        npt.print_entry(150);
+        println!();
+        println!();
+    }
+
+    if false {
+        let a = 0x8060_2000;
+        let v = read32(a);
+        println!("{a:016x} : {v:08x}");
+        let a = phys_to_virt(a);
+        let v = read32(a);
+        println!("{a:016x} : {v:08x}");
+        let a = 0x8060_2004;
+        let v = read32(a);
+        println!("{a:016x} : {v:08x}");
+        let a = phys_to_virt(a);
+        let v = read32(a);
+        println!("{a:016x} : {v:08x}");
+    }
+
+    if true {
+        println!(" boot page table: ");
+        bpt.print_entry(511);
+        let spt = bpt.create_self_ref();
+        flush_tlb();
+        println!();
+        println!();
+        println!(" boot page table: ");
+        bpt.print_entry(511);
+        println!(" self reference pt: ");
+        spt.print_entry(4);
+        println!();
+        println!();
+
+        let vaddr = VirtualAddress {
+            vpn2: memory::SizedInteger::<9>(4),
+            vpn1: memory::SizedInteger::<9>(510),
+            vpn0: memory::SizedInteger::<9>(0),
+            offset: memory::SizedInteger::<12>(0),
+        };
+        let va = vaddr.get() as usize;
+        println!(" 0x{va:016x} = {vaddr:?}");
+        if true {
+            let val = read32(va);
+            println!("   0x{val:08x}");
+            write32(va, 0x1234_5678);
+            let val = read32(va);
+            println!("   0x{val:08x}");
+        }
+        println!();
+    }
+
+    if false {
+        let a = 0x8060_2ff8;
+        let v = read32(a);
+        println!("{a:016x} : {v:08x}");
+        let a = phys_to_virt(a);
+        let v = read32(a);
+        println!("{a:016x} : {v:08x}");
+        let a = 0x8060_2ffc;
+        let v = read32(a);
+        println!("{a:016x} : {v:08x}");
+        let a = phys_to_virt(a);
+        let v = read32(a);
+        println!("{a:016x} : {v:08x}");
+    }
 
     #[cfg(not(test))]
     sbi::shutdown();
     #[cfg(test)]
     loop {}
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::{PageTableEntry, PageTableFlags};
-
-    #[test]
-    fn test_pagetableentry() {
-        {
-            let entry = PageTableEntry {
-                ppn2: 0.try_into().unwrap(),
-                ppn1: 1.try_into().unwrap(),
-                ppn0: 2.try_into().unwrap(),
-                flags: PageTableFlags::W.union(PageTableFlags::R),
-            };
-            assert_eq!(entry.serialize(), 0b1_000000010_00_00000110);
-        }
-
-        {
-            let entry = PageTableEntry {
-                ppn2: 0x03f0_0000.try_into().unwrap(),
-                ppn1: 1.try_into().unwrap(),
-                ppn0: 2.try_into().unwrap(),
-                flags: PageTableFlags::W.union(PageTableFlags::R),
-            };
-            assert_eq!(
-                entry.serialize(),
-                0b11_1111_0000_0000_0000_0000_0000__000000001__000000010__00__00000110
-            );
-        }
-    }
 }

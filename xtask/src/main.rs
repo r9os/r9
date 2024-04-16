@@ -77,7 +77,9 @@ impl BuildParams {
         }
     }
 
-    fn add_build_arg(&self, cmd: &mut Command) {
+    /// Append build arguments to the given command.
+    /// NOTE: Be careful to do this _before_ any `--`, so that `rustc` gets it.
+    fn add_to_cmd(&self, cmd: &mut Command) {
         if let Profile::Release = self.profile {
             cmd.arg("--release");
         }
@@ -259,7 +261,7 @@ fn build(build_params: &BuildParams) -> Result<()> {
     cmd.arg("--workspace");
     cmd.arg("--exclude").arg("xtask");
     exclude_other_arches(build_params.arch, &mut cmd);
-    build_params.add_build_arg(&mut cmd);
+    build_params.add_to_cmd(&mut cmd);
     if build_params.verbose {
         println!("Executing {cmd:?}");
     }
@@ -274,12 +276,12 @@ fn expand(build_params: &BuildParams) -> Result<()> {
     let mut cmd = Command::new(cargo());
     cmd.current_dir(workspace());
     cmd.arg("rustc");
+    build_params.add_to_cmd(&mut cmd);
     cmd.arg("-Z").arg("build-std=core,alloc");
     cmd.arg("-p").arg(build_params.arch.to_string().to_lowercase());
     cmd.arg("--target").arg(format!("lib/{}.json", build_params.target()));
     cmd.arg("--");
     cmd.arg("-Z").arg("unpretty=expanded");
-    build_params.add_build_arg(&mut cmd);
     if build_params.verbose {
         println!("Executing {cmd:?}");
     }
@@ -294,11 +296,11 @@ fn kasm(build_params: &BuildParams) -> Result<()> {
     let mut cmd = Command::new(cargo());
     cmd.current_dir(workspace());
     cmd.arg("rustc");
+    build_params.add_to_cmd(&mut cmd);
     cmd.arg("-Z").arg("build-std=core,alloc");
     cmd.arg("-p").arg(build_params.arch.to_string().to_lowercase());
     cmd.arg("--target").arg(format!("lib/{}.json", build_params.target()));
     cmd.arg("--").arg("--emit").arg("asm");
-    build_params.add_build_arg(&mut cmd);
     if build_params.verbose {
         println!("Executing {cmd:?}");
     }
@@ -398,7 +400,7 @@ fn test(build_params: &BuildParams) -> Result<()> {
     cmd.arg("test");
     cmd.arg("--workspace");
     cmd.arg("--target").arg("x86_64-unknown-linux-gnu");
-    build_params.add_build_arg(&mut cmd);
+    build_params.add_to_cmd(&mut cmd);
     if build_params.verbose {
         println!("Executing {cmd:?}");
     }
@@ -420,7 +422,7 @@ fn clippy(build_params: &BuildParams) -> Result<()> {
     cmd.current_dir(workspace());
     cmd.arg("--workspace");
     exclude_other_arches(build_params.arch, &mut cmd);
-    build_params.add_build_arg(&mut cmd);
+    build_params.add_to_cmd(&mut cmd);
     if build_params.verbose {
         println!("Executing {cmd:?}");
     }

@@ -1,3 +1,6 @@
+// 0xFFFFFFFF40000000
+.equ PHYSICAL_MEMORY_OFFSET, (0xFFFFFFFFC0000000 - 0x80000000)
+
 .section .text.entry
 .globl start
 start:
@@ -27,7 +30,7 @@ start:
   srli    t4, t0, 12
 
   // subtract offset to get the physical address of the root page table
-  li      t1, 0xffffffffc0000000 - 0x80000000
+  li      t1, PHYSICAL_MEMORY_OFFSET
   sub     t2, t0, t1
 
   // page size is 4k (2^12) - drop lowest 12 bits
@@ -41,8 +44,10 @@ start:
   ori     t1, t4, 0xc1 // DAGU XWRV
   sd      t1, 8*255(t2) // #255
 
+  // flush TLB
   sfence.vma
   csrw    satp, t0
+  // flush TLB
   sfence.vma
 
 	// 3. jump to main9 (absolute address)
@@ -92,15 +97,18 @@ boot_page_table:
 //
 // NOTE: quad = 4 words = 4 double bytes = 8 bytes
 // https://ftp.gnu.org/old-gnu/Manuals/gas-2.9.1/html_chapter/as_7.html#SEC115
+// Those are leaf pages (at least on of RWX set), 1G (0x4000_0000) each.
+// 1st page: 0x00000000_00000000 -> 0x00000000 (1G) ???
 .quad (0x00000 << 10) | 0xcf // VRWXAD
-.quad (0x40000 << 10) | 0xcf // VRWXAD
+// 2nd page: 0x00000000_40000000 -> 0x40000000 (1G) ???
+.quad (0x00000 << 10) | 0xcf // VRWXAD
 // 3rd page: 0x00000000_c0000000 -> 0x80000000 (1G)
 .quad (0x80000 << 10) | 0xcf // VRWXAD
 // 504 empty entries
 .zero 506 * 8
-// 3rd last page: 0xffffffff_00000000 -> 0x00000000 (1G)
+// 3rd last page: 0xffffffff_00000000 -> 0x00000000 (1G) ???
 .quad (0x00000 << 10) | 0xcf // VRWXAD
 // 2nd last page: 0xffffffff_80000000 -> 0x40000000 (1G)
-.quad (0x40000 << 10) | 0xcf // VRWXAD
+.quad (0x80200 << 10) | 0xcf // VRWXAD
 // last page: 0xffffffff_c0000000 -> 0x80000000 (1G)
 .quad (0x80000 << 10) | 0xcf // VRWXAD
