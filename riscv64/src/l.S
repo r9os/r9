@@ -98,17 +98,21 @@ boot_page_table:
 // NOTE: quad = 4 words = 4 double bytes = 8 bytes
 // https://ftp.gnu.org/old-gnu/Manuals/gas-2.9.1/html_chapter/as_7.html#SEC115
 // Those are leaf pages (at least on of RWX set), 1G (0x4000_0000) each.
-// 1st page: 0x00000000_00000000 -> 0x00000000 (1G) ???
+
+// Identity map in the beginning
+//       1st page: 0x00000000_00000000 -> 0x00000000 (1G)
 .quad (0x00000 << 10) | 0xcf // VRWXAD
-// 2nd page: 0x00000000_40000000 -> 0x40000000 (1G) ???
-.quad (0x00000 << 10) | 0xcf // VRWXAD
-// 3rd page: 0x00000000_c0000000 -> 0x80000000 (1G)
+//       2nd page: 0x00000000_40000000 -> 0x40000000 (1G)
+.quad (0x40000 << 10) | 0xcf // VRWXAD
+//       3rd page: 0x00000000_80000000 -> 0x80000000 (1G)
 .quad (0x80000 << 10) | 0xcf // VRWXAD
 // 504 empty entries
+
+// Remap first 3GB in the end
 .zero 506 * 8
-// 3rd last page: 0xffffffff_00000000 -> 0x00000000 (1G) ???
+//  3rd last page: 0xffffffff_40000000 -> 0x00000000 (1G)
 .quad (0x00000 << 10) | 0xcf // VRWXAD
-// 2nd last page: 0xffffffff_80000000 -> 0x40000000 (1G)
+//  2nd last page: 0xffffffff_80000000 -> 0x40000000 (1G)
 .quad (0x40000 << 10) | 0xcf // VRWXAD
-// last page: 0xffffffff_c0000000 -> 0x80000000 (1G)
+// very last page: 0xffffffff_c0000000 -> 0x80000000 (1G)
 .quad (0x80000 << 10) | 0xcf // VRWXAD
