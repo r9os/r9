@@ -6,7 +6,7 @@ use port::println;
 
 const DEBUG_PHYS_TO_VIRT: bool = false;
 
-const PAGE_TABLE_SIZE: u64 = 4096;
+pub const PAGE_TABLE_SIZE: u64 = 4096;
 
 /// Convert physical address to virtual address
 /// See 4.3.2 Virtual Address Translation Process,
@@ -188,33 +188,33 @@ impl PageTable {
         println!("  PTE 0x{at:03x} ({at:03})  {:?}", self.get_entry(at));
     }
 
-    pub fn create_pt_at(&self, paddr: u64) -> PageTable {
+    pub fn create_entry_for(&self, paddr: u64, at: u16) -> PageTableEntry {
+        println!("  creating entry for 0x{paddr:08x}  ");
         let flags = PageTableFlags::W.union(PageTableFlags::R).union(PageTableFlags::V);
         let e = PageTableEntry::from_paddr(paddr, flags);
-        let eaddr = self.addr + Self::ENTRY_SIZE * 100;
-        println!("  write entry to 0x{eaddr:016x}");
+        // The entry goes to this table's own address + offset for the entry
+        let eaddr = self.addr + Self::ENTRY_SIZE * at as u64;
+        unsafe { e.write_to(eaddr) };
+        e
+    }
+
+    pub fn create_pt_at(&self, at: u16) -> PageTable {
+        let paddr = self.get_paddr() + PAGE_TABLE_SIZE;
+        println!("  creating new PT @ 0x{paddr:08x}  ");
+        let flags = PageTableFlags::A.union(PageTableFlags::V);
+        let e = PageTableEntry::from_paddr(paddr, flags);
+        let eaddr = self.addr + Self::ENTRY_SIZE * at as u64;
         unsafe { e.write_to(eaddr) };
         PageTable::new(paddr)
     }
 
-    pub fn create_next_level(&self) -> PageTable {
-        let e = PageTableEntry::from_paddr(self.get_paddr() + PAGE_TABLE_SIZE, PageTableFlags::V);
-        println!("  create next lvl entry {e:?}");
-        let eaddr = self.addr + Self::ENTRY_SIZE * 100;
-        println!("  write entry to 0x{eaddr:016x}");
-        unsafe { e.write_to(eaddr) };
-        PageTable::new(self.addr)
-    }
-
-    pub fn create_self_ref(&self) -> PageTable {
+    pub fn create_self_ref(&self, at: u16) -> PageTable {
         let a = self.get_paddr();
-        println!("  self ref entry  PT @ paddr {a:08x}  ");
+        println!("  self ref entry  PT @ 0x{a:08x}  ");
         let flags = PageTableFlags::V.union(PageTableFlags::A);
-        // let flags = PageTableFlags::W.union(PageTableFlags::R).union(PageTableFlags::V);
         let e = PageTableEntry::from_paddr(a, flags);
-        println!("  create self ref entry {e:?}");
-        let eaddr = self.addr + Self::ENTRY_SIZE * 4;
-        println!("  write entry to 0x{eaddr:016x}");
+        // The entry goes to this table's own address + offset for the entry
+        let eaddr = self.addr + Self::ENTRY_SIZE * at as u64;
         unsafe { e.write_to(eaddr) };
         PageTable::new(self.addr)
     }

@@ -109,6 +109,6 @@ boot_page_table:
 // 3rd last page: 0xffffffff_00000000 -> 0x00000000 (1G) ???
 .quad (0x00000 << 10) | 0xcf // VRWXAD
 // 2nd last page: 0xffffffff_80000000 -> 0x40000000 (1G)
-.quad (0x80200 << 10) | 0xcf // VRWXAD
+.quad (0x40000 << 10) | 0xcf // VRWXAD
 // last page: 0xffffffff_c0000000 -> 0x80000000 (1G)
 .quad (0x80000 << 10) | 0xcf // VRWXAD

@@ -253,119 +253,52 @@ pub extern "C" fn main9(hartid: usize, dtb_ptr: u64) -> ! {
     let val1 = u32::from_be(val1);
     println!(" 0x{vaddr:016x}: 0x{val1:08x}");
 
-    // .........
-    if false {
-        let a = 0x8020_0000;
-        let v = read32(a);
-        println!("{a:016x} : {v:08x}");
-        let a = phys_to_virt(a);
-        let v = read32(a);
-        println!("{a:016x} : {v:08x}");
-    }
-
+    // Let's create a new PT :)
+    println!("=== create new PT");
+    let pt_at = 100;
+    bpt.print_entry(pt_at);
+    let pt = bpt.create_pt_at(pt_at);
+    println!(" new pt @ {:016x} ({:08x})", pt.get_vaddr(), pt.get_paddr());
+    bpt.print_entry(pt_at);
     println!();
-    println!("    ======= virtual address construction pt 1");
-    // 0xfffffffffffff000
-    let ppn2 = 0x1ff << (9 + 9 + 12);
-    let ppn1 = 0x1ff << (9 + 12);
-    let ppn0 = 0x1ff << 12;
-    let poff = 0x0;
-    let va = VFIXED | ppn2 | ppn1 | ppn0 | poff;
-    let vaddr = VirtualAddress::from(va as u64);
+
+    // Let's create a PTE for the kernel :)
+    let kernel_entry_pos = 4;
+    bpt.print_entry(kernel_entry_pos);
+    // create an entry resolving to the kernel's base addr
+    let _ = bpt.create_entry_for(0x8020_0000, kernel_entry_pos);
+    bpt.print_entry(kernel_entry_pos);
+    println!();
+
+    println!("=== create self reference");
+    let self_ref_pos = 5;
+    println!(" boot page table before: ");
+    bpt.print_entry(self_ref_pos);
+    let spt = bpt.create_self_ref(self_ref_pos);
+    flush_tlb();
+    println!();
+    println!(" boot page table after: ");
+    bpt.print_entry(self_ref_pos);
+    println!(" self reference pt: ");
+    spt.print_entry(self_ref_pos);
+    println!();
+    println!();
+
+    // point to first byte of the kernel
+    let vaddr = VirtualAddress {
+        vpn2: memory::SizedInteger::<9>(self_ref_pos as u64),
+        vpn1: memory::SizedInteger::<9>(kernel_entry_pos as u64),
+        vpn0: memory::SizedInteger::<9>(0),
+        offset: memory::SizedInteger::<12>(0),
+    };
+    let va = vaddr.get() as usize;
     println!(" 0x{va:016x} = {vaddr:?}");
     let val = read32(va);
     println!("   0x{val:08x}");
-    write32(va, 0x1234_5678);
+    // write32(va, 0x1234_5678);
     let val = read32(va);
     println!("   0x{val:08x}");
     println!();
-
-    if false {
-        // let va = 0xffff_ffff__c060_2ffc;
-    }
-
-    if false {
-        // Let's create a new PTE :)
-        bpt.print_entry(100);
-        let pt = bpt.create_pt_at(0x8200_0000);
-        println!(" new pt @ {:016x} ({:08x})", pt.get_vaddr(), pt.get_paddr());
-        bpt.print_entry(100);
-        println!();
-    }
-
-    if false {
-        bpt.print_entry(150);
-        let npt = bpt.create_next_level();
-        println!(" new level pt @ {:016x} ({:08x})", npt.get_vaddr(), npt.get_paddr());
-        println!(" boot page table: ");
-        bpt.print_entry(150);
-        println!(" new page table: ");
-        npt.print_entry(150);
-        println!();
-        println!();
-    }
-
-    if false {
-        let a = 0x8060_2000;
-        let v = read32(a);
-        println!("{a:016x} : {v:08x}");
-        let a = phys_to_virt(a);
-        let v = read32(a);
-        println!("{a:016x} : {v:08x}");
-        let a = 0x8060_2004;
-        let v = read32(a);
-        println!("{a:016x} : {v:08x}");
-        let a = phys_to_virt(a);
-        let v = read32(a);
-        println!("{a:016x} : {v:08x}");
-    }
-
-    if true {
-        println!(" boot page table: ");
-        bpt.print_entry(511);
-        let spt = bpt.create_self_ref();
-        flush_tlb();
-        println!();
-        println!();
-        println!(" boot page table: ");
-        bpt.print_entry(511);
-        println!(" self reference pt: ");
-        spt.print_entry(4);
-        println!();
-        println!();
-
-        let vaddr = VirtualAddress {
-            vpn2: memory::SizedInteger::<9>(4),
-            vpn1: memory::SizedInteger::<9>(510),
-            vpn0: memory::SizedInteger::<9>(0),
-            offset: memory::SizedInteger::<12>(0),
-        };
-        let va = vaddr.get() as usize;
-        println!(" 0x{va:016x} = {vaddr:?}");
-        if true {
-            let val = read32(va);
-            println!("   0x{val:08x}");
-            write32(va, 0x1234_5678);
-            let val = read32(va);
-            println!("   0x{val:08x}");
-        }
-        println!();
-    }
-
-    if false {
-        let a = 0x8060_2ff8;
-        let v = read32(a);
-        println!("{a:016x} : {v:08x}");
-        let a = phys_to_virt(a);
-        let v = read32(a);
-        println!("{a:016x} : {v:08x}");
-        let a = 0x8060_2ffc;
-        let v = read32(a);
-        println!("{a:016x} : {v:08x}");
-        let a = phys_to_virt(a);
-        let v = read32(a);
-        println!("{a:016x} : {v:08x}");
-    }
 
     #[cfg(not(test))]
     sbi::shutdown();
