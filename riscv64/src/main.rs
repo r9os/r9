@@ -43,7 +43,7 @@ const LOGO: &str = "
 ";
 
 const WHERE_ARE_WE: bool = true;
-const WALK_DT: bool = false;
+const WALK_DT: bool = true;
 
 /// debug helper - dump some memory range
 pub fn dump(addr: usize, length: usize) {
@@ -145,7 +145,7 @@ fn consume_dt_block(name: &str, a: u64, l: u64) {
 fn walk_dt(dt: &DeviceTree) {
     dt.nodes().for_each(|n| {
         let name = dt.node_name(&n);
-        if false {
+        if true {
             if let Some(name) = name {
                 let p = dt.property(&n, "start");
                 println!("{name:?}: {n:#?} {p:?}");
@@ -178,6 +178,31 @@ fn where_are_we() {
 fn flush_tlb() {
     // unsafe { core::arch::riscv64::sinval_vma_all() }
     unsafe { core::arch::asm!("sfence.vma") }
+}
+
+const KERNEL_LOAD_ADDR: usize = 0x8020_0000;
+
+// fixed 25 bits, used 39 bits
+const VFIXED: usize = 0xff_ff_ff_80__00_00_00_00;
+
+fn check_dtb_mapping(dtb_ptr: u64) {
+    let ptr = dtb_ptr as usize;
+    // NOTE: The DTB signature is big-endian.
+    let sig = u32::from_be(read32(ptr));
+    if sig != 0xd00dfeed {
+        println!(" 0x{dtb_ptr:016x}: 0x{sig:08x}");
+        panic!("DTB not found :(");
+    }
+
+    // We remap the first 3G via the last 3 PTEs
+    let ppn2 = 511 << (9 + 9 + 12);
+    let vaddr = VFIXED | ppn2 | ptr;
+
+    let sig = u32::from_be(read32(vaddr));
+    if sig != 0xd00dfeed {
+        println!(" 0x{vaddr:016x}: 0x{sig:08x}");
+        panic!("DTB not found :(");
+    }
 }
 
 #[no_mangle]
@@ -234,24 +259,7 @@ pub extern "C" fn main9(hartid: usize, dtb_ptr: u64) -> ! {
     println!();
     println!();
 
-    // fixed 25 bits, used 39 bits
-    // construct 0xffff_ffff_ff00_0000
-    // This is where the DTB should be remapped
-    const VFIXED: usize = 0xff_ff_ff_80__00_00_00_00;
-    let ppn2 = 0x1ff << (9 + 9 + 12);
-    let ppn1 = 0x1f8 << (9 + 12);
-    let ppn0 = 0; // 0x1ff << 12;
-    let poff = 0x0;
-    let vaddr = VFIXED | ppn2 | ppn1 | ppn0 | poff;
-
-    // DTB original
-    let val0 = read32(dtb_ptr as usize);
-    let val0 = u32::from_be(val0);
-    println!(" 0x{dtb_ptr:016x}: 0x{val0:08x}");
-    // DTB remapped
-    let val1 = read32(vaddr);
-    let val1 = u32::from_be(val1);
-    println!(" 0x{vaddr:016x}: 0x{val1:08x}");
+    check_dtb_mapping(dtb_ptr);
 
     // Let's create a new PT :)
     println!("=== create new PT");
@@ -266,7 +274,7 @@ pub extern "C" fn main9(hartid: usize, dtb_ptr: u64) -> ! {
     let kernel_entry_pos = 4;
     bpt.print_entry(kernel_entry_pos);
     // create an entry resolving to the kernel's base addr
-    let _ = bpt.create_entry_for(0x8020_0000, kernel_entry_pos);
+    let _ = bpt.create_entry_for(KERNEL_LOAD_ADDR as u64, kernel_entry_pos);
     bpt.print_entry(kernel_entry_pos);
     println!();
 
@@ -293,11 +301,8 @@ pub extern "C" fn main9(hartid: usize, dtb_ptr: u64) -> ! {
     };
     let va = vaddr.get() as usize;
     println!(" 0x{va:016x} = {vaddr:?}");
-    let val = read32(va);
-    println!("   0x{val:08x}");
+    dump(va, 64);
     // write32(va, 0x1234_5678);
-    let val = read32(va);
-    println!("   0x{val:08x}");
     println!();
 
     #[cfg(not(test))]
