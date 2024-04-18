@@ -305,6 +305,16 @@ pub extern "C" fn main9(hartid: usize, dtb_ptr: u64) -> ! {
     // write32(va, 0x1234_5678);
     println!();
 
+    let vaddr = VirtualAddress {
+        vpn2: memory::SizedInteger::<9>(self_ref_pos as u64),
+        vpn1: memory::SizedInteger::<9>(self_ref_pos as u64),
+        vpn0: memory::SizedInteger::<9>(kernel_entry_pos as u64),
+        offset: memory::SizedInteger::<12>(0),
+    };
+    let va = vaddr.get() as usize;
+    println!(" 0x{va:016x} = {vaddr:?}");
+    dump(va, 64);
+
     #[cfg(not(test))]
     sbi::shutdown();
     #[cfg(test)]
