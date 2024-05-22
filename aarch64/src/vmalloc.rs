@@ -3,40 +3,54 @@ use core::mem::MaybeUninit;
 use port::{
     boundarytag::Arena,
     mcslock::{Lock, LockNode},
+    mem::VirtRange,
 };
-
-use crate::kmem::heap_virtrange;
 
 static VMALLOC: Lock<Option<&'static mut VmAlloc>> = Lock::new("vmalloc", None);
 
+static mut EARLY_TAGS_PAGE: [u8; 4096] = [0; 4096];
+
 struct VmAlloc {
-    _heap_arena: Arena,
+    heap_arena: Arena,
 }
 
 impl VmAlloc {
-    fn new() -> Self {
-        let heap_range = heap_virtrange();
+    fn new(heap_range: VirtRange) -> Self {
         let quantum = 4096;
+
+        let early_tags_ptr = unsafe { &EARLY_TAGS_PAGE as *const _ as usize };
+        let early_tags_size = unsafe { EARLY_TAGS_PAGE.len() };
+        let early_tags_range = VirtRange::with_len(early_tags_ptr, early_tags_size);
+
         Self {
-            _heap_arena: Arena::new_with_static_range(
+            heap_arena: Arena::new_with_static_range(
                 "heap",
                 heap_range.start(),
                 heap_range.size(),
                 quantum,
-                heap_range,
+                early_tags_range,
             ),
         }
     }
 }
 
-pub fn init() {
+pub fn init(heap_range: VirtRange) {
     let node = LockNode::new();
     let mut vmalloc = VMALLOC.lock(&node);
     *vmalloc = Some({
         static mut MAYBE_VMALLOC: MaybeUninit<VmAlloc> = MaybeUninit::uninit();
         unsafe {
-            MAYBE_VMALLOC.write(VmAlloc::new());
+            MAYBE_VMALLOC.write(VmAlloc::new(heap_range));
             MAYBE_VMALLOC.assume_init_mut()
         }
     });
+}
+
+// TODO Add VmFlag (BestFit, InstantFit, NextFit)
+
+pub fn alloc(size: usize) -> *mut u8 {
+    let node = LockNode::new();
+    let mut lock = VMALLOC.lock(&node);
+    let vmalloc = lock.as_deref_mut().unwrap();
+    vmalloc.heap_arena.alloc(size)
 }

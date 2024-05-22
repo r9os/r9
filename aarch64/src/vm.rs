@@ -2,8 +2,8 @@
 
 use crate::{
     kmem::{
-        from_ptr_to_physaddr, kernel_bss_physrange, kernel_data_physrange, kernel_heap_physrange,
-        kernel_text_physrange, physaddr_as_ptr_mut, physaddr_as_virt,
+        from_ptr_to_physaddr, heap_virtrange, kernel_bss_physrange, kernel_data_physrange,
+        kernel_heap_physrange, kernel_text_physrange, physaddr_as_ptr_mut, physaddr_as_virt,
     },
     pagealloc,
     registers::rpi_mmio,
@@ -469,7 +469,7 @@ fn print_pte(indent: usize, i: usize, level: Level, pte: Entry) {
 
 pub unsafe fn init(kpage_table: &mut PageTable, dtb_range: PhysRange, available_mem: PhysRange) {
     pagealloc::init_page_allocator();
-    vmalloc::init();
+    vmalloc::init(heap_virtrange());
 
     // We use recursive page tables, but we have to be careful in the init call,
     // since the kpage_table is not currently pointed to by ttbr1_el1.  Any

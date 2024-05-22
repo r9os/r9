@@ -61,7 +61,7 @@ fn print_memory_info() {
     let vc_mem = mailbox::get_vc_memory();
     println!("  Video:\t{vc_mem} ({:#x})", vc_mem.size());
 
-    println!("Memory usage::");
+    println!("Memory usage:");
     let (used, total) = pagealloc::usage_bytes();
     println!("  Used:\t\t{used:#016x}");
     println!("  Total:\t{total:#016x}");
@@ -127,6 +127,13 @@ pub extern "C" fn main9(dtb_va: usize) {
     kernel_root().print_recursive_tables();
 
     println!("looping now");
+
+    {
+        let test = vmalloc::alloc(1024);
+        println!("test alloc: {:p}", test);
+        let test2 = vmalloc::alloc(1024);
+        println!("test alloc: {:p}", test2);
+    }
 
     #[allow(clippy::empty_loop)]
     loop {}
