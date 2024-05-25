@@ -1,4 +1,4 @@
-use core::{fmt, ptr::null_mut, slice};
+use core::{ptr::null_mut, slice};
 
 use crate::mem::VirtRange;
 
@@ -15,12 +15,13 @@ pub enum BoundaryError {
 #[derive(Debug, PartialEq)]
 pub enum AllocError {
     NoSpace,
+    AllocationNotFound,
 }
 
 #[cfg(test)]
 type BoundaryResult<T> = core::result::Result<T, BoundaryError>;
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct Boundary {
     start: usize,
     size: usize,
@@ -54,14 +55,14 @@ impl Boundary {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum TagType {
     Allocated,
     Free,
     Span,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct Tag {
     tag_type: TagType,
     boundary: Boundary,
@@ -213,6 +214,19 @@ impl TagList {
         }
     }
 
+    /// Remove tag_item from the list.  Placing tag_item onto the free list is
+    /// the callers responsibility.
+    fn unlink(tag_item: &mut TagItem) {
+        if let Some(prev) = unsafe { tag_item.prev.as_mut() } {
+            prev.next = tag_item.next;
+        }
+        if let Some(next) = unsafe { tag_item.next.as_mut() } {
+            next.prev = tag_item.prev;
+        }
+        tag_item.next = null_mut();
+        tag_item.prev = null_mut();
+    }
+
     fn len(&self) -> usize {
         let mut n = 0;
         let mut curr_tag = self.tags;
@@ -223,7 +237,6 @@ impl TagList {
         n
     }
 
-    #[cfg(test)]
     fn tags_iter(&self) -> impl Iterator<Item = Tag> + '_ {
         let mut curr_tag_item = self.tags;
         core::iter::from_fn(move || {
@@ -348,7 +361,7 @@ impl Arena {
 
     pub fn free(&mut self, addr: *mut u8) {
         // TODO Look up in allocation hashtable
-        panic!("can't free before allocation hashtable set up");
+        let _ = self.free_segment(addr as usize);
     }
 
     /// Allocate a segment, returned as a boundary
@@ -369,10 +382,12 @@ impl Arena {
         let mut curr_item = self.used_tags.tags;
         while let Some(item) = unsafe { curr_item.as_mut() } {
             if item.tag.tag_type == TagType::Free && item.tag.boundary.size >= size {
-                // Mark this tag as allocated, and if there's any left over space, create and insert a new tag
+                // Mark this tag as allocated, and if there's any left over space,
+                // create and insert a new tag
                 item.tag.tag_type = TagType::Allocated;
                 if item.tag.boundary.size > size {
-                    // Work out the size of the new free item, and change the size of the current, now allocated, item
+                    // Work out the size of the new free item, and change the size
+                    // of the current, now allocated, item
                     let remainder = item.tag.boundary.size - size;
                     item.tag.boundary.size = size;
 
@@ -397,49 +412,89 @@ impl Arena {
         Err(AllocError::NoSpace)
     }
 
-    // Free addr.  We need to know size in case the previous allocation was
-    // merged with others around it.
+    // Free addr.  We don't need to know size because we don't merge allocations.
+    // (We only merge freed segments)
     // TODO Error on precondition fail
     // TODO Use hashmap if available
-    // TODO Return Result
-    fn free_segment(&mut self, boundary: Boundary) {
+    fn free_segment(&mut self, addr: usize) -> Result<(), AllocError> {
         // Need to manually scan the used tags
-        let start = boundary.start as usize;
-        let end = boundary.end();
         let mut curr_item = self.used_tags.tags;
         while let Some(item) = unsafe { curr_item.as_mut() } {
-            if item.tag.boundary.start <= start && item.tag.boundary.end() <= end {
+            if item.tag.boundary.start == addr && item.tag.tag_type == TagType::Allocated {
                 break;
             }
             curr_item = item.next;
         }
 
         if curr_item.is_null() {
-            // TODO Return error
-            return;
+            return Err(AllocError::AllocationNotFound);
         }
 
-        // Found tag to free.  Cases:
-        // Allocated segment encloses segment exactly:
-        //  - If segment to the left is a span and segment to the right is a span or doesn't exist, then change segment to free
-        //  - If segment to the left is free and segment to the right is a span or doesn't exist, then change left segment size
-        // Allocated segment encloses segment to free with space to the left and right:
-        //  - Split existing segment, create new tag for free segment, new tag for allocated segment to the right
-        // Allocated segment starts before but ends at same point of segment to free:
-        //  - If the segment to the right is a span, insert a new free segment.
-        //  - If the segment to the right is free, merge by changing start of that segment.
-        // Allocated segment starts at same point of segment to free but ends after;
-        //  - If the segment to the left is a span, insert a new free segment.
-        //  - If the segment to the left is free, merge by changing end of that segment.
+        let mut curr_tag: &mut TagItem = unsafe { curr_item.as_mut() }.unwrap();
+
+        // Found tag to free
+        let prev_type = unsafe { curr_tag.prev.as_ref() }.map(|t| t.tag.tag_type);
+        let next_type = unsafe { curr_tag.next.as_ref() }.map(|t| t.tag.tag_type);
+
+        match (prev_type, next_type) {
+            (Some(TagType::Allocated), Some(TagType::Allocated))
+            | (Some(TagType::Span), Some(TagType::Span))
+            | (Some(TagType::Span), Some(TagType::Allocated))
+            | (Some(TagType::Allocated), Some(TagType::Span))
+            | (Some(TagType::Span), None)
+            | (Some(TagType::Allocated), None) => {
+                // No frees on either side
+                // -> Change curr_tag to free
+                curr_tag.tag.tag_type = TagType::Free;
+            }
+            (Some(TagType::Span), Some(TagType::Free))
+            | (Some(TagType::Allocated), Some(TagType::Free)) => {
+                // Prev non-free, next free
+                // Change next tag start to merge with curr_tag, release curr_tag
+                let next = unsafe { curr_tag.next.as_mut() }.unwrap();
+                next.tag.boundary.start = curr_tag.tag.boundary.start;
+                next.tag.boundary.size += curr_tag.tag.boundary.size;
+                TagList::unlink(&mut curr_tag);
+                self.free_tags.push(&mut curr_tag);
+            }
+            (Some(TagType::Free), None)
+            | (Some(TagType::Free), Some(TagType::Span))
+            | (Some(TagType::Free), Some(TagType::Allocated)) => {
+                // Prev free, next non-free
+                // Change prev tag size to merge with curr_tag, release curr_tag
+                let prev = unsafe { curr_tag.prev.as_mut() }.unwrap();
+                prev.tag.boundary.size += curr_tag.tag.boundary.size;
+                TagList::unlink(&mut curr_tag);
+                self.free_tags.push(&mut curr_tag);
+            }
+            (Some(TagType::Free), Some(TagType::Free)) => {
+                // Prev and next both free
+                // Change prev size to merge with both curr_tag and next, release curr_tag
+                let prev = unsafe { curr_tag.prev.as_mut() }.unwrap();
+                let mut next = unsafe { curr_tag.next.as_mut() }.unwrap();
+                prev.tag.boundary.size += curr_tag.tag.boundary.size + next.tag.boundary.size;
+                TagList::unlink(&mut curr_tag);
+                TagList::unlink(&mut next);
+                self.free_tags.push(&mut curr_tag);
+                self.free_tags.push(&mut next);
+            }
+            (None, None)
+            | (None, Some(TagType::Span))
+            | (None, Some(TagType::Allocated))
+            | (None, Some(TagType::Free)) => {
+                self.assert_tags_are_consistent();
+                panic!("Unexpected tags when freeing");
+            }
+        }
+
+        Ok(())
     }
 
-    #[cfg(test)]
     fn tags_iter(&self) -> impl Iterator<Item = Tag> + '_ {
         self.used_tags.tags_iter()
     }
 
     /// Checks that all invariants are correct.
-    #[cfg(test)]
     fn assert_tags_are_consistent(&self) {
         // There must be at least 2 tags
         debug_assert!(self.used_tags.len() >= 2);
@@ -484,21 +539,12 @@ impl Arena {
                     }
                     last_span = Some(tag);
                 }
-                TagType::Allocated => {
+                TagType::Allocated | TagType::Free => {
                     last_span_total += tag.boundary.size;
                     // First tag after span should have same start as span
                     if last_tag.is_some_and(|t| t.tag_type == TagType::Span) {
                         debug_assert_eq!(tag.boundary.start, last_tag.unwrap().boundary.start);
                     }
-                }
-                TagType::Free => {
-                    last_span_total += tag.boundary.size;
-                    // First tag after span should have same start as span
-                    if last_tag.is_some_and(|t| t.tag_type == TagType::Span) {
-                        debug_assert_eq!(tag.boundary.start, last_tag.unwrap().boundary.start);
-                    }
-                    // Free tag must be last in span
-                    debug_assert_eq!(last_span_total, last_span.unwrap().boundary.size);
                 }
             }
             last_tag = Some(tag);
@@ -645,6 +691,7 @@ mod tests {
     #[test]
     fn test_arena_create() {
         let arena = create_arena_with_static_tags("test", 4096, 4096 * 20, 4096);
+        assert_eq!(arena.free_tags.len(), 100);
 
         assert_tags_eq(
             &arena,
@@ -681,13 +728,15 @@ mod tests {
     #[test]
     fn test_arena_free() {
         let mut arena = create_arena_with_static_tags("test", 4096, 4096 * 20, 4096);
+        assert_eq!(arena.free_tags.len(), 100);
 
         // We need to test each case where we're freeing by scanning the tags linearly.
         // To do this we run through each case (comments from the `free` function)
 
-        // Allocated segment encloses segment exactly:
-        //  - If segment to the left is a span and segment to the right is a span or doesn't exist, then change segment to free
-        let a = arena.alloc(4096);
+        // Prev and next both non-free
+        // Change curr_tag to free
+        let a1 = arena.alloc(4096);
+        assert_eq!(arena.free_tags.len(), 99);
         assert_tags_eq(
             &arena,
             &[
@@ -696,18 +745,46 @@ mod tests {
                 Tag::new(TagType::Free, Boundary::new(4096 * 2, 4096 * 19).unwrap()),
             ],
         );
-        arena.free(a);
+        arena.free(a1);
+        assert_eq!(arena.free_tags.len(), 100);
+        assert_tags_eq(
+            &arena,
+            &[
+                Tag::new(TagType::Span, Boundary::new(4096, 4096 * 20).unwrap()),
+                Tag::new(TagType::Free, Boundary::new(4096, 4096 * 20).unwrap()),
+            ],
+        );
 
-        //  - If segment to the left is free and segment to the right is a span, or doesn't exist then change left segment size
+        // Prev non-free, next free
+        // Change next tag start to merge with curr_tag, release curr_tag
+        let a1 = arena.alloc(4096);
+        let _ = arena.alloc(4096);
+        assert_eq!(arena.free_tags.len(), 98);
+        assert_tags_eq(
+            &arena,
+            &[
+                Tag::new(TagType::Span, Boundary::new(4096, 4096 * 20).unwrap()),
+                Tag::new(TagType::Allocated, Boundary::new(4096, 4096).unwrap()),
+                Tag::new(TagType::Allocated, Boundary::new(4096 * 2, 4096).unwrap()),
+                Tag::new(TagType::Free, Boundary::new(4096 * 3, 4096 * 18).unwrap()),
+            ],
+        );
+        arena.free(a1);
+        assert_eq!(arena.free_tags.len(), 98);
+        assert_tags_eq(
+            &arena,
+            &[
+                Tag::new(TagType::Span, Boundary::new(4096, 4096 * 20).unwrap()),
+                Tag::new(TagType::Free, Boundary::new(4096, 4096).unwrap()),
+                Tag::new(TagType::Allocated, Boundary::new(4096 * 2, 4096).unwrap()),
+                Tag::new(TagType::Free, Boundary::new(4096 * 3, 4096 * 18).unwrap()),
+            ],
+        );
 
-        // Allocated segment encloses segment to free with space to the left and right:
-        //  - Split existing segment, create new tag for free segment, new tag for allocated segment to the right
+        // Prev free, next non-free
+        // Change prev tag size to merge with curr_tag, release curr_tag
 
-        // Allocated segment starts before but ends at same point of segment to free:
-        //  - If the segment to the right is a span, insert a new free segment.
-        //  - If the segment to the right is free, merge by changing start of that segment.
-        // Allocated segment starts at same point of segment to free but ends after;
-        //  - If the segment to the left is a span, insert a new free segment.
-        //  - If the segment to the left is free, merge by changing end of that segment.
+        // Prev and next both free
+        // Change prev size to merge with both curr_tag and next, release curr_tag
     }
 }
