@@ -734,31 +734,8 @@ mod tests {
         // To do this we run through each case (comments from the `free` function)
 
         // Prev and next both non-free
-        // Change curr_tag to free
         let a1 = arena.alloc(4096);
-        assert_eq!(arena.free_tags.len(), 99);
-        assert_tags_eq(
-            &arena,
-            &[
-                Tag::new(TagType::Span, Boundary::new(4096, 4096 * 20).unwrap()),
-                Tag::new(TagType::Allocated, Boundary::new(4096, 4096).unwrap()),
-                Tag::new(TagType::Free, Boundary::new(4096 * 2, 4096 * 19).unwrap()),
-            ],
-        );
-        arena.free(a1);
-        assert_eq!(arena.free_tags.len(), 100);
-        assert_tags_eq(
-            &arena,
-            &[
-                Tag::new(TagType::Span, Boundary::new(4096, 4096 * 20).unwrap()),
-                Tag::new(TagType::Free, Boundary::new(4096, 4096 * 20).unwrap()),
-            ],
-        );
-
-        // Prev non-free, next free
-        // Change next tag start to merge with curr_tag, release curr_tag
-        let a1 = arena.alloc(4096);
-        let _ = arena.alloc(4096);
+        let a2 = arena.alloc(4096);
         assert_eq!(arena.free_tags.len(), 98);
         assert_tags_eq(
             &arena,
@@ -781,10 +758,65 @@ mod tests {
             ],
         );
 
-        // Prev free, next non-free
-        // Change prev tag size to merge with curr_tag, release curr_tag
-
         // Prev and next both free
-        // Change prev size to merge with both curr_tag and next, release curr_tag
+        arena.free(a2);
+        assert_eq!(arena.free_tags.len(), 100);
+        assert_tags_eq(
+            &arena,
+            &[
+                Tag::new(TagType::Span, Boundary::new(4096, 4096 * 20).unwrap()),
+                Tag::new(TagType::Free, Boundary::new(4096, 4096 * 20).unwrap()),
+            ],
+        );
+
+        // Prev free, next non-free
+        let a1 = arena.alloc(4096);
+        let a2 = arena.alloc(4096);
+        let a3 = arena.alloc(4096);
+        arena.free(a1);
+        assert_eq!(arena.free_tags.len(), 97);
+        assert_tags_eq(
+            &arena,
+            &[
+                Tag::new(TagType::Span, Boundary::new(4096, 4096 * 20).unwrap()),
+                Tag::new(TagType::Free, Boundary::new(4096, 4096).unwrap()),
+                Tag::new(TagType::Allocated, Boundary::new(4096 * 2, 4096).unwrap()),
+                Tag::new(TagType::Allocated, Boundary::new(4096 * 3, 4096).unwrap()),
+                Tag::new(TagType::Free, Boundary::new(4096 * 4, 4096 * 17).unwrap()),
+            ],
+        );
+        arena.free(a2);
+        assert_eq!(arena.free_tags.len(), 98);
+        assert_tags_eq(
+            &arena,
+            &[
+                Tag::new(TagType::Span, Boundary::new(4096, 4096 * 20).unwrap()),
+                Tag::new(TagType::Free, Boundary::new(4096, 4096 * 2).unwrap()),
+                Tag::new(TagType::Allocated, Boundary::new(4096 * 3, 4096).unwrap()),
+                Tag::new(TagType::Free, Boundary::new(4096 * 4, 4096 * 17).unwrap()),
+            ],
+        );
+
+        // Prev non-free, next free
+        arena.free(a3);
+        let a1 = arena.alloc(4096);
+        assert_eq!(arena.free_tags.len(), 99);
+        assert_tags_eq(
+            &arena,
+            &[
+                Tag::new(TagType::Span, Boundary::new(4096, 4096 * 20).unwrap()),
+                Tag::new(TagType::Allocated, Boundary::new(4096, 4096).unwrap()),
+                Tag::new(TagType::Free, Boundary::new(4096 * 2, 4096 * 19).unwrap()),
+            ],
+        );
+        arena.free(a1);
+        assert_eq!(arena.free_tags.len(), 100);
+        assert_tags_eq(
+            &arena,
+            &[
+                Tag::new(TagType::Span, Boundary::new(4096, 4096 * 20).unwrap()),
+                Tag::new(TagType::Free, Boundary::new(4096, 4096 * 20).unwrap()),
+            ],
+        );
     }
 }
