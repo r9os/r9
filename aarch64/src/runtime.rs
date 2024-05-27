@@ -40,9 +40,9 @@ fn oom(_layout: Layout) -> ! {
     panic!("oom");
 }
 
-struct FakeAlloc;
+struct VmemAllocator;
 
-unsafe impl GlobalAlloc for FakeAlloc {
+unsafe impl GlobalAlloc for VmemAllocator {
     unsafe fn alloc(&self, _layout: Layout) -> *mut u8 {
         panic!("fake alloc");
     }
@@ -52,4 +52,4 @@ unsafe impl GlobalAlloc for FakeAlloc {
 }
 
 #[global_allocator]
-static FAKE_ALLOCATOR: FakeAlloc = FakeAlloc {};
+static VMEM_ALLOCATOR: VmemAllocator = VmemAllocator {};

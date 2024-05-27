@@ -1,9 +1,9 @@
 use core::mem::MaybeUninit;
 
 use port::{
-    boundarytag::Arena,
     mcslock::{Lock, LockNode},
     mem::VirtRange,
+    vmem::Arena,
 };
 
 static VMALLOC: Lock<Option<&'static mut VmAlloc>> = Lock::new("vmalloc", None);
@@ -45,8 +45,6 @@ pub fn init(heap_range: VirtRange) {
         }
     });
 }
-
-// TODO Add VmFlag (BestFit, InstantFit, NextFit)
 
 pub fn alloc(size: usize) -> *mut u8 {
     let node = LockNode::new();

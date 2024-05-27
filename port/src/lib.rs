@@ -5,9 +5,9 @@
 #![forbid(unsafe_op_in_unsafe_fn)]
 
 pub mod bitmapalloc;
-pub mod boundarytag;
 pub mod dat;
 pub mod devcons;
 pub mod fdt;
 pub mod mcslock;
 pub mod mem;
+pub mod vmem;
