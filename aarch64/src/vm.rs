@@ -273,6 +273,7 @@ fn recursive_table_addr(va: usize, level: Level) -> usize {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum PageTableError {
     AllocationFailed(BitmapPageAllocError),
     EntryIsNotTable,
