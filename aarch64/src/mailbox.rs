@@ -185,6 +185,7 @@ struct MemoryResponse {
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
 pub struct MemoryInfo {
     pub start: u32,
     pub size: u32,

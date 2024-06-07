@@ -5,8 +5,6 @@
 #![feature(alloc_error_handler)]
 #![feature(asm_const)]
 #![feature(core_intrinsics)]
-#![feature(inline_const)]
-#![feature(stdsimd)]
 #![feature(strict_provenance)]
 #![forbid(unsafe_op_in_unsafe_fn)]
 
