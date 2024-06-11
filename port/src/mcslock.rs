@@ -28,6 +28,12 @@ impl LockNode {
     }
 }
 
+impl Default for LockNode {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// An MCS lock.
 pub struct MCSLock {
     _name: &'static str,

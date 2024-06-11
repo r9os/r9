@@ -59,7 +59,8 @@ impl<'a> DeviceTree<'a> {
     /// Create new DeviceTree based on memory pointed to by data.
     /// Result is error if the header can't be parsed correctly.
     pub fn new(data: &'a [u8]) -> Result<Self> {
-        let uninit_data = unsafe { core::mem::transmute(data) };
+        let uninit_data =
+            unsafe { core::mem::transmute::<&[u8], &[core::mem::MaybeUninit<u8>]>(data) };
         FdtHeader::new(uninit_data, false).map(|header| Self { data: uninit_data, header })
     }
 
@@ -76,7 +77,7 @@ impl<'a> DeviceTree<'a> {
 
         // Extract the real length from the header
         let dtb_buf_for_header: &[mem::MaybeUninit<u8>] =
-            unsafe { core::slice::from_raw_parts(u8ptr, mem::size_of::<FdtHeader>()) };
+            unsafe { core::slice::from_raw_parts(u8ptr, size_of::<FdtHeader>()) };
         let dtb_for_header = FdtHeader::new(dtb_buf_for_header, true)
             .map(|header| Self { data: dtb_buf_for_header, header })?;
         let len = dtb_for_header.header.totalsize as usize;

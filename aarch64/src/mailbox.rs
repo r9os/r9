@@ -1,6 +1,5 @@
 use crate::io::{read_reg, write_reg};
 use crate::param::KZERO;
-use core::mem;
 use core::mem::MaybeUninit;
 use port::fdt::DeviceTree;
 use port::mcslock::{Lock, LockNode};
@@ -121,7 +120,7 @@ where
     T: Copy,
     U: Copy,
 {
-    let size = mem::size_of::<Message<T, U>>() as u32;
+    let size = size_of::<Message<T, U>>() as u32;
     let req = Request::<Tag<T>> { size, code, tags: *tags };
     let mut msg = MessageWithTags { request: req };
     let node = LockNode::new();

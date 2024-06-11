@@ -4,4 +4,4 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-bitflags = "2.3.3"
+bitflags = "2.5"
