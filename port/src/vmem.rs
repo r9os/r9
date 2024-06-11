@@ -554,7 +554,6 @@ impl Arena {
 
 #[cfg(test)]
 mod tests {
-    use core::mem::size_of;
 
     use super::*;
 

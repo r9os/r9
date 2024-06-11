@@ -1,4 +1,4 @@
-use core::mem::MaybeUninit;
+use core::{mem::MaybeUninit, ptr::addr_of};
 
 use port::{
     mcslock::{Lock, LockNode},
@@ -18,7 +18,7 @@ impl VmAlloc {
     fn new(heap_range: VirtRange) -> Self {
         let quantum = 4096;
 
-        let early_tags_ptr = unsafe { &EARLY_TAGS_PAGE as *const _ as usize };
+        let early_tags_ptr = unsafe { addr_of!(EARLY_TAGS_PAGE) as usize };
         let early_tags_size = unsafe { EARLY_TAGS_PAGE.len() };
         let early_tags_range = VirtRange::with_len(early_tags_ptr, early_tags_size);
 
