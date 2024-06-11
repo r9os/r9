@@ -37,6 +37,7 @@ pub struct Chan {
     // path: *const Path,
 }
 
+#[allow(dead_code)]
 pub struct Device {
     _dc: u32,
     _name: &'static str,
