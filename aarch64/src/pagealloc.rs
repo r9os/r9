@@ -33,7 +33,7 @@ pub fn init_page_allocator() {
     let mut lock = PAGE_ALLOC.lock(&node);
     let page_alloc = &mut *lock;
 
-    let early_pages_range = kmem::early_pages_range();
+    let early_pages_range = kmem::early_pages_physrange();
     if let Err(err) = page_alloc.mark_free(&early_pages_range) {
         panic!("Couldn't mark early pages free: range: {} err: {:?}", early_pages_range, err);
     }

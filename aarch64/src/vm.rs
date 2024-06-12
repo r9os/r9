@@ -2,11 +2,12 @@
 
 use crate::{
     kmem::{
-        ebss_addr, erodata_addr, etext_addr, from_ptr_to_physaddr, from_virt_to_physaddr,
-        physaddr_as_ptr_mut, physaddr_as_virt, text_addr,
+        from_ptr_to_physaddr, heap_virtrange, kernel_bss_physrange, kernel_data_physrange,
+        kernel_heap_physrange, kernel_text_physrange, physaddr_as_ptr_mut, physaddr_as_virt,
     },
     pagealloc,
     registers::rpi_mmio,
+    vmalloc,
 };
 use bitstruct::bitstruct;
 use core::fmt;
@@ -468,6 +469,7 @@ fn print_pte(indent: usize, i: usize, level: Level, pte: Entry) {
 
 pub unsafe fn init(kpage_table: &mut PageTable, dtb_range: PhysRange, available_mem: PhysRange) {
     pagealloc::init_page_allocator();
+    vmalloc::init(heap_virtrange());
 
     // We use recursive page tables, but we have to be careful in the init call,
     // since the kpage_table is not currently pointed to by ttbr1_el1.  Any
@@ -485,24 +487,14 @@ pub unsafe fn init(kpage_table: &mut PageTable, dtb_range: PhysRange, available_
 
     // TODO leave the first page unmapped to catch null pointer dereferences in unsafe code
     let custom_map = {
-        let text_range =
-            PhysRange(from_virt_to_physaddr(text_addr())..from_virt_to_physaddr(etext_addr()));
-        let data_range = PhysRange::with_len(
-            from_virt_to_physaddr(etext_addr()).addr(),
-            erodata_addr() - etext_addr(),
-        );
-        let bss_range = PhysRange::with_len(
-            from_virt_to_physaddr(erodata_addr()).addr(),
-            ebss_addr() - erodata_addr(),
-        );
-
         let mmio_range = rpi_mmio().expect("mmio base detect failed");
 
         let mut map = [
             ("DTB", dtb_range, Entry::ro_kernel_data(), PageSize::Page4K),
-            ("Kernel Text", text_range, Entry::ro_kernel_text(), PageSize::Page2M),
-            ("Kernel Data", data_range, Entry::ro_kernel_data(), PageSize::Page2M),
-            ("Kernel BSS", bss_range, Entry::rw_kernel_data(), PageSize::Page2M),
+            ("Kernel Text", kernel_text_physrange(), Entry::ro_kernel_text(), PageSize::Page2M),
+            ("Kernel Data", kernel_data_physrange(), Entry::ro_kernel_data(), PageSize::Page2M),
+            ("Kernel BSS", kernel_bss_physrange(), Entry::rw_kernel_data(), PageSize::Page2M),
+            ("Kernel Heap", kernel_heap_physrange(), Entry::rw_kernel_data(), PageSize::Page2M),
             ("MMIO", mmio_range, Entry::ro_kernel_device(), PageSize::Page2M),
         ];
         map.sort_by_key(|a| a.1.start());
