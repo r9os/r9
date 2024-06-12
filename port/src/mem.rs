@@ -46,6 +46,13 @@ impl From<&RegBlock> for VirtRange {
     }
 }
 
+impl fmt::Debug for VirtRange {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "VirtRange({:#016x}..{:#016x})", self.start(), self.end())?;
+        Ok(())
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, PartialOrd, Eq, Ord)]
 #[repr(transparent)]
 pub struct PhysAddr(pub u64);

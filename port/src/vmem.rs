@@ -50,6 +50,7 @@ impl Boundary {
             || (self.start <= other.start && boundary_end >= tag_end)
     }
 
+    #[allow(dead_code)]
     fn end(&self) -> usize {
         self.start + self.size
     }
@@ -69,6 +70,7 @@ struct Tag {
 }
 
 impl Tag {
+    #[allow(dead_code)]
     fn new(tag_type: TagType, boundary: Boundary) -> Self {
         Self { tag_type, boundary }
     }
@@ -163,6 +165,7 @@ impl TagStack {
         }
     }
 
+    #[allow(dead_code)]
     fn len(&self) -> usize {
         let mut n = 0;
         let mut free_tag = self.tags;
@@ -295,7 +298,9 @@ impl Arena {
         static_range: VirtRange,
     ) -> Self {
         let tags_addr = unsafe { &mut *(static_range.start() as *mut TagItem) };
-        let tags = unsafe { slice::from_raw_parts_mut(tags_addr, static_range.size()) };
+        let tags = unsafe {
+            slice::from_raw_parts_mut(tags_addr, static_range.size() / size_of::<TagItem>())
+        };
 
         println!(
             "Arena::new_with_static_range name:{} base:{:x} size:{:x} quantum:{:x}",
