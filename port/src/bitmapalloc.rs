@@ -35,6 +35,7 @@ impl<const SIZE_BYTES: usize> Bitmap<SIZE_BYTES> {
 
 #[derive(Debug, PartialEq)]
 pub enum BitmapPageAllocError {
+    NotEnoughBitmaps,
     OutOfBounds,
     MisalignedAddr,
     OutOfSpace,
@@ -215,7 +216,7 @@ impl<const NUM_BITMAPS: usize, const BITMAP_SIZE_BYTES: usize>
         check_end: bool,
     ) -> Result<(), BitmapPageAllocError> {
         if check_end && range.0.end > self.end {
-            return Err(BitmapPageAllocError::OutOfBounds);
+            return Err(BitmapPageAllocError::NotEnoughBitmaps);
         }
 
         for pa in range.step_by_rounded(self.alloc_page_size) {

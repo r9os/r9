@@ -10,5 +10,5 @@ script = 'aarch64/lib/kernel.ld'
 load-address = '0xffff800000100000 - 0x80000'
 
 [qemu]
-machine = "raspi3b"
-dtb = "aarch64/lib/bcm2710-rpi-3-b.dtb"
+machine = "raspi4b"
+dtb = "aarch64/lib/bcm2711-rpi-4-b.dtb"

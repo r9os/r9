@@ -66,14 +66,16 @@ fn print_binary_sections() {
     }
 }
 
-fn print_memory_info() {
+fn print_physical_memory_info() {
     println!("Physical memory map:");
     let arm_mem = mailbox::get_arm_memory();
     println!("  Memory:\t{arm_mem} ({:#x})", arm_mem.size());
     let vc_mem = mailbox::get_vc_memory();
     println!("  Video:\t{vc_mem} ({:#x})", vc_mem.size());
+}
 
-    println!("Memory usage::");
+fn print_memory_info() {
+    println!("Memory usage:");
     let (used, total) = pagealloc::usage_bytes();
     println!("  Used:\t\t{used:#016x}");
     println!("  Total:\t{total:#016x}");
@@ -84,25 +86,26 @@ fn print_pi_name(board_revision: u32) {
     let name = match board_revision {
         0xa21041 => "Raspberry Pi 2B",
         0xa02082 => "Raspberry Pi 3B",
+        0xb03115 => "Raspberry Pi 4B",
         0xa220a0 => "Raspberry Compute Module 3",
-        _ => "Unknown",
+        _ => "Unrecognised",
     };
-    println!("  Board Name: {name}");
+    println!("  Board Name:\t{name}");
 }
 
 fn print_board_info() {
     println!("Board information:");
     let board_revision = mailbox::get_board_revision();
     print_pi_name(board_revision);
-    println!("  Board Revision: {board_revision:#010x}");
+    println!("  Board Rev:\t{board_revision:#010x}");
     let model = mailbox::get_board_model();
-    println!("  Board Model: {model:#010x}");
+    println!("  Board Model:\t{model:#010x}");
     let serial = mailbox::get_board_serial();
-    println!("  Serial Number: {serial:#010x}");
+    println!("  Serial Num:\t{serial:#010x}");
     let mailbox::MacAddress { a, b, c, d, e, f } = mailbox::get_board_macaddr();
-    println!("  MAC Address: {a:02x}:{b:02x}:{c:02x}:{d:02x}:{e:02x}:{f:02x}");
+    println!("  MAC Address:\t{a:02x}:{b:02x}:{c:02x}:{d:02x}:{e:02x}:{f:02x}");
     let fw_revision = mailbox::get_firmware_revision();
-    println!("  Firmware Revision: {fw_revision:#010x}");
+    println!("  Firmware Rev:\t{fw_revision:#010x}");
 }
 
 /// dtb_va is the virtual address of the DTB structure.  The physical address is
@@ -123,6 +126,10 @@ pub extern "C" fn main9(dtb_va: usize) {
     println!("DTB found at: {:#x}", dtb_va);
     println!("midr_el1: {:?}", registers::MidrEl1::read());
 
+    print_binary_sections();
+    print_physical_memory_info();
+    print_board_info();
+
     // Map address space accurately using rust VM code to manage page tables
     unsafe {
         let dtb_range = PhysRange::with_len(from_virt_to_physaddr(dtb_va).addr(), dt.size());
@@ -132,9 +139,7 @@ pub extern "C" fn main9(dtb_va: usize) {
 
     // From this point we can use the global allocator
 
-    print_binary_sections();
     print_memory_info();
-    print_board_info();
 
     kernel_root().print_recursive_tables();
 

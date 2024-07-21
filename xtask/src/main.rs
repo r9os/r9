@@ -1,4 +1,5 @@
-use crate::config::{generate_args, Configuration};
+use crate::config::Configuration;
+use config::{apply_to_build_step, apply_to_clippy_step, apply_to_qemu_step};
 use std::{
     env, fmt,
     path::{Path, PathBuf},
@@ -306,13 +307,17 @@ impl BuildStep {
     }
 
     fn run(self) -> Result<()> {
-        let mut cmd = generate_args(
-            "build",
+        let mut cmd = Command::new(cargo());
+        cmd.arg("build");
+
+        apply_to_build_step(
+            &mut cmd,
             &self.config,
             &self.arch.target(),
             &self.profile,
             workspace().to_str().unwrap(),
         );
+
         cmd.current_dir(workspace());
         cmd.arg("--workspace");
         cmd.arg("--exclude").arg("xtask");
@@ -429,6 +434,7 @@ impl DistStep {
 
 struct QemuStep {
     arch: Arch,
+    config: Configuration,
     profile: Profile,
     wait_for_gdb: bool,
     kvm: bool,
@@ -439,6 +445,7 @@ struct QemuStep {
 impl QemuStep {
     fn new(matches: &clap::ArgMatches) -> Self {
         let arch = Arch::from(matches);
+        let config = load_config(arch, matches);
         let profile = Profile::from(matches);
         let wait_for_gdb = matches.get_flag("gdb");
         let kvm = matches.get_flag("kvm");
@@ -450,7 +457,7 @@ impl QemuStep {
             .clone();
         let verbose = verbose(matches);
 
-        Self { arch, profile, wait_for_gdb, kvm, dump_dtb, verbose }
+        Self { arch, config, profile, wait_for_gdb, kvm, dump_dtb, verbose }
     }
 
     fn run(self) -> Result<()> {
@@ -466,6 +473,8 @@ impl QemuStep {
             Arch::Aarch64 => {
                 let mut cmd = Command::new(qemu_system);
 
+                apply_to_qemu_step(&mut cmd, &self.config);
+
                 // TODO Choose UART at cmdline
                 // If using UART0 (PL011), this enables serial
                 cmd.arg("-nographic");
@@ -476,13 +485,9 @@ impl QemuStep {
                 cmd.arg("-serial");
                 cmd.arg("mon:stdio");
 
-                cmd.arg("-M");
-                cmd.arg("raspi3b");
                 if self.wait_for_gdb {
                     cmd.arg("-s").arg("-S");
                 }
-                cmd.arg("-dtb");
-                cmd.arg("aarch64/lib/bcm2710-rpi-3-b.dtb");
                 // Show exception level change events in stdout
                 cmd.arg("-d");
                 cmd.arg("int");
@@ -510,7 +515,7 @@ impl QemuStep {
                 }
                 cmd.arg("-cpu").arg("rv64");
                 // FIXME: This is not needed as of now, and will only work once the
-                // FIXME: // disk.bin is also taken care of. Doesn't exist by default.
+                // FIXME: disk.bin is also taken care of. Doesn't exist by default.
                 if false {
                     cmd.arg("-drive").arg("file=disk.bin,format=raw,id=hd0");
                     cmd.arg("-device").arg("virtio-blk-device,drive=hd0");
@@ -729,13 +734,11 @@ impl ClippyStep {
     }
 
     fn run(self) -> Result<()> {
-        let mut cmd = generate_args(
-            "clippy",
-            &self.config,
-            &self.arch.target(),
-            &self.profile,
-            workspace().to_str().unwrap(),
-        );
+        let mut cmd = Command::new(cargo());
+        cmd.arg("clippy");
+
+        apply_to_clippy_step(&mut cmd, &self.config);
+
         cmd.current_dir(workspace());
         cmd.arg("--workspace");
         exclude_other_arches(self.arch, &mut cmd);

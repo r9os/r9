@@ -20,10 +20,12 @@ pub struct MiniUart {
 #[allow(dead_code)]
 impl MiniUart {
     pub fn new(dt: &DeviceTree, mmio_virt_offset: usize) -> MiniUart {
-        // TODO use aliases?
+        // Bcm2835 and bcm2711 are essentially the same for our needs here.
+        // If fdt.rs supported aliases well, we could try to just look up 'gpio'.
         let gpio_range = VirtRange::from(
             &dt.find_compatible("brcm,bcm2835-gpio")
                 .next()
+                .or_else(|| dt.find_compatible("brcm,bcm2711-gpio").next())
                 .and_then(|uart| dt.property_translated_reg_iter(uart).next())
                 .and_then(|reg| reg.regblock())
                 .unwrap()
