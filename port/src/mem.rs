@@ -149,8 +149,7 @@ impl PhysRange {
 
 impl fmt::Display for PhysRange {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:#016x}..{:#016x}", self.0.start.addr(), self.0.end.addr())?;
-        Ok(())
+        write!(f, "{:#016x}..{:#016x}", self.0.start.addr(), self.0.end.addr())
     }
 }
 

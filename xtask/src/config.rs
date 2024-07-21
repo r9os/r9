@@ -1,6 +1,6 @@
 /// Test
 ///
-use crate::{cargo, Command, Profile};
+use crate::{Command, Profile};
 
 use serde::{Deserialize, Serialize};
 use std::{
@@ -65,6 +65,20 @@ pub struct Config {
     /// pub mod virt;
     /// ```
     pub platform: Option<String>,
+
+    /// Filepath of DTB file relative to crate
+    pub dtb: Option<String>,
+}
+
+/// Qemu section
+/// Affects arguments to be passed to qemu - doesn't affect build artefacts.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Qemu {
+    /// Machine (`-M`) value for qemu: raspi3b, raspi4b, etc.
+    pub machine: Option<String>,
+
+    /// Filepath of DTB file relative to crate
+    pub dtb: Option<String>,
 }
 
 /// the TOML document
@@ -73,6 +87,7 @@ pub struct Configuration {
     pub build: Option<Build>,
     pub config: Option<Config>,
     pub link: Option<HashMap<String, String>>,
+    pub qemu: Option<Qemu>,
 }
 
 impl Configuration {
@@ -96,40 +111,28 @@ impl Configuration {
     }
 }
 
-/// task could be 'build', 'clippy'
-pub fn generate_args(
-    task: &str,
-    config: &Configuration,
-    target: &str,
-    profile: &Profile,
-    wks_path: &str,
-) -> Command {
-    // we have to pass the rustflags all at once, so collect them
-    let mut rustflags: Vec<String> = Vec::new();
-    let mut cmd = Command::new(cargo());
-    cmd.arg(task);
-
+fn apply_build(cmd: &mut Command, rustflags: &mut Vec<String>, config: &Configuration) {
     if let Some(config) = &config.build {
-        if task != "clippy" {
-            let target = &config.target;
-            cmd.arg("--target").arg(target);
+        let target = &config.target;
+        cmd.arg("--target").arg(target);
 
-            if let Some(flags) = &config.buildflags {
-                // add the buildflags to the command
-                for f in flags {
-                    cmd.arg(f);
-                }
+        if let Some(flags) = &config.buildflags {
+            // add the buildflags to the command
+            for f in flags {
+                cmd.arg(f);
             }
+        }
 
-            if let Some(flags) = &config.rustflags {
-                // store the passed rustflags temporarily
-                for f in flags {
-                    rustflags.push(f.to_string());
-                }
+        if let Some(flags) = &config.rustflags {
+            // store the passed rustflags temporarily
+            for f in flags {
+                rustflags.push(f.to_string());
             }
         }
     }
+}
 
+fn apply_platform_config(cmd: &mut Command, rustflags: &mut Vec<String>, config: &Configuration) {
     if let Some(config) = &config.config {
         // if the target will use features make them available
         if let Some(features) = &config.features {
@@ -194,66 +197,110 @@ pub fn generate_args(
             }
         }
     }
+}
 
+fn apply_link(
+    rustflags: &mut Vec<String>,
+    config: &Configuration,
+    target: &str,
+    profile: &Profile,
+    workspace_path: &str,
+) {
     // we don't need to handle the linker script for clippy
-    if task != "clippy" {
-        if let Some(link) = &config.link {
-            let filename = link["script"].clone();
+    if let Some(link) = &config.link {
+        let filename = link["script"].clone();
 
-            // do we have a linker script ?
-            if !filename.is_empty() {
-                let mut contents = match fs::read_to_string(format!("{}/{}", wks_path, filename)) {
-                    Ok(c) => c,
-                    Err(_) => {
-                        eprintln!("Could not read file `{filename}`");
-                        exit(1);
-                    }
-                };
+        // do we have a linker script ?
+        if !filename.is_empty() {
+            let mut contents = match fs::read_to_string(format!("{}/{}", workspace_path, filename))
+            {
+                Ok(c) => c,
+                Err(_) => {
+                    eprintln!("Could not read file `{filename}`");
+                    exit(1);
+                }
+            };
 
-                // replace the placeholders with the values from the TOML
-                if let Some(link) = &config.link {
-                    for l in link.iter() {
-                        match l.0.as_str() {
-                            "arch" => contents = contents.replace("${ARCH}", l.1),
-                            "load-address" => contents = contents.replace("${LOAD-ADDRESS}", l.1),
-                            "script" => {} // do nothing for the script option
-                            _ => eprintln!("ignoring unknown option '{} = {}'", l.0, l.1),
-                        }
+            // replace the placeholders with the values from the TOML
+            if let Some(link) = &config.link {
+                for l in link.iter() {
+                    match l.0.as_str() {
+                        "arch" => contents = contents.replace("${ARCH}", l.1),
+                        "load-address" => contents = contents.replace("${LOAD-ADDRESS}", l.1),
+                        "script" => {} // do nothing for the script option
+                        _ => eprintln!("ignoring unknown option '{} = {}'", l.0, l.1),
                     }
                 }
-
-                // construct the path to the target directory
-                let path = format!(
-                    "{}/target/{}/{}",
-                    wks_path,
-                    target,
-                    profile.to_string().to_lowercase()
-                );
-
-                // make sure the target directory exists
-                if !std::path::Path::new(&path).exists() {
-                    // if not, create it
-                    let _ = create_dir_all(&path);
-                }
-
-                // everything is setup, now create the linker script
-                // in the target directory
-                let mut file = File::create(format!("{}/kernel.ld", path)).unwrap();
-                let _ = file.write_all(contents.as_bytes());
-
-                // pass the script path to the rustflags
-                rustflags.push(format!("-Clink-args=-T{}/kernel.ld", path));
             }
+
+            // construct the path to the target directory
+            let path = format!(
+                "{}/target/{}/{}",
+                workspace_path,
+                target,
+                profile.to_string().to_lowercase()
+            );
+
+            // make sure the target directory exists
+            if !std::path::Path::new(&path).exists() {
+                // if not, create it
+                let _ = create_dir_all(&path);
+            }
+
+            // everything is setup, now create the linker script
+            // in the target directory
+            let mut file = File::create(format!("{}/kernel.ld", path)).unwrap();
+            let _ = file.write_all(contents.as_bytes());
+
+            // pass the script path to the rustflags
+            rustflags.push(format!("-Clink-args=-T{}/kernel.ld", path));
         }
     }
+}
 
+fn apply_qemu_config(cmd: &mut Command, config: &Configuration) {
+    if let Some(config) = &config.qemu {
+        if let Some(machine) = &config.machine {
+            cmd.arg("-M");
+            cmd.arg(machine);
+        }
+        if let Some(dtb) = &config.dtb {
+            cmd.arg("-dtb");
+            cmd.arg(dtb);
+        }
+    }
+}
+
+fn apply_rustflags(cmd: &mut Command, rustflags: &[String]) {
     // pass the collected rustflags
-    // !! this overwrites the build.rustflags from the target Cargo.toml !!
+    // !! this overrides the build.rustflags from the target Cargo.toml !!
     if !rustflags.is_empty() {
         let flat = rustflags.join(" ");
         cmd.arg("--config");
         cmd.arg(format!("build.rustflags='{}'", flat));
     }
+}
 
-    cmd
+pub fn apply_to_clippy_step(cmd: &mut Command, config: &Configuration) {
+    let mut rustflags: Vec<String> = Vec::new();
+    apply_platform_config(cmd, &mut rustflags, config);
+    apply_rustflags(cmd, &rustflags);
+}
+
+pub fn apply_to_build_step(
+    cmd: &mut Command,
+    config: &Configuration,
+    target: &str,
+    profile: &Profile,
+    workspace_path: &str,
+) {
+    let mut rustflags: Vec<String> = Vec::new();
+    apply_build(cmd, &mut rustflags, config);
+    apply_platform_config(cmd, &mut rustflags, config);
+    apply_link(&mut rustflags, config, target, profile, workspace_path);
+    apply_rustflags(cmd, &rustflags);
+}
+
+pub fn apply_to_qemu_step(cmd: &mut Command, config: &Configuration) {
+    apply_qemu_config(cmd, config);
 }

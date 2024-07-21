@@ -19,9 +19,9 @@ use port::{
 };
 
 /// Set up bitmap page allocator assuming everything is allocated.
-static PAGE_ALLOC: Lock<BitmapPageAlloc<16, PAGE_SIZE_4K>> = Lock::new(
+static PAGE_ALLOC: Lock<BitmapPageAlloc<32, PAGE_SIZE_4K>> = Lock::new(
     "page_alloc",
-    const { BitmapPageAlloc::<16, PAGE_SIZE_4K>::new_all_allocated(PAGE_SIZE_4K) },
+    const { BitmapPageAlloc::<32, PAGE_SIZE_4K>::new_all_allocated(PAGE_SIZE_4K) },
 );
 
 /// The bitmap allocator has all pages marked as allocated initially.  We'll
