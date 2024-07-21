@@ -42,12 +42,13 @@ check to ensure `qemu` or `qemu-kvm` is installed and the
 
 R9 can be run using qemu for the various supported architectures:
 
-|Arch|Commandline|
-|----|-----------|
-|aarch64|cargo xtask qemu --arch aarch64 --verbose|
-|x86-64|cargo xtask qemu --arch x86-64 --verbose|
-|x86-64 (with kvm)|cargo xtask qemu --arch x86-64 --kvm --verbose|
-|riscv|cargo xtask qemu --arch riscv64 --verbose|
+|Arch|Platform|Commandline|
+|----|--------|-----------|
+|aarch64|raspi3b|cargo xtask qemu --arch aarch64 --verbose|
+|aarch64|raspi4b|cargo xtask qemu --arch aarch64 --config raspi4b --verbose|
+|x86-64|q35|cargo xtask qemu --arch x86-64 --verbose|
+|x86-64 (with kvm)|q35|cargo xtask qemu --arch x86-64 --kvm --verbose|
+|riscv|virt|cargo xtask qemu --arch riscv64 --verbose|
 
 ## Running on Real Hardware™️
 
