@@ -51,6 +51,12 @@ SECTIONS {
 	}
 	ebss = .;
 
+	heap = .;
+	.heap : ALIGN(4096) {
+		. = ALIGN(8*2097152);
+	}
+	eheap = .;
+
 	/* Reserve section for early pagetables.  Align to 2MiB to allow us to map
 	   as a 2MiB page.Note that this won't be needed once we transition to
 	   recursive pagetables.

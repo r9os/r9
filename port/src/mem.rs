@@ -32,6 +32,10 @@ impl VirtRange {
     pub fn end(&self) -> usize {
         self.0.end
     }
+
+    pub fn size(&self) -> usize {
+        self.0.end - self.0.start
+    }
 }
 
 impl From<&RegBlock> for VirtRange {
@@ -39,6 +43,13 @@ impl From<&RegBlock> for VirtRange {
         let start = r.addr as usize;
         let end = start + r.len.unwrap_or(0) as usize;
         VirtRange(start..end)
+    }
+}
+
+impl fmt::Debug for VirtRange {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "VirtRange({:#016x}..{:#016x})", self.start(), self.end())?;
+        Ok(())
     }
 }
 
