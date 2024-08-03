@@ -11,3 +11,8 @@ port = { path = "../port" }
 
 [features]
 opensbi = []
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+    'cfg(platform, values("nezha", "virt"))',
+] }

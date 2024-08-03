@@ -5,7 +5,6 @@ use crate::kmem::heap_virtrange;
 use crate::mailbox;
 use crate::pagealloc;
 use crate::registers;
-use crate::runtime;
 use crate::trap;
 use crate::vm;
 use crate::vm::kernel_root;
@@ -81,6 +80,11 @@ fn print_board_info() {
     println!("  Firmware Rev:\t{fw_revision:#010x}");
 }
 
+fn enable_bump_allocator() {
+    #[cfg(not(test))]
+    crate::runtime::enable_bump_allocator();
+}
+
 /// This function is concerned with preparing the system to the point where an
 /// allocator can be set up and allocation is available.  We can't assume
 /// there's any allocator available when executing this function.
@@ -118,7 +122,7 @@ pub fn init(dtb_va: usize) {
     // bump allocator that makes permanent allocations.  This can be used to
     // create the more complex vmem allocator.  Once the vmem allocator is
     // available, we switch to that.
-    runtime::enable_bump_allocator();
+    enable_bump_allocator();
 
     vmalloc::init(heap_virtrange());
     //runtime::enable_vmem_allocator();

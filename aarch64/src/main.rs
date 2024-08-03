@@ -23,6 +23,7 @@ mod mailbox;
 mod pagealloc;
 mod param;
 mod registers;
+mod runtime;
 mod trap;
 mod uartmini;
 mod uartpl011;
@@ -42,5 +43,3 @@ core::arch::global_asm!(include_str!("l.S"));
 pub extern "C" fn main9(dtb_va: usize) {
     init(dtb_va);
 }
-
-mod runtime;
