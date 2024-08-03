@@ -12,7 +12,13 @@ pub const PAGE_SIZE_1G: usize = 1 << 30;
 pub struct VirtRange(pub Range<usize>);
 
 impl VirtRange {
-    pub fn with_len(start: usize, len: usize) -> Self {
+    pub fn from_any<T>(a: T) -> Self {
+        let addr = &a as *const _ as usize;
+        let size = core::mem::size_of_val(&a);
+        Self(addr..addr + size)
+    }
+
+    pub const fn with_len(start: usize, len: usize) -> Self {
         Self(start..start + len)
     }
 

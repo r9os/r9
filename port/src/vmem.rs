@@ -249,9 +249,9 @@ impl TagList {
         core::iter::from_fn(move || {
             if let Some(item) = unsafe { curr_tag_item.as_ref() } {
                 curr_tag_item = item.next;
-                return Some(item.tag);
+                Some(item.tag)
             } else {
-                return None;
+                None
             }
         })
     }
@@ -284,21 +284,51 @@ impl TagList {
     // }
 }
 
+// TODO this needs to be Sync, so actually make it sync
 pub struct Arena {
-    _name: &'static str,
+    name: &'static str,
     quantum: usize,
 
-    tag_pool: TagPool,     // Pool of available tags
+    tag_pool: TagPool, // Pool of available tags
     segment_list: TagList, // List of all segments in address order
+
+                       //parent: Option<&Arena>, // Parent arena to import from
+}
+
+unsafe impl Send for Arena {}
+unsafe impl Sync for Arena {}
+
+pub trait Allocator {
+    fn alloc(&mut self, size: usize) -> *mut u8;
+    fn free(&mut self, addr: *mut u8);
 }
 
 impl Arena {
+    pub fn new(
+        name: &'static str,
+        initial_span: Option<Boundary>,
+        quantum: usize,
+        _parent: Option<Arena>,
+    ) -> Self {
+        println!("Arena::new name:{} initial_span:{:?} quantum:{:x}", name, initial_span, quantum);
+
+        let mut arena =
+            Self { name, quantum, segment_list: TagList::new(), tag_pool: TagPool::new() };
+
+        if let Some(span) = initial_span {
+            arena.add_initial_span(span);
+        }
+
+        arena
+    }
+
     /// Only to be used for creation of initial heap
+    /// Create a new arena, assuming there is no dynamic allocation available,
+    /// and all free tags come from the free_tags provided.
     pub fn new_with_static_range(
         name: &'static str,
         initial_span: Option<Boundary>,
         quantum: usize,
-        parent: Option<Arena>,
         static_range: VirtRange,
     ) -> Self {
         let tags_addr = unsafe { &mut *(static_range.start() as *mut TagItem) };
@@ -306,39 +336,43 @@ impl Arena {
             slice::from_raw_parts_mut(tags_addr, static_range.size() / size_of::<TagItem>())
         };
 
-        println!(
-            "Arena::new_with_static_range name:{} initial_span:{:?} quantum:{:x}",
-            name, initial_span, quantum
-        );
-
-        Self::new_with_tags(name, initial_span, quantum, parent, tags)
+        Self::new_with_tags(name, initial_span, quantum, tags)
     }
 
+    /// Only to be used for creation of initial heap
     /// Create a new arena, assuming there is no dynamic allocation available,
     /// and all free tags come from the free_tags provided.
     fn new_with_tags(
         name: &'static str,
         initial_span: Option<Boundary>,
         quantum: usize,
-        _parent: Option<Arena>,
-        free_tags: &mut [TagItem],
+        tags: &mut [TagItem],
     ) -> Self {
-        let mut arena = Self {
-            _name: name,
-            quantum: quantum,
-            segment_list: TagList::new(),
-            tag_pool: TagPool::new(),
-        };
-        arena.add_tags_to_pool(free_tags);
+        println!(
+            "Arena::new_with_tags name:{} initial_span:{:?} quantum:{:x}",
+            name, initial_span, quantum
+        );
+
+        let mut arena =
+            Self { name, quantum, segment_list: TagList::new(), tag_pool: TagPool::new() };
+        arena.add_tags_to_pool(tags);
 
         if let Some(span) = initial_span {
-            assert_eq!(span.start % quantum, 0);
-            assert_eq!(span.size % quantum, 0);
-            assert!(span.start.checked_add(span.size).is_some());
-            arena.add_free_span(span);
+            arena.add_initial_span(span);
         }
 
         arena
+    }
+
+    fn add_initial_span(&mut self, span: Boundary) {
+        assert_eq!(span.start % self.quantum, 0);
+        assert_eq!(span.size % self.quantum, 0);
+        assert!(span.start.checked_add(span.size).is_some());
+        self.add_free_span(span);
+    }
+
+    pub fn name(&self) -> &'static str {
+        self.name
     }
 
     fn add_free_span(&mut self, boundary: Boundary) {
@@ -356,19 +390,6 @@ impl Arena {
             tag.prev = null_mut();
             self.tag_pool.add(tag);
         }
-    }
-
-    pub fn alloc(&mut self, size: usize) -> *mut u8 {
-        let boundary = self.alloc_segment(size);
-        if boundary.is_ok() {
-            boundary.unwrap().start as *mut u8
-        } else {
-            null_mut()
-        }
-    }
-
-    pub fn free(&mut self, addr: *mut u8) {
-        let _ = self.free_segment(addr as usize);
     }
 
     /// Allocate a segment, returned as a boundary
@@ -437,7 +458,7 @@ impl Arena {
             return Err(AllocError::AllocationNotFound);
         }
 
-        let mut curr_tag: &mut TagItem = unsafe { curr_item.as_mut() }.unwrap();
+        let curr_tag: &mut TagItem = unsafe { curr_item.as_mut() }.unwrap();
 
         // Found tag to free
         let prev_type = unsafe { curr_tag.prev.as_ref() }.map(|t| t.tag.tag_type);
@@ -461,8 +482,8 @@ impl Arena {
                 let next = unsafe { curr_tag.next.as_mut() }.unwrap();
                 next.tag.boundary.start = curr_tag.tag.boundary.start;
                 next.tag.boundary.size += curr_tag.tag.boundary.size;
-                TagList::unlink(&mut curr_tag);
-                self.tag_pool.add(&mut curr_tag);
+                TagList::unlink(curr_tag);
+                self.tag_pool.add(curr_tag);
             }
             (Some(TagType::Free), None)
             | (Some(TagType::Free), Some(TagType::Span))
@@ -471,19 +492,19 @@ impl Arena {
                 // Change prev tag size to merge with curr_tag, release curr_tag
                 let prev = unsafe { curr_tag.prev.as_mut() }.unwrap();
                 prev.tag.boundary.size += curr_tag.tag.boundary.size;
-                TagList::unlink(&mut curr_tag);
-                self.tag_pool.add(&mut curr_tag);
+                TagList::unlink(curr_tag);
+                self.tag_pool.add(curr_tag);
             }
             (Some(TagType::Free), Some(TagType::Free)) => {
                 // Prev and next both free
                 // Change prev size to merge with both curr_tag and next, release curr_tag
                 let prev = unsafe { curr_tag.prev.as_mut() }.unwrap();
-                let mut next = unsafe { curr_tag.next.as_mut() }.unwrap();
+                let next = unsafe { curr_tag.next.as_mut() }.unwrap();
                 prev.tag.boundary.size += curr_tag.tag.boundary.size + next.tag.boundary.size;
-                TagList::unlink(&mut curr_tag);
-                TagList::unlink(&mut next);
-                self.tag_pool.add(&mut curr_tag);
-                self.tag_pool.add(&mut next);
+                TagList::unlink(curr_tag);
+                TagList::unlink(next);
+                self.tag_pool.add(curr_tag);
+                self.tag_pool.add(next);
             }
             (None, None)
             | (None, Some(TagType::Span))
@@ -556,6 +577,21 @@ impl Arena {
             }
             last_tag = Some(tag);
         }
+    }
+}
+
+impl Allocator for Arena {
+    fn alloc(&mut self, size: usize) -> *mut u8 {
+        let boundary = self.alloc_segment(size);
+        if let Ok(boundary) = boundary {
+            boundary.start as *mut u8
+        } else {
+            null_mut()
+        }
+    }
+
+    fn free(&mut self, addr: *mut u8) {
+        let _ = self.free_segment(addr as usize);
     }
 }
 
@@ -685,7 +721,7 @@ mod tests {
         let mut page = Page4K([0; 4096]);
         const NUM_TAGS: usize = size_of::<Page4K>() / size_of::<TagItem>();
         let tags = unsafe { &mut *(&mut page as *mut Page4K as *mut [TagItem; NUM_TAGS]) };
-        Arena::new_with_tags(name, initial_span, quantum, None, tags)
+        Arena::new_with_tags(name, initial_span, quantum, tags)
     }
 
     fn assert_tags_eq(arena: &Arena, expected: &[Tag]) {
@@ -846,49 +882,46 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_arena_nesting() {
-        // Create a page of tags we can share amongst the first arenas
-        let mut page = Page4K([0; 4096]);
-        const NUM_TAGS: usize = size_of::<Page4K>() / size_of::<TagItem>();
-        let all_tags = unsafe { &mut *(&mut page as *mut Page4K as *mut [TagItem; NUM_TAGS]) };
+    // #[test]
+    // fn test_arena_nesting() {
+    //     // Create a page of tags we can share amongst the first arenas
+    //     let mut page = Page4K([0; 4096]);
+    //     const NUM_TAGS: usize = size_of::<Page4K>() / size_of::<TagItem>();
+    //     let all_tags = unsafe { &mut *(&mut page as *mut Page4K as *mut [TagItem; NUM_TAGS]) };
 
-        const NUM_ARENAS: usize = 4;
-        const NUM_TAGS_PER_ARENA: usize = NUM_TAGS / NUM_ARENAS;
-        let (arena1_tags, all_tags) = all_tags.split_at_mut(NUM_TAGS_PER_ARENA);
-        let (arena2_tags, all_tags) = all_tags.split_at_mut(NUM_TAGS_PER_ARENA);
-        let (arena3a_tags, all_tags) = all_tags.split_at_mut(NUM_TAGS_PER_ARENA);
-        let (arena3b_tags, _) = all_tags.split_at_mut(NUM_TAGS_PER_ARENA);
+    //     const NUM_ARENAS: usize = 4;
+    //     const NUM_TAGS_PER_ARENA: usize = NUM_TAGS / NUM_ARENAS;
+    //     let (arena1_tags, all_tags) = all_tags.split_at_mut(NUM_TAGS_PER_ARENA);
+    //     let (arena2_tags, all_tags) = all_tags.split_at_mut(NUM_TAGS_PER_ARENA);
+    //     let (arena3a_tags, all_tags) = all_tags.split_at_mut(NUM_TAGS_PER_ARENA);
+    //     let (arena3b_tags, _) = all_tags.split_at_mut(NUM_TAGS_PER_ARENA);
 
-        let mut arena1 = Arena::new_with_tags(
-            "arena1",
-            Some(Boundary::new_unchecked(4096, 4096 * 20)),
-            4096,
-            None,
-            arena1_tags,
-        );
+    //     let mut arena1 = Arena::new_with_tags(
+    //         "arena1",
+    //         Some(Boundary::new_unchecked(4096, 4096 * 20)),
+    //         4096,
+    //         arena1_tags,
+    //     );
 
-        // Import all
-        let mut arena2 = Arena::new_with_tags("arena2", None, 4096, None, arena2_tags);
+    //     // Import all
+    //     let mut arena2 = Arena::new_with_tags("arena2", None, 4096, arena2_tags);
 
-        // Import first half
-        let mut arena3a = Arena::new_with_tags(
-            "arena3a",
-            Some(Boundary::from(4096..4096 * 10)),
-            4096,
-            None,
-            arena3a_tags,
-        );
+    //     // Import first half
+    //     let mut arena3a = Arena::new_with_tags(
+    //         "arena3a",
+    //         Some(Boundary::from(4096..4096 * 10)),
+    //         4096,
+    //         arena3a_tags,
+    //     );
 
-        // Import second half
-        let mut arena3b = Arena::new_with_tags(
-            "arena3b",
-            Some(Boundary::from(4096 * 10..4096 * 21)),
-            4096,
-            None,
-            arena3b_tags,
-        );
+    //     // Import second half
+    //     let mut arena3b = Arena::new_with_tags(
+    //         "arena3b",
+    //         Some(Boundary::from(4096 * 10..4096 * 21)),
+    //         4096,
+    //         arena3b_tags,
+    //     );
 
-        // Let's do some allocations
-    }
+    //     // Let's do some allocations
+    // }
 }

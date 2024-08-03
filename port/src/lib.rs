@@ -5,6 +5,7 @@
 #![forbid(unsafe_op_in_unsafe_fn)]
 
 pub mod bitmapalloc;
+pub mod bumpalloc;
 pub mod dat;
 pub mod devcons;
 pub mod fdt;
