@@ -1,5 +1,5 @@
+use alloc::sync::Arc;
 use core::{mem::MaybeUninit, ptr::addr_of};
-
 use port::{
     mcslock::{Lock, LockNode},
     mem::{VirtRange, PAGE_SIZE_4K},
@@ -17,52 +17,38 @@ static VMALLOC: Lock<Option<&'static mut VmAlloc>> = Lock::new("vmalloc", None);
 
 static mut EARLY_TAGS_PAGE: [u8; 4096] = [0; 4096];
 
+/// VmAlloc is an attempt to write a Bonwick vmem-style allocator.  It currently
+/// expects another allocator to exist beforehand.
+/// TODO Use the allocator api trait.
 struct VmAlloc {
-    heap_arena: Arena,
-    //heap_arena: Lock<NonNull<Arena>>,
-    // heap_arena: Lock<Arena<'a>>,
-    // va_arena: Lock<Arena<'a>>,
+    heap_arena: Arc<Lock<Arena>>,
+    va_arena: Arc<Lock<Arena>>,
 }
 
 impl VmAlloc {
     fn new(heap_range: VirtRange) -> Self {
-        // Heap_arena is the lowest level arena.  We pass an address range from which
-        // it can allocate a block of tags to build the initial structures.
-        // let heap_arena = unsafe {
-        //     let early_tags_ptr = addr_of!(EARLY_TAGS_PAGE) as usize;
-        //     let early_tags_size = EARLY_TAGS_PAGE.len();
-        //     let early_tags_range = VirtRange::with_len(early_tags_ptr, early_tags_size);
-
-        //     MAYBE_HEAP_ARENA.write(Arena::new_with_static_range(
-        //         "heap",
-        //         Some(Boundary::from(heap_range)),
-        //         PAGE_SIZE_4K,
-        //         early_tags_range,
-        //     ));
-        //     MAYBE_HEAP_ARENA.assume_init_mut()
-        // };
-
         let early_tags_ptr = addr_of!(EARLY_TAGS_PAGE) as usize;
         let early_tags_size = unsafe { EARLY_TAGS_PAGE.len() };
         let early_tags_range = VirtRange::with_len(early_tags_ptr, early_tags_size);
 
-        let heap_arena = Arena::new_with_static_range(
-            "heap",
-            Some(Boundary::from(heap_range)),
-            PAGE_SIZE_4K,
-            early_tags_range,
-        );
+        let heap_arena = Arc::new(Lock::new(
+            "heap_arena",
+            Arena::new_with_static_range(
+                "heap",
+                Some(Boundary::from(heap_range)),
+                PAGE_SIZE_4K,
+                early_tags_range,
+            ),
+        ));
 
         // va_arena imports from heap_arena, so can use allocations from that heap to
         // allocate blocks of tags.
-        // let va_arena = Arena::new("kmem_va", None, QUANTUM, Some(&heap_arena));
+        let va_arena = Arc::new(Lock::new(
+            "heap_arena",
+            Arena::new("kmem_va", None, PAGE_SIZE_4K, Some(heap_arena.clone())),
+        ));
 
-        Self {
-            heap_arena,
-            //heap_arena,
-            //heap_arena: Lock::new(heap_arena.name(), heap_arena),
-            //va_arena: Lock::new(va_arena.name(), va_arena),
-        }
+        Self { heap_arena, va_arena }
     }
 }
 
@@ -83,8 +69,7 @@ pub fn alloc(size: usize) -> *mut u8 {
     let mut lock = VMALLOC.lock(&node);
     let vmalloc = lock.as_deref_mut().unwrap();
 
-    // let node = LockNode::new();
-    // let mut guard = vmalloc.heap_arena.lock(&node);
-    //guard.alloc(size)
-    vmalloc.heap_arena.alloc(size)
+    let node = LockNode::new();
+    let mut guard = vmalloc.heap_arena.lock(&node);
+    guard.alloc(size)
 }

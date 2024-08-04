@@ -85,6 +85,11 @@ fn enable_bump_allocator() {
     crate::runtime::enable_bump_allocator();
 }
 
+// fn enable_vmem_allocator() {
+//     #[cfg(not(test))]
+//     crate::runtime::enable_vmem_allocator();
+// }
+
 /// This function is concerned with preparing the system to the point where an
 /// allocator can be set up and allocation is available.  We can't assume
 /// there's any allocator available when executing this function.
@@ -125,7 +130,7 @@ pub fn init(dtb_va: usize) {
     enable_bump_allocator();
 
     vmalloc::init(heap_virtrange());
-    //runtime::enable_vmem_allocator();
+    //enable_vmem_allocator();
 
     let _b = Box::new("ddododo");
 

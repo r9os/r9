@@ -1,6 +1,7 @@
-use core::{ops::Range, ptr::null_mut, slice};
-
+use crate::mcslock::Lock;
 use crate::mem::VirtRange;
+use alloc::sync::Arc;
+use core::{ops::Range, ptr::null_mut, slice};
 
 #[cfg(not(test))]
 use crate::println;
@@ -295,8 +296,8 @@ pub struct Arena {
                        //parent: Option<&Arena>, // Parent arena to import from
 }
 
-unsafe impl Send for Arena {}
-unsafe impl Sync for Arena {}
+// unsafe impl Send for Arena {}
+// unsafe impl Sync for Arena {}
 
 pub trait Allocator {
     fn alloc(&mut self, size: usize) -> *mut u8;
@@ -308,7 +309,7 @@ impl Arena {
         name: &'static str,
         initial_span: Option<Boundary>,
         quantum: usize,
-        _parent: Option<Arena>,
+        _parent: Option<Arc<Lock<Arena>>>,
     ) -> Self {
         println!("Arena::new name:{} initial_span:{:?} quantum:{:x}", name, initial_span, quantum);
 
