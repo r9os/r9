@@ -1,7 +1,7 @@
-use crate::mcslock::Lock;
 use crate::mem::VirtRange;
+use crate::{mcslock::Lock, mem::PAGE_SIZE_4K};
 use alloc::sync::Arc;
-use core::{ops::Range, ptr::null_mut, slice};
+use core::{alloc::Layout, ops::Range, ptr::null_mut, slice};
 
 #[cfg(not(test))]
 use crate::println;
@@ -326,15 +326,20 @@ impl Arena {
     /// Only to be used for creation of initial heap
     /// Create a new arena, assuming there is no dynamic allocation available,
     /// and all free tags come from the free_tags provided.
-    pub fn new_with_static_range(
+    pub fn new_with_allocator(
         name: &'static str,
         initial_span: Option<Boundary>,
         quantum: usize,
-        static_range: VirtRange,
+        allocator: &'static dyn core::alloc::Allocator,
     ) -> Self {
-        let tags_addr = unsafe { &mut *(static_range.start() as *mut TagItem) };
+        let layout = unsafe { Layout::from_size_align_unchecked(PAGE_SIZE_4K, PAGE_SIZE_4K) };
+        let tags_buffer =
+            allocator.allocate_zeroed(layout).expect("unable to allocate initial vmem tags");
         let tags = unsafe {
-            slice::from_raw_parts_mut(tags_addr, static_range.size() / size_of::<TagItem>())
+            slice::from_raw_parts_mut(
+                tags_buffer.as_mut_ptr() as *mut TagItem,
+                layout.size() / size_of::<TagItem>(),
+            )
         };
 
         Self::new_with_tags(name, initial_span, quantum, tags)

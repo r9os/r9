@@ -1,5 +1,5 @@
 use alloc::sync::Arc;
-use core::{alloc::Layout, mem::MaybeUninit, ptr::addr_of};
+use core::{alloc::Layout, mem::MaybeUninit};
 use port::{
     mcslock::{Lock, LockNode},
     mem::{VirtRange, PAGE_SIZE_4K},
@@ -15,8 +15,6 @@ static VMALLOC: Lock<Option<&'static mut VmAlloc>> = Lock::new("vmalloc", None);
 // referening them from VmAlloc, from where they can be used in the global allocator.
 //static mut MAYBE_HEAP_ARENA: MaybeUninit<Arena> = MaybeUninit::uninit();
 
-static mut EARLY_TAGS_PAGE: [u8; 4096] = [0; 4096];
-
 /// VmAlloc is an attempt to write a Bonwick vmem-style allocator.  It currently
 /// expects another allocator to exist beforehand.
 /// TODO Use the allocator api trait.
@@ -27,18 +25,14 @@ struct VmAlloc {
 
 impl VmAlloc {
     fn new(early_allocator: &'static dyn core::alloc::Allocator, heap_range: VirtRange) -> Self {
-        let early_tags_ptr = addr_of!(EARLY_TAGS_PAGE) as usize;
-        let early_tags_size = unsafe { EARLY_TAGS_PAGE.len() };
-        let early_tags_range = VirtRange::with_len(early_tags_ptr, early_tags_size);
-
         let heap_arena = Arc::new_in(
             Lock::new(
                 "heap_arena",
-                Arena::new_with_static_range(
+                Arena::new_with_allocator(
                     "heap",
                     Some(Boundary::from(heap_range)),
                     PAGE_SIZE_4K,
-                    early_tags_range,
+                    early_allocator,
                 ),
             ),
             early_allocator,
