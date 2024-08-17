@@ -11,8 +11,11 @@ use crate::vm::kernel_root;
 use crate::vm::PageTable;
 use crate::vmalloc;
 use alloc::boxed::Box;
+use core::alloc::Layout;
 use core::ptr;
+use port::bumpalloc::Bump;
 use port::fdt::DeviceTree;
+use port::mem::PAGE_SIZE_4K;
 use port::mem::{PhysRange, VirtRange};
 use port::println;
 
@@ -80,16 +83,6 @@ fn print_board_info() {
     println!("  Firmware Rev:\t{fw_revision:#010x}");
 }
 
-fn enable_bump_allocator() {
-    #[cfg(not(test))]
-    crate::runtime::enable_bump_allocator();
-}
-
-// fn enable_vmem_allocator() {
-//     #[cfg(not(test))]
-//     crate::runtime::enable_vmem_allocator();
-// }
-
 /// This function is concerned with preparing the system to the point where an
 /// allocator can be set up and allocation is available.  We can't assume
 /// there's any allocator available when executing this function.
@@ -123,14 +116,11 @@ fn init_pre_allocator(dtb_va: usize) {
 pub fn init(dtb_va: usize) {
     init_pre_allocator(dtb_va);
 
-    // From this point we can use the global allocator.  Initially it uses a
-    // bump allocator that makes permanent allocations.  This can be used to
-    // create the more complex vmem allocator.  Once the vmem allocator is
-    // available, we switch to that.
-    enable_bump_allocator();
+    static BUMP_ALLOC: Bump<{ 4 * PAGE_SIZE_4K }, PAGE_SIZE_4K> = Bump::new(0);
+    vmalloc::init(&BUMP_ALLOC, heap_virtrange());
+    BUMP_ALLOC.print_status();
 
-    vmalloc::init(heap_virtrange());
-    //enable_vmem_allocator();
+    // From this point we can use the global allocator
 
     let _b = Box::new("ddododo");
 
@@ -141,10 +131,12 @@ pub fn init(dtb_va: usize) {
     println!("looping now");
 
     {
-        let test = vmalloc::alloc(1024);
+        let test = vmalloc::alloc(unsafe { Layout::from_size_align_unchecked(1024, 16) });
         println!("test alloc: {:p}", test);
-        let test2 = vmalloc::alloc(1024);
+        let test2 = vmalloc::alloc(unsafe { Layout::from_size_align_unchecked(1024, 16) });
         println!("test alloc: {:p}", test2);
+        let test3 = vmalloc::alloc(unsafe { Layout::from_size_align_unchecked(1024, 4096) });
+        println!("test alloc: {:p}", test3);
     }
 
     #[allow(clippy::empty_loop)]

@@ -309,7 +309,7 @@ impl Arena {
         name: &'static str,
         initial_span: Option<Boundary>,
         quantum: usize,
-        _parent: Option<Arc<Lock<Arena>>>,
+        _parent: Option<Arc<Lock<Arena>, &dyn core::alloc::Allocator>>,
     ) -> Self {
         println!("Arena::new name:{} initial_span:{:?} quantum:{:x}", name, initial_span, quantum);
 

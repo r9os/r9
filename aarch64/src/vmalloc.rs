@@ -1,5 +1,5 @@
 use alloc::sync::Arc;
-use core::{mem::MaybeUninit, ptr::addr_of};
+use core::{alloc::Layout, mem::MaybeUninit, ptr::addr_of};
 use port::{
     mcslock::{Lock, LockNode},
     mem::{VirtRange, PAGE_SIZE_4K},
@@ -21,55 +21,62 @@ static mut EARLY_TAGS_PAGE: [u8; 4096] = [0; 4096];
 /// expects another allocator to exist beforehand.
 /// TODO Use the allocator api trait.
 struct VmAlloc {
-    heap_arena: Arc<Lock<Arena>>,
-    va_arena: Arc<Lock<Arena>>,
+    heap_arena: Arc<Lock<Arena>, &'static dyn core::alloc::Allocator>,
+    _va_arena: Arc<Lock<Arena>, &'static dyn core::alloc::Allocator>,
 }
 
 impl VmAlloc {
-    fn new(heap_range: VirtRange) -> Self {
+    fn new(early_allocator: &'static dyn core::alloc::Allocator, heap_range: VirtRange) -> Self {
         let early_tags_ptr = addr_of!(EARLY_TAGS_PAGE) as usize;
         let early_tags_size = unsafe { EARLY_TAGS_PAGE.len() };
         let early_tags_range = VirtRange::with_len(early_tags_ptr, early_tags_size);
 
-        let heap_arena = Arc::new(Lock::new(
-            "heap_arena",
-            Arena::new_with_static_range(
-                "heap",
-                Some(Boundary::from(heap_range)),
-                PAGE_SIZE_4K,
-                early_tags_range,
+        let heap_arena = Arc::new_in(
+            Lock::new(
+                "heap_arena",
+                Arena::new_with_static_range(
+                    "heap",
+                    Some(Boundary::from(heap_range)),
+                    PAGE_SIZE_4K,
+                    early_tags_range,
+                ),
             ),
-        ));
+            early_allocator,
+        );
 
         // va_arena imports from heap_arena, so can use allocations from that heap to
         // allocate blocks of tags.
-        let va_arena = Arc::new(Lock::new(
-            "heap_arena",
-            Arena::new("kmem_va", None, PAGE_SIZE_4K, Some(heap_arena.clone())),
-        ));
+        let va_arena = Arc::new_in(
+            Lock::new(
+                "kmem_va_arena",
+                Arena::new("kmem_va_arena", None, PAGE_SIZE_4K, Some(heap_arena.clone())),
+            ),
+            early_allocator,
+        );
 
-        Self { heap_arena, va_arena }
+        Self { heap_arena, _va_arena: va_arena }
     }
 }
 
-pub fn init(heap_range: VirtRange) {
+pub fn init(early_allocator: &'static dyn core::alloc::Allocator, heap_range: VirtRange) {
     let node = LockNode::new();
     let mut vmalloc = VMALLOC.lock(&node);
     *vmalloc = Some({
         static mut MAYBE_VMALLOC: MaybeUninit<VmAlloc> = MaybeUninit::uninit();
         unsafe {
-            MAYBE_VMALLOC.write(VmAlloc::new(heap_range));
+            MAYBE_VMALLOC.write(VmAlloc::new(early_allocator, heap_range));
             MAYBE_VMALLOC.assume_init_mut()
         }
     });
 }
 
-pub fn alloc(size: usize) -> *mut u8 {
+pub fn alloc(layout: Layout) -> *mut u8 {
     let node = LockNode::new();
     let mut lock = VMALLOC.lock(&node);
     let vmalloc = lock.as_deref_mut().unwrap();
 
     let node = LockNode::new();
     let mut guard = vmalloc.heap_arena.lock(&node);
-    guard.alloc(size)
+    // TODO use layout properly
+    guard.alloc(layout.size())
 }

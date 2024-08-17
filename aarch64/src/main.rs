@@ -2,6 +2,7 @@
 #![allow(internal_features)]
 #![cfg_attr(not(any(test)), no_std)]
 #![cfg_attr(not(test), no_main)]
+#![feature(allocator_api)]
 #![feature(alloc_error_handler)]
 #![feature(asm_const)]
 #![feature(const_refs_to_static)]
