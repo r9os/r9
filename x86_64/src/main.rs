@@ -1,5 +1,4 @@
 #![feature(alloc_error_handler)]
-#![feature(asm_const)]
 #![feature(naked_functions)]
 #![feature(sync_unsafe_cell)]
 #![cfg_attr(not(any(test)), no_std)]

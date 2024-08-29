@@ -95,8 +95,8 @@ unsafe impl<const SIZE_BYTES: usize, const MAX_SUPPORTED_ALIGN: usize> Allocator
         }
     }
 
-    unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
-        panic!("Can't deallocate from Bump allocator (ptr: {:p}, layout: {:?})", ptr, layout)
+    unsafe fn deallocate(&self, _ptr: NonNull<u8>, _layout: Layout) {
+        // panic!("Can't deallocate from Bump allocator (ptr: {:p}, layout: {:?})", ptr, layout)
     }
 }
 

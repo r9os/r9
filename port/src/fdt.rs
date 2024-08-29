@@ -46,6 +46,7 @@ fn align4(n: usize) -> usize {
 }
 
 /// DeviceTree is the class entrypoint to the Devicetree operations.
+///
 /// This code focuses only on parsing a Flattened Devicetree without using the heap.
 /// The Devicetree specification can be found here:
 /// https://www.devicetree.org/specifications/
