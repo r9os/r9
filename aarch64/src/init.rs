@@ -11,7 +11,6 @@ use crate::vm::kernel_root;
 use crate::vm::PageTable;
 use crate::vmalloc;
 use alloc::boxed::Box;
-use core::alloc::Layout;
 use core::ptr;
 use port::bumpalloc::Bump;
 use port::fdt::DeviceTree;
@@ -130,14 +129,14 @@ pub fn init(dtb_va: usize) {
 
     println!("looping now");
 
-    {
-        let test = vmalloc::alloc(unsafe { Layout::from_size_align_unchecked(1024, 16) });
-        println!("test alloc: {:p}", test);
-        let test2 = vmalloc::alloc(unsafe { Layout::from_size_align_unchecked(1024, 16) });
-        println!("test alloc: {:p}", test2);
-        let test3 = vmalloc::alloc(unsafe { Layout::from_size_align_unchecked(1024, 4096) });
-        println!("test alloc: {:p}", test3);
-    }
+    // {
+    //     let test = vmalloc::alloc(unsafe { Layout::from_size_align_unchecked(1024, 16) });
+    //     println!("test alloc: {:p}", test);
+    //     let test2 = vmalloc::alloc(unsafe { Layout::from_size_align_unchecked(1024, 16) });
+    //     println!("test alloc: {:p}", test2);
+    //     let test3 = vmalloc::alloc(unsafe { Layout::from_size_align_unchecked(1024, 4096) });
+    //     println!("test alloc: {:p}", test3);
+    // }
 
     #[allow(clippy::empty_loop)]
     loop {}

@@ -14,5 +14,6 @@ pub mod fdt;
 pub mod mcslock;
 pub mod mem;
 pub mod vmem;
+pub mod vmemalloc;
 
 extern crate alloc;

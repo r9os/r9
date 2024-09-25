@@ -3,9 +3,6 @@ use crate::{mcslock::Lock, mem::PAGE_SIZE_4K};
 use alloc::sync::Arc;
 use core::{alloc::Layout, ops::Range, ptr::null_mut, slice};
 
-#[cfg(not(test))]
-use crate::println;
-
 // TODO reserve recursive area in vmem(?)
 // TODO Add hashtable for allocated tags - makes it faster when freeing, given only an address.
 // TODO Add support for quantum caches once we have slab allocators implemented.
@@ -311,10 +308,11 @@ impl Arena {
         quantum: usize,
         _parent: Option<Arc<Lock<Arena>, &dyn core::alloc::Allocator>>,
     ) -> Self {
-        println!("Arena::new name:{} initial_span:{:?} quantum:{:x}", name, initial_span, quantum);
+        // println!("Arena::new name:{} initial_span:{:?} quantum:{:x}", name, initial_span, quantum);
 
         let mut arena =
             Self { name, quantum, segment_list: TagList::new(), tag_pool: TagPool::new() };
+        //arena.add_tags_to_pool(tags);
 
         if let Some(span) = initial_span {
             arena.add_initial_span(span);
@@ -354,10 +352,10 @@ impl Arena {
         quantum: usize,
         tags: &mut [TagItem],
     ) -> Self {
-        println!(
-            "Arena::new_with_tags name:{} initial_span:{:?} quantum:{:x}",
-            name, initial_span, quantum
-        );
+        // println!(
+        //     "Arena::new_with_tags name:{} initial_span:{:?} quantum:{:x}",
+        //     name, initial_span, quantum
+        // );
 
         let mut arena =
             Self { name, quantum, segment_list: TagList::new(), tag_pool: TagPool::new() };
@@ -400,7 +398,7 @@ impl Arena {
 
     /// Allocate a segment, returned as a boundary
     fn alloc_segment(&mut self, size: usize) -> Result<Boundary, AllocError> {
-        println!("alloc_segment size: {}", size);
+        // println!("alloc_segment size: {}", size);
 
         // Round size up to a multiple of quantum
         let size = {
