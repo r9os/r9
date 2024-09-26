@@ -5,11 +5,15 @@ extern crate alloc;
 use crate::kmem::physaddr_as_virt;
 use crate::registers::rpi_mmio;
 use crate::uartmini::MiniUart;
-use alloc::alloc::{GlobalAlloc, Layout};
+use alloc::alloc::Layout;
 use core::fmt::Write;
 use core::panic::PanicInfo;
 use port::devcons::PanicConsole;
 use port::mem::VirtRange;
+use port::vmalloc;
+
+#[global_allocator]
+static ALLOCATOR: vmalloc::VmAllocator = vmalloc::VmAllocator {};
 
 // TODO
 //  - Add qemu integration test
@@ -39,17 +43,3 @@ pub fn panic(info: &PanicInfo) -> ! {
 fn oom(_layout: Layout) -> ! {
     panic!("oom");
 }
-
-struct FakeAlloc;
-
-unsafe impl GlobalAlloc for FakeAlloc {
-    unsafe fn alloc(&self, _layout: Layout) -> *mut u8 {
-        panic!("fake alloc");
-    }
-    unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {
-        panic!("fake dealloc");
-    }
-}
-
-#[global_allocator]
-static FAKE_ALLOCATOR: FakeAlloc = FakeAlloc {};

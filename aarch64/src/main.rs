@@ -22,12 +22,15 @@ mod vm;
 
 use crate::kmem::from_virt_to_physaddr;
 use crate::vm::kernel_root;
+use alloc::boxed::Box;
 use core::ffi::c_void;
 use core::ptr;
 use port::fdt::DeviceTree;
 use port::mem::PhysRange;
-use port::println;
+use port::{println, vmalloc};
 use vm::PageTable;
+
+extern crate alloc;
 
 #[cfg(not(test))]
 core::arch::global_asm!(include_str!("l.S"));
@@ -144,6 +147,13 @@ pub extern "C" fn main9(dtb_va: usize) {
     kernel_root().print_recursive_tables();
 
     println!("looping now");
+
+    vmalloc::print_status();
+    {
+        let _b = Box::new("ddododo");
+        vmalloc::print_status();
+    }
+    vmalloc::print_status();
 
     #[allow(clippy::empty_loop)]
     loop {}
