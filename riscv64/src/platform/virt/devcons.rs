@@ -1,5 +1,6 @@
 // Racy to start.
 
+use core::cell::SyncUnsafeCell;
 use core::mem::MaybeUninit;
 
 use crate::uart16550::Uart16550;
@@ -17,11 +18,12 @@ pub fn init(dt: &DeviceTree) {
         let mut uart = Uart16550::new(ns16550a_reg);
         uart.init(115_200);
 
-        static mut UART: MaybeUninit<Uart16550> = MaybeUninit::uninit();
-
+        static CONS: SyncUnsafeCell<MaybeUninit<Uart16550>> =
+            SyncUnsafeCell::new(MaybeUninit::uninit());
         unsafe {
-            UART.write(uart);
-            UART.assume_init_mut()
+            let cons = &mut *CONS.get();
+            cons.write(uart);
+            cons.assume_init_mut()
         }
     });
 }

@@ -46,8 +46,6 @@ pub struct Build {
 /// #[cfg(dev_foo = "baz")]
 /// pub mod foobaz;
 /// ```
-
-/// config section
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
     pub dev: Option<Vec<String>>,

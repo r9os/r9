@@ -5,6 +5,7 @@
 #![feature(alloc_error_handler)]
 #![feature(core_intrinsics)]
 #![feature(strict_provenance)]
+#![feature(sync_unsafe_cell)]
 #![forbid(unsafe_op_in_unsafe_fn)]
 
 mod devcons;

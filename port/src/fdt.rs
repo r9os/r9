@@ -1,3 +1,5 @@
+#![allow(clippy::too_long_first_doc_paragraph)]
+
 use core::{
     ffi::CStr,
     mem::{self, MaybeUninit},
@@ -173,7 +175,7 @@ impl<'a> DeviceTree<'a> {
             }
             let (start, end) = (value_i, value_i + 4);
             value_i = end;
-            return self.structs().get(start..end).and_then(bytes_to_u32);
+            self.structs().get(start..end).and_then(bytes_to_u32)
         })
     }
 
