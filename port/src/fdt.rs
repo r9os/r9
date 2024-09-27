@@ -383,7 +383,7 @@ impl<'a> DeviceTree<'a> {
     }
 
     /// Return the first node matching the compatible string 'comp'
-    pub fn find_compatible(&'a self, comp: &'a str) -> impl Iterator<Item = Node> + '_ {
+    pub fn find_compatible(&'a self, comp: &'a str) -> impl Iterator<Item = Node> + 'a {
         // Iterate over all nodes.  For each node, iterate over all properties until we find a 'compatible'
         // property.  The 'compatible' property contains a list of null terminated strings.  If we find a matching
         // string, then return the node, otherwise return None.

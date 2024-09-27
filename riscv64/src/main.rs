@@ -1,6 +1,4 @@
 #![feature(alloc_error_handler)]
-#![feature(asm_const)]
-#![feature(panic_info_message)]
 #![cfg_attr(not(any(test)), no_std)]
 #![cfg_attr(not(test), no_main)]
 #![allow(clippy::upper_case_acronyms)]

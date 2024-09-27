@@ -325,6 +325,7 @@ impl BuildStep {
         if self.profile == Profile::Release {
             cmd.arg("--release");
         }
+        cmd.arg("-Z").arg("build-std=core,alloc");
         if self.verbose {
             println!("Executing {cmd:?}");
         }

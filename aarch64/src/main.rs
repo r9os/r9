@@ -3,7 +3,6 @@
 #![cfg_attr(not(any(test)), no_std)]
 #![cfg_attr(not(test), no_main)]
 #![feature(alloc_error_handler)]
-#![feature(asm_const)]
 #![feature(core_intrinsics)]
 #![feature(strict_provenance)]
 #![forbid(unsafe_op_in_unsafe_fn)]

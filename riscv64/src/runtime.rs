@@ -2,15 +2,12 @@
 
 extern crate alloc;
 
-use alloc::alloc::{GlobalAlloc, Layout};
+use alloc::alloc::Layout;
 use core::arch::asm;
 use core::panic::PanicInfo;
 
 use port::{print, println};
 
-// ///////////////////////////////////
-// / LANGUAGE STRUCTURES / FUNCTIONS
-// ///////////////////////////////////
 #[no_mangle]
 extern "C" fn eh_personality() {}
 
@@ -18,7 +15,7 @@ extern "C" fn eh_personality() {}
 fn panic(info: &PanicInfo) -> ! {
     print!("Panic: ");
     if let Some(p) = info.location() {
-        println!("line {}, file {}: {}", p.line(), p.file(), info.message().unwrap());
+        println!("line {}, file {}: {}", p.line(), p.file(), info.message());
     } else {
         println!("no information available.");
     }
@@ -37,17 +34,3 @@ extern "C" fn abort() -> ! {
 fn oom(_layout: Layout) -> ! {
     panic!("oom");
 }
-
-struct FakeAlloc;
-
-unsafe impl GlobalAlloc for FakeAlloc {
-    unsafe fn alloc(&self, _layout: Layout) -> *mut u8 {
-        panic!("fake alloc");
-    }
-    unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {
-        panic!("fake dealloc");
-    }
-}
-
-#[global_allocator]
-static FAKE_ALLOCATOR: FakeAlloc = FakeAlloc {};
