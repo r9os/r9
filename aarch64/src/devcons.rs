@@ -2,6 +2,7 @@
 
 use crate::param::KZERO;
 use crate::uartmini::MiniUart;
+use core::cell::SyncUnsafeCell;
 use core::mem::MaybeUninit;
 use port::devcons::Console;
 use port::fdt::DeviceTree;
@@ -36,10 +37,12 @@ pub fn init(dt: &DeviceTree) {
         let uart = MiniUart::new(dt, KZERO);
         uart.init();
 
-        static mut UART: MaybeUninit<MiniUart> = MaybeUninit::uninit();
+        static UART: SyncUnsafeCell<MaybeUninit<MiniUart>> =
+            SyncUnsafeCell::new(MaybeUninit::uninit());
         unsafe {
-            UART.write(uart);
-            UART.assume_init_mut()
+            let cons = &mut *UART.get();
+            cons.write(uart);
+            cons.assume_init_mut()
         }
     });
 }

@@ -1,5 +1,6 @@
 use crate::io::{read_reg, write_reg};
 use crate::param::KZERO;
+use core::cell::SyncUnsafeCell;
 use core::mem::MaybeUninit;
 use port::fdt::DeviceTree;
 use port::mcslock::{Lock, LockNode};
@@ -21,10 +22,12 @@ pub fn init(dt: &DeviceTree) {
     let node = LockNode::new();
     let mut mailbox = MAILBOX.lock(&node);
     *mailbox = Some({
-        static mut MAYBE_MAILBOX: MaybeUninit<Mailbox> = MaybeUninit::uninit();
+        static MAYBE_MAILBOX: SyncUnsafeCell<MaybeUninit<Mailbox>> =
+            SyncUnsafeCell::new(MaybeUninit::uninit());
         unsafe {
-            MAYBE_MAILBOX.write(Mailbox::new(dt, KZERO));
-            MAYBE_MAILBOX.assume_init_mut()
+            let maybe_mailbox = &mut *MAYBE_MAILBOX.get();
+            maybe_mailbox.write(Mailbox::new(dt, KZERO));
+            maybe_mailbox.assume_init_mut()
         }
     });
 }
