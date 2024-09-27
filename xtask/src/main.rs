@@ -1,4 +1,5 @@
 use crate::config::Configuration;
+use clap::{Parser, Subcommand, ValueEnum};
 use config::{apply_to_build_step, apply_to_clippy_step, apply_to_qemu_step};
 use std::{
     env, fmt,
@@ -123,7 +124,79 @@ impl RustupState {
     }
 }
 
+#[derive(Debug, Subcommand)]
+enum XCommand {
+    /// Build r9
+    #[clap(verbatim_doc_comment)]
+    Build {
+        /// Build release version
+        #[arg(short, long, conflicts_with = "debug")]
+        release: bool,
+
+        /// Build debug version
+        #[arg(short, long, conflicts_with = "release")]
+        debug: bool,
+
+        /// Target architecture
+        #[arg(short, long)]
+        arch: Arch,
+        /*
+                #[arg(index = 1, value_parser=clap_num::maybe_hex::<u32>)]
+                address: u32,
+
+                #[arg(index = 2, default_value_t = 4)]
+                count: u8,
+        */
+    },
+
+    /// Run r9 under QEMU
+    #[clap(verbatim_doc_comment)]
+    Qemu {
+        /// Build release version
+        #[arg(short, long, conflicts_with = "debug")]
+        release: bool,
+        /// Build debug version
+        #[arg(short, long, conflicts_with = "release")]
+        debug: bool,
+        /// Print commands being executed
+        #[arg(short, long)]
+        verbose: bool,
+        /// Target architecture
+        #[arg(short, long)]
+        arch: Arch,
+        /// Configuration file to use, CONFIG in <ARCH>/lib/config_<CONFIG>.toml
+        #[arg(short, long, default_value = "default")]
+        config: String,
+        /// Wait for gdb connection on start
+        #[arg(short, long)]
+        gdb: bool,
+        /// Dump the DTB from QEMU to a file
+        #[arg(long, value_name = "path/to/foo.dtb")]
+        dump_dtb: Option<String>,
+    },
+}
+
+/// r9 build system
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = "Build support for the r9 operating system")]
+struct Cli {
+    /// Command to run
+    #[command(subcommand)]
+    cmd: XCommand,
+}
+
 fn main() {
+    let cmd = Cli::parse().cmd;
+    match cmd {
+        XCommand::Build { debug, release, arch } => {
+            println!("{arch:?} {debug}/{release}");
+        }
+        XCommand::Qemu { debug, release, verbose, arch, config, gdb, dump_dtb } => {
+            println!("{arch:?} {config} {debug}/{release}/{verbose}");
+            println!("{gdb} {dump_dtb:?}");
+        }
+    }
+
     let matches = clap::Command::new("xtask")
         .version("0.1.0")
         .author("The r9 Authors")
