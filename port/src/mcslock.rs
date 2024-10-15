@@ -105,7 +105,7 @@ pub struct LockGuard<'a, T: ?Sized + 'a> {
     node: &'a LockNode,
     data: &'a mut T,
 }
-impl<'a, T> Deref for LockGuard<'a, T> {
+impl<T> Deref for LockGuard<'_, T> {
     type Target = T;
 
     fn deref(&self) -> &T {
@@ -113,13 +113,13 @@ impl<'a, T> Deref for LockGuard<'a, T> {
     }
 }
 
-impl<'a, T> DerefMut for LockGuard<'a, T> {
+impl<T> DerefMut for LockGuard<'_, T> {
     fn deref_mut(&mut self) -> &mut T {
         self.data
     }
 }
 
-impl<'a, T: ?Sized> Drop for LockGuard<'a, T> {
+impl<T: ?Sized> Drop for LockGuard<'_, T> {
     fn drop(&mut self) {
         unsafe { &mut *self.lock.get() }.unlock(self.node);
     }

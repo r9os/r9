@@ -1,4 +1,4 @@
-use core::arch::asm;
+use core::arch::naked_asm;
 
 #[repr(C)]
 pub struct Label {
@@ -21,7 +21,7 @@ impl Label {
 #[naked]
 pub unsafe extern "C" fn swtch(save: &mut Label, next: &mut Label) {
     unsafe {
-        asm!(
+        naked_asm!(
             r#"
             movq (%rsp), %rax
             movq %rax, 0(%rdi)
@@ -44,7 +44,7 @@ pub unsafe extern "C" fn swtch(save: &mut Label, next: &mut Label) {
             movq %rax, (%rsp)
             xorl %eax, %eax
             ret"#,
-            options(att_syntax, noreturn)
+            options(att_syntax)
         );
     }
 }
