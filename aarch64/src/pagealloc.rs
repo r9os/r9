@@ -18,6 +18,11 @@ use port::{
     mem::PAGE_SIZE_4K,
 };
 
+use core::fmt;
+
+#[cfg(not(test))]
+use port::println;
+
 /// Set up bitmap page allocator assuming everything is allocated.
 static PAGE_ALLOC: Lock<BitmapPageAlloc<32, PAGE_SIZE_4K>> = Lock::new(
     "page_alloc",
@@ -57,6 +62,8 @@ pub fn allocate() -> Result<&'static mut Page4K, BitmapPageAllocError> {
     let node = LockNode::new();
     let mut lock = PAGE_ALLOC.lock(&node);
     let page_alloc = &mut *lock;
+
+    println!("pagealloc::allocate");
 
     match page_alloc.allocate() {
         Ok(page_pa) => Ok(unsafe { &mut *physaddr_as_ptr_mut::<Page4K>(page_pa) }),

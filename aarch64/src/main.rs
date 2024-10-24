@@ -15,14 +15,20 @@ mod mailbox;
 mod pagealloc;
 mod param;
 mod registers;
+mod swtch;
 mod trap;
 mod uartmini;
 mod uartpl011;
 mod vm;
 
+extern crate alloc;
+
 use crate::kmem::from_virt_to_physaddr;
 use crate::vm::kernel_root;
+use alloc::boxed::Box;
+use core::alloc::Layout;
 use core::ptr;
+use core::ptr::null_mut;
 use kmem::{boottext_range, bss_range, data_range, rodata_range, text_range, total_kernel_range};
 use port::fdt::DeviceTree;
 use port::mem::PhysRange;
@@ -133,12 +139,85 @@ pub extern "C" fn main9(dtb_va: usize) {
         // let kpgtable = unsafe { &mut *ptr::addr_of_mut!(KPGTBL) };
         // kpgtable.map_phys_range(range, *flags, *page_size).expect("dynamic mapping failed");
     }
-
     kernel_root().print_recursive_tables();
+
+    // test_sysexit();
+
+    let _b = Box::new("ddododo");
 
     println!("looping now");
 
     #[allow(clippy::empty_loop)]
     loop {}
 }
+
+struct Proc {}
+
+static mut PROC: Proc = Proc {};
+
+fn test_sysexit() {
+    // TODO
+    // Jump to user mode (EL0)
+    // Return to kernel mode (EL1)
+    // Create and switch process stack
+
+    // Populate process
+    // - page for program code
+    //   - syscall to exit
+    // - page for stack
+    // We need to jump to user mode (EL0)
+    // svc jumps to supervisor mode (EL1)
+
+    // point to proc page table
+    // switch to process
+    // point to kernel page table
+
+    // For this hack, we don't need to change page tables.
+    // Instead, we will:
+    // 1. create a buffer for our process
+    // 2. copy code to sysexit
+    // 3. context switch to the process
+    // Machine code and assembly to call syscall exit
+    //   00 00 80 D2    ; mov x0, #0
+    //   21 00 80 D2    ; mov x1, #1
+    //   01 00 00 D4    ; svc #0
+    let proc_text_bytes: [u8; 12] =
+        [0x00, 0x00, 0x80, 0xd2, 0x21, 0x00, 0x80, 0xd2, 0x01, 0x00, 0x00, 0xd4];
+    let proc_textbuf = unsafe {
+        core::slice::from_raw_parts_mut(
+            alloc::alloc::alloc_zeroed(Layout::from_size_align_unchecked(4096, 4096)),
+            4096,
+        )
+    };
+    proc_textbuf[..proc_text_bytes.len()].copy_from_slice(&proc_text_bytes);
+
+    let proc_stack_buffer =
+        unsafe { alloc::alloc::alloc_zeroed(Layout::from_size_align_unchecked(4096, 4096)) };
+    let proc_stack = unsafe { core::slice::from_raw_parts_mut(proc_stack_buffer, 4096) };
+
+    // Initialise a Context struct on the process stack, at the end of the proc_stack_buffer.
+    let proc_stack_initial_ctx =
+        unsafe { proc_stack_buffer.add(4096 - size_of::<swtch::Context>()) };
+    let proc_context_ptr: *mut swtch::Context =
+        proc_stack_initial_ctx as *const _ as *mut swtch::Context;
+
+    // TODO Set up proc stack
+    // Need to push a context object onto the stack, with x30 populated at the
+    // address of proc_textbuf
+    let proc_context_ref: &mut swtch::Context = unsafe { &mut *proc_context_ptr };
+    proc_context_ref.set_stack_pointer(&proc_context_ptr as *const _ as u64);
+    proc_context_ref.set_return(&proc_textbuf.as_ptr() as *const _ as u64);
+
+    // let mut foo: *mut swtch::Context = &mut context1;
+    let mut kernel_context: *mut swtch::Context = null_mut();
+    let kernel_context_ptr: *mut *mut swtch::Context = &mut kernel_context;
+
+    println!("proc ctx: {:?}", proc_context_ref);
+
+    //context2.set_return(&proc_textbuf as *const _ as u64);
+    unsafe { swtch::swtch(kernel_context_ptr, &*proc_context_ptr) };
+
+    //println!("x30: {:#016x}", proc_context_ref.x30);
+}
+
 mod runtime;
