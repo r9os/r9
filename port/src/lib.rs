@@ -4,6 +4,7 @@
 #![feature(allocator_api)]
 #![feature(maybe_uninit_slice)]
 #![feature(step_trait)]
+#![feature(unsigned_is_multiple_of)]
 #![forbid(unsafe_op_in_unsafe_fn)]
 
 extern crate alloc;
@@ -15,3 +16,4 @@ pub mod devcons;
 pub mod fdt;
 pub mod mcslock;
 pub mod mem;
+pub mod pagealloc;

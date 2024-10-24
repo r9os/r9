@@ -8,7 +8,10 @@
 ///  - Can't be dynamically resized.
 use core::fmt;
 
-use crate::mem::{PhysAddr, PhysRange};
+use crate::{
+    mem::{PhysAddr, PhysRange},
+    pagealloc::PageAllocError,
+};
 
 /// Simple bitmap.  Bear in mind that logically, bit 0 is the rightmost bit,
 /// so writing out as bytes will have the bits logically reversed.
@@ -39,15 +42,6 @@ impl<const SIZE_BYTES: usize> Bitmap<SIZE_BYTES> {
             self.bytes[byte_idx] &= !(1 << bit_idx);
         }
     }
-}
-
-#[derive(Debug, PartialEq)]
-pub enum BitmapPageAllocError {
-    NotEnoughBitmaps,
-    OutOfBounds,
-    MisalignedAddr,
-    OutOfSpace,
-    NotAllocated,
 }
 
 /// Allocator where each page is represented by a single bit.
@@ -91,13 +85,13 @@ impl<const NUM_BITMAPS: usize, const BITMAP_SIZE_BYTES: usize>
 
     /// Mark the bits corresponding to the given physical range as allocated,
     /// regardless of the existing state.
-    pub fn mark_allocated(&mut self, range: &PhysRange) -> Result<(), BitmapPageAllocError> {
+    pub fn mark_allocated(&mut self, range: &PhysRange) -> Result<(), PageAllocError> {
         self.mark_range(range, true, true)
     }
 
     /// Mark the bits corresponding to the given physical range as free,
     /// regardless of the existing state.
-    pub fn mark_free(&mut self, range: &PhysRange) -> Result<(), BitmapPageAllocError> {
+    pub fn mark_free(&mut self, range: &PhysRange) -> Result<(), PageAllocError> {
         self.mark_range(range, false, true)
     }
 
@@ -108,7 +102,7 @@ impl<const NUM_BITMAPS: usize, const BITMAP_SIZE_BYTES: usize>
         &mut self,
         available_mem: &PhysRange,
         used_ranges: impl Iterator<Item = &'a PhysRange>,
-    ) -> Result<(), BitmapPageAllocError> {
+    ) -> Result<(), PageAllocError> {
         let mut next_start = available_mem.start();
         for range in used_ranges {
             if next_start < range.0.start {
@@ -134,7 +128,7 @@ impl<const NUM_BITMAPS: usize, const BITMAP_SIZE_BYTES: usize>
     }
 
     /// Try to allocate the next available page.
-    pub fn allocate(&mut self) -> Result<PhysAddr, BitmapPageAllocError> {
+    pub fn allocate(&mut self) -> Result<PhysAddr, PageAllocError> {
         let (first_bitmap_idx, first_byte_idx, _) = self.physaddr_as_indices(self.next_pa_to_scan);
 
         let found_indices = self
@@ -151,21 +145,21 @@ impl<const NUM_BITMAPS: usize, const BITMAP_SIZE_BYTES: usize>
             self.next_pa_to_scan = pa;
             Ok(pa)
         } else {
-            Err(BitmapPageAllocError::OutOfSpace)
+            Err(PageAllocError::OutOfSpace)
         }
     }
 
     /// Deallocate the page corresponding to the given PhysAddr.
-    pub fn deallocate(&mut self, pa: PhysAddr) -> Result<(), BitmapPageAllocError> {
+    pub fn deallocate(&mut self, pa: PhysAddr) -> Result<(), PageAllocError> {
         if pa > self.end {
-            return Err(BitmapPageAllocError::OutOfBounds);
+            return Err(PageAllocError::OutOfBounds);
         }
 
         let (bitmap_idx, byte_idx, bit_idx) = self.physaddr_as_indices(pa);
 
         let bitmap = &mut self.bitmaps[bitmap_idx];
         if !bitmap.is_set(8 * byte_idx + bit_idx) {
-            return Err(BitmapPageAllocError::NotAllocated);
+            return Err(PageAllocError::NotAllocated);
         }
         bitmap.set(bit_idx, false);
 
@@ -222,15 +216,15 @@ impl<const NUM_BITMAPS: usize, const BITMAP_SIZE_BYTES: usize>
         range: &PhysRange,
         mark_allocated: bool,
         check_end: bool,
-    ) -> Result<(), BitmapPageAllocError> {
+    ) -> Result<(), PageAllocError> {
         if check_end && range.0.end > self.end {
-            return Err(BitmapPageAllocError::NotEnoughBitmaps);
+            return Err(PageAllocError::OutOfBounds);
         }
 
         for pa in range.step_by_rounded(self.alloc_page_size) {
             let (bitmap_idx, byte_idx, bit_idx) = self.physaddr_as_indices(pa);
             if bitmap_idx >= self.bitmaps.len() {
-                return Err(BitmapPageAllocError::OutOfBounds);
+                return Err(PageAllocError::OutOfBounds);
             }
 
             let bitmap = &mut self.bitmaps[bitmap_idx];
@@ -357,7 +351,7 @@ mod tests {
     }
 
     #[test]
-    fn bitmappagealloc_mark_allocated_and_free() -> Result<(), BitmapPageAllocError> {
+    fn bitmappagealloc_mark_allocated_and_free() -> Result<(), PageAllocError> {
         // Create a new allocator and mark it all freed
         // 2 bitmaps, 2 bytes per bitmap, mapped to pages of 4 bytes
         // 32 bits, 128 bytes physical memory
@@ -375,7 +369,7 @@ mod tests {
     }
 
     #[test]
-    fn bitmappagealloc_allocate_and_deallocate() -> Result<(), BitmapPageAllocError> {
+    fn bitmappagealloc_allocate_and_deallocate() -> Result<(), PageAllocError> {
         // Create a new allocator and mark it all freed
         // 2 bitmaps, 2 bytes per bitmap, mapped to pages of 4 bytes
         // 32 bits, 128 bytes physical memory
@@ -399,17 +393,14 @@ mod tests {
             alloc.allocate()?;
         }
         assert_eq!(alloc.bytes(), [0xff, 0xff, 0xff, 0xff]);
-        assert_eq!(alloc.allocate().unwrap_err(), BitmapPageAllocError::OutOfSpace);
+        assert_eq!(alloc.allocate().unwrap_err(), PageAllocError::OutOfSpace);
 
         // Now try to deallocate the second page
         assert!(alloc.deallocate(PhysAddr::new(4)).is_ok());
         assert_eq!(alloc.bytes(), [0xfd, 0xff, 0xff, 0xff]);
 
         // Ensure double deallocation fails
-        assert_eq!(
-            alloc.deallocate(PhysAddr::new(4)).unwrap_err(),
-            BitmapPageAllocError::NotAllocated
-        );
+        assert_eq!(alloc.deallocate(PhysAddr::new(4)).unwrap_err(), PageAllocError::NotAllocated);
         assert_eq!(alloc.bytes(), [0xfd, 0xff, 0xff, 0xff]);
 
         // Allocate once more, expecting the physical address we just deallocated

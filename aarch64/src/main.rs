@@ -20,19 +20,23 @@ mod uartmini;
 mod uartpl011;
 mod vm;
 
+extern crate alloc;
+
 use crate::kmem::from_virt_to_physaddr;
-use crate::vm::kernel_root;
+use alloc::boxed::Box;
 use core::ptr;
 use kmem::{boottext_range, bss_range, data_range, rodata_range, text_range, total_kernel_range};
+use param::KZERO;
 use port::fdt::DeviceTree;
 use port::mem::PhysRange;
 use port::println;
-use vm::PageTable;
+use vm::{Entry, RootPageTable, RootPageTableType, VaMapping};
 
 #[cfg(not(test))]
 core::arch::global_asm!(include_str!("l.S"));
 
-static mut KPGTBL: PageTable = PageTable::empty();
+static mut KERNEL_PAGETABLE: RootPageTable = RootPageTable::empty();
+static mut USER_PAGETABLE: RootPageTable = RootPageTable::empty();
 
 unsafe fn print_memory_range(name: &str, range: &PhysRange) {
     let size = range.size();
@@ -118,27 +122,80 @@ pub extern "C" fn main9(dtb_va: usize) {
     // Map address space accurately using rust VM code to manage page tables
     unsafe {
         let dtb_range = PhysRange::with_len(from_virt_to_physaddr(dtb_va).addr(), dt.size());
-        vm::init(&mut *ptr::addr_of_mut!(KPGTBL), dtb_range, mailbox::get_arm_memory());
-        vm::switch(&*ptr::addr_of!(KPGTBL));
+        vm::init_kernel_page_tables(
+            &mut *ptr::addr_of_mut!(KERNEL_PAGETABLE),
+            dtb_range,
+            mailbox::get_arm_memory(),
+        );
+        vm::switch(&*ptr::addr_of!(KERNEL_PAGETABLE), RootPageTableType::Kernel);
+
+        vm::init_user_page_tables(&mut *ptr::addr_of_mut!(USER_PAGETABLE));
+        vm::switch(&*ptr::addr_of!(USER_PAGETABLE), RootPageTableType::User);
     }
 
     // From this point we can use the global allocator
 
     print_memory_info();
 
-    if let Ok(page) = pagealloc::allocate() {
-        println!("page addr: {:#016x}", page.data().as_ptr() as *const _ as u64);
+    vm::print_recursive_tables(RootPageTableType::Kernel);
+    vm::print_recursive_tables(RootPageTableType::User);
 
-        //let mapped_range =
-        // let kpgtable = unsafe { &mut *ptr::addr_of_mut!(KPGTBL) };
-        // kpgtable.map_phys_range(range, *flags, *page_size).expect("dynamic mapping failed");
+    {
+        let page_table = unsafe { &mut *ptr::addr_of_mut!(KERNEL_PAGETABLE) };
+        let entry = Entry::rw_kernel_data();
+        for i in 0..3 {
+            let alloc_result = pagealloc::allocate_virtpage(
+                page_table,
+                "testkernel",
+                entry,
+                VaMapping::Offset(KZERO),
+                RootPageTableType::Kernel,
+            );
+            match alloc_result {
+                Ok(_allocated_page) => {}
+                Err(err) => {
+                    println!("Error allocating page in kernel space ({i}): {:?}", err);
+                    break;
+                }
+            }
+        }
     }
 
-    kernel_root().print_recursive_tables();
+    vm::print_recursive_tables(RootPageTableType::Kernel);
+    vm::print_recursive_tables(RootPageTableType::User);
+
+    println!("Now try user space");
+
+    {
+        let page_table = unsafe { &mut *ptr::addr_of_mut!(USER_PAGETABLE) };
+        let entry = Entry::rw_user_text();
+        for i in 0..100 {
+            let alloc_result = pagealloc::allocate_virtpage(
+                page_table,
+                "testuser",
+                entry,
+                VaMapping::Addr((i + 1) * 4096),
+                RootPageTableType::User,
+            );
+            match alloc_result {
+                Ok(_allocated_page) => {}
+                Err(err) => {
+                    println!("Error allocating page in user space ({i}): {:?}", err);
+                    break;
+                }
+            }
+        }
+    }
+
+    vm::print_recursive_tables(RootPageTableType::Kernel);
+    vm::print_recursive_tables(RootPageTableType::User);
+
+    let _b = Box::new("ddododo");
 
     println!("looping now");
 
     #[allow(clippy::empty_loop)]
     loop {}
 }
+
 mod runtime;
