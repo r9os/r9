@@ -11,25 +11,23 @@ SECTIONS {
 	boottext = .;
 	.text.boot : ALIGN(4096) {
 		*(.boottext .bootdata)
-		. = ALIGN(4096);
-		eboottext = .;
-		. = ALIGN(2097152);
-		esys = .;
 	}
+	. = ALIGN(4096);
+	eboottext = .;
 
 	text = .;
 	.text : ALIGN(4096) {
 		*(.text* .stub .gnu.linkonce.t.*)
-		. = ALIGN(2097152);	
-		etext = .;
 	}
+	. = ALIGN(4096);	
+	etext = .;
 
 	rodata = .;
 	.rodata : ALIGN(4096) {
 		*(.rodata* .gnu.linkonce.r.*)
-		. = ALIGN(2097152);
-		erodata = .;
 	}
+	. = ALIGN(4096);
+	erodata = .;
 
 	data = .;
 	.data : ALIGN(4096) {
@@ -41,14 +39,15 @@ SECTIONS {
 	.got.plt : ALIGN(4096) {
 		*(.got.plt)
 	}
+	. = ALIGN(4096);
 	edata = .;
 
 	bss = .;
 	.bss : ALIGN(4096) {
 		*(.bss*)
 		*(COMMON)
-		. = ALIGN(2097152);
 	}
+	. = ALIGN(4096);
 	ebss = .;
 
 	/* Reserve section for early pagetables.  Align to 2MiB to allow us to map
@@ -59,9 +58,8 @@ SECTIONS {
 	early_pagetables = .;
 	. += 2 * 1024 * 1024;
 	eearly_pagetables = .;
-
+	
 	end = .;
-	PROVIDE(end = .);
 	
 	/DISCARD/ : {
 		*(.eh_frame .note.GNU-stack)

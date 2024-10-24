@@ -2,8 +2,8 @@
 
 use crate::{
     kmem::{
-        ebss_addr, erodata_addr, etext_addr, from_ptr_to_physaddr, from_virt_to_physaddr,
-        physaddr_as_ptr_mut, physaddr_as_virt, text_addr,
+        boottext_range, bss_range, data_range, from_ptr_to_physaddr, physaddr_as_ptr_mut,
+        physaddr_as_virt, rodata_range, text_range,
     },
     pagealloc,
     registers::rpi_mmio,
@@ -47,6 +47,10 @@ impl Page4K {
         unsafe {
             core::intrinsics::volatile_set_memory(&mut self.0, 0u8, 1);
         }
+    }
+
+    pub fn data(&mut self) -> &mut [u8] {
+        &mut self.0
     }
 }
 
@@ -485,24 +489,16 @@ pub unsafe fn init(kpage_table: &mut PageTable, dtb_range: PhysRange, available_
 
     // TODO leave the first page unmapped to catch null pointer dereferences in unsafe code
     let custom_map = {
-        let text_range =
-            PhysRange(from_virt_to_physaddr(text_addr())..from_virt_to_physaddr(etext_addr()));
-        let data_range = PhysRange::with_len(
-            from_virt_to_physaddr(etext_addr()).addr(),
-            erodata_addr() - etext_addr(),
-        );
-        let bss_range = PhysRange::with_len(
-            from_virt_to_physaddr(erodata_addr()).addr(),
-            ebss_addr() - erodata_addr(),
-        );
-
+        let text_range = boottext_range().add(&text_range());
+        let data_range = rodata_range().add(&data_range());
+        let bss_range = bss_range();
         let mmio_range = rpi_mmio().expect("mmio base detect failed");
 
         let mut map = [
             ("DTB", dtb_range, Entry::ro_kernel_data(), PageSize::Page4K),
-            ("Kernel Text", text_range, Entry::ro_kernel_text(), PageSize::Page2M),
-            ("Kernel Data", data_range, Entry::ro_kernel_data(), PageSize::Page2M),
-            ("Kernel BSS", bss_range, Entry::rw_kernel_data(), PageSize::Page2M),
+            ("Kernel Text", text_range, Entry::ro_kernel_text(), PageSize::Page4K),
+            ("Kernel Data", data_range, Entry::rw_kernel_data(), PageSize::Page4K),
+            ("Kernel BSS", bss_range, Entry::rw_kernel_data(), PageSize::Page4K),
             ("MMIO", mmio_range, Entry::ro_kernel_device(), PageSize::Page2M),
         ];
         map.sort_by_key(|a| a.1.start());
@@ -515,14 +511,8 @@ pub unsafe fn init(kpage_table: &mut PageTable, dtb_range: PhysRange, available_
             kpage_table.map_phys_range(range, *flags, *page_size).expect("init mapping failed");
 
         println!(
-            "  {:14}{:#018x}..{:#018x} to {:#018x}..{:#018x} flags: {:?} page_size: {:?}",
-            name,
-            range.start().addr(),
-            range.end().addr(),
-            mapped_range.0,
-            mapped_range.1,
-            flags,
-            page_size
+            "  {:14}{} to {:#018x}..{:#018x} flags: {:?} page_size: {:?}",
+            name, range, mapped_range.0, mapped_range.1, flags, page_size
         );
     }
 
