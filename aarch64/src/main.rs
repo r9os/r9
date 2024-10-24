@@ -4,7 +4,6 @@
 #![cfg_attr(not(test), no_main)]
 #![feature(alloc_error_handler)]
 #![feature(core_intrinsics)]
-#![feature(strict_provenance)]
 #![feature(sync_unsafe_cell)]
 #![forbid(unsafe_op_in_unsafe_fn)]
 
@@ -22,8 +21,8 @@ mod vm;
 
 use crate::kmem::from_virt_to_physaddr;
 use crate::vm::kernel_root;
-use core::ffi::c_void;
 use core::ptr;
+use kmem::{boottext_range, bss_range, data_range, rodata_range, text_range, total_kernel_range};
 use port::fdt::DeviceTree;
 use port::mem::PhysRange;
 use port::println;
@@ -34,35 +33,20 @@ core::arch::global_asm!(include_str!("l.S"));
 
 static mut KPGTBL: PageTable = PageTable::empty();
 
-unsafe fn print_memory_range(name: &str, start: &*const c_void, end: &*const c_void) {
-    let start = start as *const _ as u64;
-    let end = end as *const _ as u64;
-    let size = end - start;
-    println!("  {name}{start:#x}..{end:#x} ({size:#x})");
+unsafe fn print_memory_range(name: &str, range: &PhysRange) {
+    let size = range.size();
+    println!("  {name}{range} ({size:#x})");
 }
 
 fn print_binary_sections() {
-    extern "C" {
-        static boottext: *const c_void;
-        static eboottext: *const c_void;
-        static text: *const c_void;
-        static etext: *const c_void;
-        static rodata: *const c_void;
-        static erodata: *const c_void;
-        static data: *const c_void;
-        static edata: *const c_void;
-        static bss: *const c_void;
-        static end: *const c_void;
-    }
-
     println!("Binary sections:");
     unsafe {
-        print_memory_range("boottext:\t", &boottext, &eboottext);
-        print_memory_range("text:\t\t", &text, &etext);
-        print_memory_range("rodata:\t", &rodata, &erodata);
-        print_memory_range("data:\t\t", &data, &edata);
-        print_memory_range("bss:\t\t", &bss, &end);
-        print_memory_range("total:\t", &boottext, &end);
+        print_memory_range("boottext:\t", &boottext_range());
+        print_memory_range("text:\t\t", &text_range());
+        print_memory_range("rodata:\t", &rodata_range());
+        print_memory_range("data:\t\t", &data_range());
+        print_memory_range("bss:\t\t", &bss_range());
+        print_memory_range("total:\t", &total_kernel_range());
     }
 }
 
@@ -140,6 +124,14 @@ pub extern "C" fn main9(dtb_va: usize) {
     // From this point we can use the global allocator
 
     print_memory_info();
+
+    if let Ok(page) = pagealloc::allocate() {
+        println!("page addr: {:#016x}", page.data().as_ptr() as *const _ as u64);
+
+        //let mapped_range =
+        // let kpgtable = unsafe { &mut *ptr::addr_of_mut!(KPGTBL) };
+        // kpgtable.map_phys_range(range, *flags, *page_size).expect("dynamic mapping failed");
+    }
 
     kernel_root().print_recursive_tables();
 
