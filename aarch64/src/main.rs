@@ -22,6 +22,7 @@ mod vm;
 
 use crate::kmem::from_virt_to_physaddr;
 use crate::vm::kernel_root;
+
 use core::ffi::c_void;
 use core::ptr;
 use port::fdt::DeviceTree;
@@ -125,6 +126,7 @@ pub extern "C" fn main9(dtb_va: usize) {
     println!("r9 from the Internet");
     println!("DTB found at: {:#x}", dtb_va);
     println!("midr_el1: {:?}", registers::MidrEl1::read());
+    // registers::CNTVOFF_EL2.set(0);
 
     print_binary_sections();
     print_physical_memory_info();

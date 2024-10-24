@@ -1,5 +1,7 @@
 #![allow(non_upper_case_globals)]
 
+use aarch64_cpu::registers::{Readable, Writeable};
+use aarch64_cpu::{asm, registers::MIDR_EL1};
 use bitstruct::bitstruct;
 use core::fmt;
 use num_enum::TryFromPrimitive;
@@ -46,16 +48,7 @@ bitstruct! {
 
 impl MidrEl1 {
     pub fn read() -> Self {
-        #[cfg(not(test))]
-        {
-            let mut value: u64;
-            unsafe {
-                core::arch::asm!("mrs {value}, midr_el1", value = out(reg) value);
-            }
-            Self(value)
-        }
-        #[cfg(test)]
-        Self(0)
+        Self(if cfg!(test) { 0 } else { MIDR_EL1.extract().into() })
     }
 
     pub fn partnum_enum(&self) -> Result<PartNum, u16> {
