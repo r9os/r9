@@ -8,9 +8,9 @@ default-target = "riscv64gc-unknown-none-elf"
 
 [dependencies]
 port = { path = "../port" }
+sbi-rt = "0.0.3"
 
 [features]
-opensbi = []
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(platform, values("nezha"))', 'cfg(platform, values("virt"))'] }

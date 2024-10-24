@@ -49,6 +49,8 @@ pub fn _consgetb() -> u8 {
 }
 
 pub fn shutdown() -> ! {
-    sbi_call_legacy(SBI_SHUTDOWN, 0, 0, 0);
-    panic!("shutdown failed!");
+    sbi_rt::system_reset(sbi_rt::Shutdown, sbi_rt::NoReason);
+    loop {
+        unsafe { core::arch::asm!("wfi") }
+    }
 }
