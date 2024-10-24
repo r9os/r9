@@ -1,5 +1,6 @@
 use crate::fdt::RegBlock;
 use core::{
+    cmp::{max, min},
     fmt,
     iter::{Step, StepBy},
     ops::{self, Range},
@@ -144,6 +145,10 @@ impl PhysRange {
         let startpa = self.start().round_down(step_size as u64);
         let endpa = self.end().round_up(step_size as u64);
         (startpa..endpa).step_by(step_size)
+    }
+
+    pub fn add(&self, other: &PhysRange) -> Self {
+        Self(min(self.0.start, other.0.start)..max(self.0.end, other.0.end))
     }
 }
 
