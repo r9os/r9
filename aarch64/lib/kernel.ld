@@ -8,6 +8,8 @@ SECTIONS {
 	/* Entrypoint for Raspberry Pi will be at 0x80000 */
 	. = ${LOAD-ADDRESS};
 
+
+	/* Group boottext and text */
 	PROVIDE(boottext = .);
 	.text.boot : ALIGN(4096) {
 		*(.boottext .bootdata)
@@ -19,16 +21,20 @@ SECTIONS {
 	.text : ALIGN(4096) {
 		*(.text* .stub .gnu.linkonce.t.*)
 	}
-	. = ALIGN(4096);
+	. = ALIGN(2097152);
 	PROVIDE(etext = .);
 
+
+	/* RO data is in a separate page to other data */
 	PROVIDE(rodata = .);
 	.rodata : ALIGN(4096) {
 		*(.rodata* .gnu.linkonce.r.*)
 	}
-	. = ALIGN(4096);
+	. = ALIGN(2097152);
 	PROVIDE(erodata = .);
 
+
+	/* Group data and bss */
 	PROVIDE(data = .);
 	.data : ALIGN(4096) {
 		*(.data*)
@@ -47,8 +53,9 @@ SECTIONS {
 		*(.bss*)
 		*(COMMON)
 	}
-	. = ALIGN(4096);
+	. = ALIGN(2097152);
 	PROVIDE(ebss = .);
+
 
 	/* Reserve section for early pagetables.  Align to 2MiB to allow us to map
 	   as a 2MiB page.Note that this won't be needed once we transition to
@@ -58,7 +65,8 @@ SECTIONS {
 	early_pagetables = .;
 	. += 2 * 1024 * 1024;
 	eearly_pagetables = .;
-	
+
+
 	PROVIDE(end = .);
 	
 	/DISCARD/ : {
