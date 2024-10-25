@@ -8,28 +8,28 @@ SECTIONS {
 	/* Entrypoint for Raspberry Pi will be at 0x80000 */
 	. = ${LOAD-ADDRESS};
 
-	boottext = .;
+	PROVIDE(boottext = .);
 	.text.boot : ALIGN(4096) {
 		*(.boottext .bootdata)
 	}
 	. = ALIGN(4096);
-	eboottext = .;
+	PROVIDE(eboottext = .);
 
-	text = .;
+	PROVIDE(text = .);
 	.text : ALIGN(4096) {
 		*(.text* .stub .gnu.linkonce.t.*)
 	}
-	. = ALIGN(4096);	
-	etext = .;
+	. = ALIGN(4096);
+	PROVIDE(etext = .);
 
-	rodata = .;
+	PROVIDE(rodata = .);
 	.rodata : ALIGN(4096) {
 		*(.rodata* .gnu.linkonce.r.*)
 	}
 	. = ALIGN(4096);
-	erodata = .;
+	PROVIDE(erodata = .);
 
-	data = .;
+	PROVIDE(data = .);
 	.data : ALIGN(4096) {
 		*(.data*)
 	}
@@ -40,15 +40,15 @@ SECTIONS {
 		*(.got.plt)
 	}
 	. = ALIGN(4096);
-	edata = .;
+	PROVIDE(edata = .);
 
-	bss = .;
+	PROVIDE(bss = .);
 	.bss : ALIGN(4096) {
 		*(.bss*)
 		*(COMMON)
 	}
 	. = ALIGN(4096);
-	ebss = .;
+	PROVIDE(ebss = .);
 
 	/* Reserve section for early pagetables.  Align to 2MiB to allow us to map
 	   as a 2MiB page.Note that this won't be needed once we transition to
@@ -59,7 +59,7 @@ SECTIONS {
 	. += 2 * 1024 * 1024;
 	eearly_pagetables = .;
 	
-	end = .;
+	PROVIDE(end = .);
 	
 	/DISCARD/ : {
 		*(.eh_frame .note.GNU-stack)
