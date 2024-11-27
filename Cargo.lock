@@ -6,9 +6,19 @@ version = 4
 name = "aarch64"
 version = "0.1.0"
 dependencies = [
+ "aarch64-cpu",
  "bitstruct",
  "num_enum",
  "port",
+]
+
+[[package]]
+name = "aarch64-cpu"
+version = "9.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac42a04a61c19fc8196dd728022a784baecc5d63d7e256c01ad1b3fbfab26287"
+dependencies = [
+ "tock-registers",
 ]
 
 [[package]]
@@ -323,6 +333,12 @@ name = "target-lexicon"
 version = "0.12.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "61c41af27dd6d1e27b1b16b489db798443478cef1f06a660c96db617ba5de3b1"
+
+[[package]]
+name = "tock-registers"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "696941a0aee7e276a165a978b37918fd5d22c55c3d6bda197813070ca9c0f21c"
 
 [[package]]
 name = "toml"
