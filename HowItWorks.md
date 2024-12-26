@@ -34,10 +34,21 @@ We're now in rust, in `main9`, and at a highlevel we:
 ### Virtual Memory
 
 VM initialisation proceeds as follows:
-1. Set up the page allocator.  We use a bitmap allocator defined in `pagealloc.rs`.  This makes use of the `earlypages` reserved in the `kernel.ld` linker script.  The 16KiB reserved here allows us to manage 16*4096*8 pages.  Each bit represents 4096KiB, allowing us to map 2GiB of RAM.
+1. Set up the page allocator.  We use a bitmap allocator defined in `pagealloc.rs`.  This makes use of the `earlypages` reserved in the `kernel.ld` linker script.  The 16KiB reserved here allows us to manage 16\*4096\*8 pages.  Each bit represents 4096KiB, allowing us to map 2GiB of RAM.  The allocator assumes everything except the early pages are allocated at first.  This is to ensure we don't mistakenly allocate a page that should not be available (e.g. will be mapped below).
+2. Build an initial memory map.  This is also a bit rpi4-specific.  It maps:
+  - Device tree DTB
+  - Kernel text, data and BSS
+  - MMIO
+3. We map each of the above ranges according to the defined entry flags.
+4. We now mark all the unallocated pages free.
+
+To document:
+- The innards of page table mapping.
 
 Future Improvements:
+- The page table management code needs to be able to obtain new page frames while updating page tables.  It's simplest to ensure we have at least X page frames pre-mapped, and available in the page allocator.
 - Replace the page allocator with something a little more sophisticated with a higher upper bound.
+- If the page allocator made use of something like a free list, we could add the early pages to that free list, and avoid the weird hack of marking everything as allocated up front and having to later mark as unallocated.
 - Move the page allocator to port.
 
 ## x86_64
