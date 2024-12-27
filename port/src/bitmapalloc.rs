@@ -1,3 +1,10 @@
+/// bitmapalloc implements a very simple bitmap page allocator.
+///
+/// Benefits of the current implementation:
+///  - Doesn't require any allocations, so can be used without fear while
+///    manipulating the page tables.
+/// Downsides:
+///  - Can't be dynamically resized.
 use core::fmt;
 
 use crate::mem::{PhysAddr, PhysRange};
