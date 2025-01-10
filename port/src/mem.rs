@@ -77,14 +77,14 @@ impl ops::Add<u64> for PhysAddr {
 
 /// Note that this implementation will round down the startpa and round up the endpa
 impl Step for PhysAddr {
-    fn steps_between(&startpa: &Self, &endpa: &Self) -> Option<usize> {
+    fn steps_between(&startpa: &Self, &endpa: &Self) -> (usize, Option<usize>) {
         if startpa.0 <= endpa.0 {
-            match endpa.0.checked_sub(startpa.0) {
-                Some(result) => usize::try_from(result).ok(),
-                None => None,
+            match endpa.0.checked_sub(startpa.0).and_then(|r| usize::try_from(r).ok()) {
+                Some(result) => (result, Some(result)),
+                None => (usize::MAX, None),
             }
         } else {
-            None
+            (0, None)
         }
     }
 

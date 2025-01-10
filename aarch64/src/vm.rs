@@ -40,9 +40,25 @@ impl PageSize {
 
 #[repr(C, align(4096))]
 #[derive(Clone, Copy)]
-pub struct Page4K([u8; PAGE_SIZE_4K]);
+pub struct PhysPage4K([u8; PAGE_SIZE_4K]);
 
-impl Page4K {
+impl PhysPage4K {
+    pub fn clear(&mut self) {
+        unsafe {
+            core::intrinsics::volatile_set_memory(&mut self.0, 0u8, 1);
+        }
+    }
+
+    pub fn data(&mut self) -> &mut [u8] {
+        &mut self.0
+    }
+}
+
+#[repr(C, align(4096))]
+#[derive(Clone, Copy)]
+pub struct VirtPage4K([u8; PAGE_SIZE_4K]);
+
+impl VirtPage4K {
     pub fn clear(&mut self) {
         unsafe {
             core::intrinsics::volatile_set_memory(&mut self.0, 0u8, 1);
@@ -111,6 +127,7 @@ impl Entry {
 
     fn rw_kernel_data() -> Self {
         Entry(0)
+            .with_access_permission(AccessPermission::PrivRw)
             .with_shareable(Shareable::Inner)
             .with_accessed(true)
             .with_uxn(true)
@@ -132,7 +149,7 @@ impl Entry {
 
     fn ro_kernel_text() -> Self {
         Entry(0)
-            .with_access_permission(AccessPermission::PrivRw)
+            .with_access_permission(AccessPermission::PrivRo)
             .with_shareable(Shareable::Inner)
             .with_accessed(true)
             .with_uxn(true)
@@ -141,7 +158,7 @@ impl Entry {
             .with_valid(true)
     }
 
-    fn ro_kernel_device() -> Self {
+    fn rw_device() -> Self {
         Entry(0)
             .with_access_permission(AccessPermission::PrivRw)
             .with_shareable(Shareable::Inner)
@@ -149,6 +166,17 @@ impl Entry {
             .with_uxn(true)
             .with_pxn(true)
             .with_mair_index(Mair::Device)
+            .with_valid(true)
+    }
+
+    pub fn rw_user_text() -> Self {
+        Entry(0)
+            .with_access_permission(AccessPermission::AllRw)
+            .with_shareable(Shareable::Inner)
+            .with_accessed(true)
+            .with_uxn(true)
+            .with_pxn(false)
+            .with_mair_index(Mair::Normal)
             .with_valid(true)
     }
 
@@ -330,9 +358,9 @@ impl Table {
     }
 
     fn alloc_pagetable() -> Result<&'static mut Table, PageTableError> {
-        let page = pagealloc::allocate()?;
+        let page = pagealloc::allocate_physpage()?;
         page.clear();
-        Ok(unsafe { &mut *(page as *mut Page4K as *mut Table) })
+        Ok(unsafe { &mut *(page as *mut PhysPage4K as *mut Table) })
     }
 }
 
@@ -499,7 +527,7 @@ pub unsafe fn init(kpage_table: &mut PageTable, dtb_range: PhysRange, available_
             ("Kernel Text", text_range, Entry::ro_kernel_text(), PageSize::Page2M),
             ("Kernel RO Data", ro_data_range, Entry::ro_kernel_data(), PageSize::Page2M),
             ("Kernel Data", data_range, Entry::rw_kernel_data(), PageSize::Page2M),
-            ("MMIO", mmio_range, Entry::ro_kernel_device(), PageSize::Page2M),
+            ("MMIO", mmio_range, Entry::rw_device(), PageSize::Page2M),
         ];
         map.sort_by_key(|a| a.1.start());
         map
