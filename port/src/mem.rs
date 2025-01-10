@@ -19,11 +19,7 @@ impl VirtRange {
 
     pub fn offset_addr(&self, offset: usize) -> Option<usize> {
         let addr = self.0.start + offset;
-        if self.0.contains(&addr) {
-            Some(addr)
-        } else {
-            None
-        }
+        if self.0.contains(&addr) { Some(addr) } else { None }
     }
 
     pub fn start(&self) -> usize {
@@ -122,11 +118,7 @@ impl PhysRange {
     #[allow(dead_code)]
     pub fn offset_addr(&self, offset: u64) -> Option<PhysAddr> {
         let addr = self.0.start + offset;
-        if self.0.contains(&addr) {
-            Some(addr)
-        } else {
-            None
-        }
+        if self.0.contains(&addr) { Some(addr) } else { None }
     }
 
     pub fn start(&self) -> PhysAddr {

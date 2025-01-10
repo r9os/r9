@@ -25,6 +25,7 @@ extern crate alloc;
 
 use crate::kmem::from_virt_to_physaddr;
 use crate::vm::kernel_root;
+use aarch64_cpu::registers::SCTLR_EL1::M;
 use alloc::boxed::Box;
 use core::alloc::Layout;
 use core::ptr;
@@ -132,12 +133,23 @@ pub extern "C" fn main9(dtb_va: usize) {
 
     print_memory_info();
 
-    if let Ok(page) = pagealloc::allocate() {
-        println!("page addr: {:#016x}", page.data().as_ptr() as *const _ as u64);
+    for x in 1..2 {
+        if let Ok(allocated_page) =
+            pagealloc::allocate_virtpage(unsafe { &mut *ptr::addr_of_mut!(KPGTBL) })
+        {
+            //         let pa = allocated_page.pa;
+            //         let va = allocated_page.page.data().as_ptr() as *const _ as u64;
+            //         println!("page pa: {pa:?} va: {va:#016x}");
 
-        //let mapped_range =
-        // let kpgtable = unsafe { &mut *ptr::addr_of_mut!(KPGTBL) };
-        // kpgtable.map_phys_range(range, *flags, *page_size).expect("dynamic mapping failed");
+            //allocated_page.clear();
+
+            //         let range = PhysRange::new(pa, pa + PAGE_SIZE_4K as u64);
+            //         let entry = Entry::rw_user_text();
+            //         let page_size = PageSize::Page4K;
+
+            //         //let kpgtable = unsafe { &mut *ptr::addr_of_mut!(KPGTBL) };
+            //         //kernel_root().map_phys_range(&range, entry, page_size).expect("dynamic mapping failed");
+        }
     }
     kernel_root().print_recursive_tables();
 

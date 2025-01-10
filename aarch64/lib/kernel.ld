@@ -27,7 +27,7 @@ SECTIONS {
 
 	/* RO data is in a separate page to other data */
 	PROVIDE(rodata = .);
-	.rodata : ALIGN(4096) {
+	.rodata : ALIGN(2097152) {
 		*(.rodata* .gnu.linkonce.r.*)
 	}
 	. = ALIGN(2097152);
@@ -53,22 +53,19 @@ SECTIONS {
 		*(.bss*)
 		*(COMMON)
 	}
-	. = ALIGN(2097152);
+	. = ALIGN(4096);
 	PROVIDE(ebss = .);
 
 
-	/* Reserve section for early pagetables.  Align to 2MiB to allow us to map
-	   as a 2MiB page.Note that this won't be needed once we transition to
-	   recursive pagetables.
-	   TODO Just use the heap when we enable recursive pagetables? */
-	. = ALIGN(2 * 1024 * 1024);
-	early_pagetables = .;
-	. += 2 * 1024 * 1024;
+	/* Reserve section for early pagetables. */
+	. = ALIGN(32 * 4096);
+    early_pagetables = .;
+	. += 32 * 4096;
 	eearly_pagetables = .;
 
 
 	PROVIDE(end = .);
-	
+
 	/DISCARD/ : {
 		*(.eh_frame .note.GNU-stack)
 	}
