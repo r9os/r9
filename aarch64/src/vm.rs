@@ -6,6 +6,7 @@ use crate::{
         physaddr_as_virt, rodata_range, text_range,
     },
     pagealloc,
+    param::KZERO,
     registers::rpi_mmio,
 };
 use bitstruct::bitstruct;
@@ -13,8 +14,8 @@ use core::fmt;
 use core::ptr::write_volatile;
 use num_enum::{FromPrimitive, IntoPrimitive};
 use port::{
-    bitmapalloc::BitmapPageAllocError,
     mem::{PhysAddr, PhysRange, PAGE_SIZE_1G, PAGE_SIZE_2M, PAGE_SIZE_4K},
+    pagealloc::PageAllocError,
 };
 
 #[cfg(not(test))]
@@ -307,13 +308,13 @@ fn recursive_table_addr(va: usize, level: Level) -> usize {
 #[derive(Debug)]
 #[allow(dead_code)]
 pub enum PageTableError {
-    AllocationFailed(BitmapPageAllocError),
+    AllocationFailed(PageAllocError),
     EntryIsNotTable,
     PhysRangeIsZero,
 }
 
-impl From<BitmapPageAllocError> for PageTableError {
-    fn from(err: BitmapPageAllocError) -> PageTableError {
+impl From<PageAllocError> for PageTableError {
+    fn from(err: PageAllocError) -> PageTableError {
         PageTableError::AllocationFailed(err)
     }
 }
@@ -436,13 +437,14 @@ impl PageTable {
     pub fn map_phys_range(
         &mut self,
         range: &PhysRange,
+        va_offset: usize,
         entry: Entry,
         page_size: PageSize,
     ) -> Result<(usize, usize), PageTableError> {
         let mut startva = None;
         let mut endva = 0;
         for pa in range.step_by_rounded(page_size.size()) {
-            let va = physaddr_as_virt(pa);
+            let va = (pa.addr() as usize).wrapping_add(va_offset);
             self.map_to(entry.with_phys_addr(pa), va, page_size)?;
             startva.get_or_insert(va);
             endva = va + page_size.size();
@@ -535,8 +537,9 @@ pub unsafe fn init(kpage_table: &mut PageTable, dtb_range: PhysRange, available_
 
     println!("Memory map:");
     for (name, range, flags, page_size) in custom_map.iter() {
-        let mapped_range =
-            kpage_table.map_phys_range(range, *flags, *page_size).expect("init mapping failed");
+        let mapped_range = kpage_table
+            .map_phys_range(range, KZERO, *flags, *page_size)
+            .expect("init mapping failed");
 
         println!(
             "  {:16}{} to {:#018x}..{:#018x} flags: {:?} page_size: {:?}",
