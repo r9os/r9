@@ -16,8 +16,8 @@ use crate::vm::PageTable;
 use crate::vm::PhysPage4K;
 use crate::vm::VirtPage4K;
 use port::bitmapalloc::BitmapPageAlloc;
-use port::bitmapalloc::BitmapPageAllocError;
 use port::mem::PhysRange;
+use port::pagealloc::PageAllocError;
 use port::{
     mcslock::{Lock, LockNode},
     mem::PAGE_SIZE_4K,
@@ -52,7 +52,7 @@ pub fn init_page_allocator() {
 pub fn free_unused_ranges<'a>(
     available_mem: &PhysRange,
     used_ranges: impl Iterator<Item = &'a PhysRange>,
-) -> Result<(), BitmapPageAllocError> {
+) -> Result<(), PageAllocError> {
     let node = LockNode::new();
     let mut lock = PAGE_ALLOC.lock(&node);
     let page_alloc = &mut *lock;
@@ -68,7 +68,7 @@ pub fn free_unused_ranges<'a>(
 }
 
 /// Try to allocate a physical page.  Note that this is NOT mapped.
-pub fn allocate_physpage() -> Result<&'static mut PhysPage4K, BitmapPageAllocError> {
+pub fn allocate_physpage() -> Result<&'static mut PhysPage4K, PageAllocError> {
     let node = LockNode::new();
     let mut lock = PAGE_ALLOC.lock(&node);
     let page_alloc = &mut *lock;
@@ -85,19 +85,21 @@ pub fn allocate_physpage() -> Result<&'static mut PhysPage4K, BitmapPageAllocErr
 /// Try to allocate a physical page and map it into virtual memory.
 pub fn allocate_virtpage(
     kpage_table: &mut PageTable,
-) -> Result<&'static mut VirtPage4K, BitmapPageAllocError> {
+) -> Result<&'static mut VirtPage4K, PageAllocError> {
     let physpage = allocate_physpage()?;
     let pagepa = addr_of!(physpage) as u64;
     let range = PhysRange::with_end(pagepa, pagepa + PAGE_SIZE_4K as u64);
     // TODO making a bit of an assumption here...
     let entry = Entry::rw_user_text();
-    if let Ok(page_va) = kpage_table.map_phys_range(&range, entry, crate::vm::PageSize::Page4K) {
+    if let Ok(page_va) =
+        kpage_table.map_phys_range(&range, 4096, entry, crate::vm::PageSize::Page4K)
+    {
         println!("pagealloc::allocate va:{:#x}", page_va.0);
         let virtpage = page_va.0 as *mut VirtPage4K;
         Ok(unsafe { &mut *virtpage })
     } else {
-        // TODO We should wrap this error - this makes no sense
-        Err(BitmapPageAllocError::NotAllocated)
+        println!("pagealloc::allocate unable to map");
+        Err(PageAllocError::UnableToMap)
     }
 }
 

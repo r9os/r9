@@ -134,21 +134,23 @@ pub extern "C" fn main9(dtb_va: usize) {
     print_memory_info();
 
     for x in 1..2 {
-        if let Ok(allocated_page) =
-            pagealloc::allocate_virtpage(unsafe { &mut *ptr::addr_of_mut!(KPGTBL) })
-        {
-            //         let pa = allocated_page.pa;
-            //         let va = allocated_page.page.data().as_ptr() as *const _ as u64;
-            //         println!("page pa: {pa:?} va: {va:#016x}");
+        let alloc_result = pagealloc::allocate_virtpage(unsafe { &mut *ptr::addr_of_mut!(KPGTBL) });
+        match alloc_result {
+            Ok(allocated_page) => {
+                //         let pa = allocated_page.pa;
+                //         let va = allocated_page.page.data().as_ptr() as *const _ as u64;
+                //         println!("page pa: {pa:?} va: {va:#016x}");
 
-            //allocated_page.clear();
+                //allocated_page.clear();
 
-            //         let range = PhysRange::new(pa, pa + PAGE_SIZE_4K as u64);
-            //         let entry = Entry::rw_user_text();
-            //         let page_size = PageSize::Page4K;
+                //         let range = PhysRange::new(pa, pa + PAGE_SIZE_4K as u64);
+                //         let entry = Entry::rw_user_text();
+                //         let page_size = PageSize::Page4K;
 
-            //         //let kpgtable = unsafe { &mut *ptr::addr_of_mut!(KPGTBL) };
-            //         //kernel_root().map_phys_range(&range, entry, page_size).expect("dynamic mapping failed");
+                //         //let kpgtable = unsafe { &mut *ptr::addr_of_mut!(KPGTBL) };
+                //         //kernel_root().map_phys_range(&range, entry, page_size).expect("dynamic mapping failed");
+            }
+            Err(err) => println!("Error allocating page: {:?}", err),
         }
     }
     kernel_root().print_recursive_tables();
