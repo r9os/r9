@@ -351,7 +351,7 @@ mod tests {
     }
 
     #[test]
-    fn bitmappagealloc_mark_allocated_and_free() -> Result<(), BitmapPageAllocError> {
+    fn bitmappagealloc_mark_allocated_and_free() -> Result<(), PageAllocError> {
         // Create a new allocator and mark it all freed
         // 2 bitmaps, 2 bytes per bitmap, mapped to pages of 4 bytes
         // 32 bits, 128 bytes physical memory
@@ -369,7 +369,7 @@ mod tests {
     }
 
     #[test]
-    fn bitmappagealloc_allocate_and_deallocate() -> Result<(), BitmapPageAllocError> {
+    fn bitmappagealloc_allocate_and_deallocate() -> Result<(), PageAllocError> {
         // Create a new allocator and mark it all freed
         // 2 bitmaps, 2 bytes per bitmap, mapped to pages of 4 bytes
         // 32 bits, 128 bytes physical memory
@@ -393,17 +393,14 @@ mod tests {
             alloc.allocate()?;
         }
         assert_eq!(alloc.bytes(), [0xff, 0xff, 0xff, 0xff]);
-        assert_eq!(alloc.allocate().unwrap_err(), BitmapPageAllocError::OutOfSpace);
+        assert_eq!(alloc.allocate().unwrap_err(), PageAllocError::OutOfSpace);
 
         // Now try to deallocate the second page
         assert!(alloc.deallocate(PhysAddr::new(4)).is_ok());
         assert_eq!(alloc.bytes(), [0xfd, 0xff, 0xff, 0xff]);
 
         // Ensure double deallocation fails
-        assert_eq!(
-            alloc.deallocate(PhysAddr::new(4)).unwrap_err(),
-            BitmapPageAllocError::NotAllocated
-        );
+        assert_eq!(alloc.deallocate(PhysAddr::new(4)).unwrap_err(), PageAllocError::NotAllocated);
         assert_eq!(alloc.bytes(), [0xfd, 0xff, 0xff, 0xff]);
 
         // Allocate once more, expecting the physical address we just deallocated

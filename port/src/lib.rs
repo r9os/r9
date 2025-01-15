@@ -4,6 +4,7 @@
 #![feature(allocator_api)]
 #![feature(maybe_uninit_slice)]
 #![feature(step_trait)]
+#![feature(unsigned_is_multiple_of)]
 #![forbid(unsafe_op_in_unsafe_fn)]
 
 extern crate alloc;

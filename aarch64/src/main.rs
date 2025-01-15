@@ -31,10 +31,11 @@ use core::alloc::Layout;
 use core::ptr;
 use core::ptr::null_mut;
 use kmem::{boottext_range, bss_range, data_range, rodata_range, text_range, total_kernel_range};
+use param::KZERO;
 use port::fdt::DeviceTree;
 use port::mem::PhysRange;
 use port::println;
-use vm::PageTable;
+use vm::{Entry, PageTable};
 
 #[cfg(not(test))]
 core::arch::global_asm!(include_str!("l.S"));
@@ -133,24 +134,31 @@ pub extern "C" fn main9(dtb_va: usize) {
 
     print_memory_info();
 
-    for x in 1..2 {
-        let alloc_result = pagealloc::allocate_virtpage(unsafe { &mut *ptr::addr_of_mut!(KPGTBL) });
-        match alloc_result {
-            Ok(allocated_page) => {
-                //         let pa = allocated_page.pa;
-                //         let va = allocated_page.page.data().as_ptr() as *const _ as u64;
-                //         println!("page pa: {pa:?} va: {va:#016x}");
+    {
+        let page_table = unsafe { &mut *ptr::addr_of_mut!(KPGTBL) };
+        let entry = Entry::rw_kernel_data();
+        for i in 0..1 {
+            let alloc_result = pagealloc::allocate_virtpage("test", page_table, entry, KZERO);
+            match alloc_result {
+                Ok(allocated_page) => {
+                    //         let pa = allocated_page.pa;
+                    //         let va = allocated_page.page.data().as_ptr() as *const _ as u64;
+                    //         println!("page pa: {pa:?} va: {va:#016x}");
 
-                //allocated_page.clear();
+                    //allocated_page.clear();
 
-                //         let range = PhysRange::new(pa, pa + PAGE_SIZE_4K as u64);
-                //         let entry = Entry::rw_user_text();
-                //         let page_size = PageSize::Page4K;
+                    //         let range = PhysRange::new(pa, pa + PAGE_SIZE_4K as u64);
+                    //         let entry = Entry::rw_user_text();
+                    //         let page_size = PageSize::Page4K;
 
-                //         //let kpgtable = unsafe { &mut *ptr::addr_of_mut!(KPGTBL) };
-                //         //kernel_root().map_phys_range(&range, entry, page_size).expect("dynamic mapping failed");
+                    //         //let kpgtable = unsafe { &mut *ptr::addr_of_mut!(KPGTBL) };
+                    //         //kernel_root().map_phys_range(&range, entry, page_size).expect("dynamic mapping failed");
+                }
+                Err(err) => {
+                    println!("Error allocating page ({i}): {:?}", err);
+                    break;
+                }
             }
-            Err(err) => println!("Error allocating page: {:?}", err),
         }
     }
     kernel_root().print_recursive_tables();

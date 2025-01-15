@@ -1,5 +1,3 @@
-use core::ptr::addr_of;
-
 /// This module acts as an interface between the portable allocator and the
 /// arch-specific use of it.
 ///
@@ -10,12 +8,11 @@ use core::ptr::addr_of;
 /// 2. `free_unused_ranges` to mark available ranges as the inverse of the
 ///    physical memory map within the bounds of the available memory.
 use crate::kmem;
-use crate::kmem::physaddr_as_ptr_mut;
 use crate::vm::Entry;
 use crate::vm::PageTable;
-use crate::vm::PhysPage4K;
 use crate::vm::VirtPage4K;
 use port::bitmapalloc::BitmapPageAlloc;
+use port::mem::PhysAddr;
 use port::mem::PhysRange;
 use port::pagealloc::PageAllocError;
 use port::{
@@ -43,7 +40,10 @@ pub fn init_page_allocator() {
 
     let early_pages_range = kmem::early_pages_range();
     if let Err(err) = page_alloc.mark_free(&early_pages_range) {
-        panic!("Couldn't mark early pages free: range: {} err: {:?}", early_pages_range, err);
+        panic!(
+            "error:pagealloc:init_page_allocator:couldn't mark early pages free: range: {} err: {:?}",
+            early_pages_range, err
+        );
     }
 }
 
@@ -63,42 +63,45 @@ pub fn free_unused_ranges<'a>(
     // assume that past this point all pages are unmapped.  The mapping can then be always
     // done after allocating a page.  The downside is that we lose access to the unallocated
     // early pages.
-    // TODO: Fix this, as it wastes nearly 2MiB
     page_alloc.mark_allocated(&kmem::early_pages_range())
 }
 
 /// Try to allocate a physical page.  Note that this is NOT mapped.
-pub fn allocate_physpage() -> Result<&'static mut PhysPage4K, PageAllocError> {
+pub fn allocate_physpage() -> Result<PhysAddr, PageAllocError> {
     let node = LockNode::new();
     let mut lock = PAGE_ALLOC.lock(&node);
     let page_alloc = &mut *lock;
 
     match page_alloc.allocate() {
         Ok(page_pa) => {
-            println!("pagealloc::allocate pa:{:?}", page_pa);
-            Ok(unsafe { &mut *physaddr_as_ptr_mut::<PhysPage4K>(page_pa) })
+            println!("pagealloc:allocate_physpage pa:{:?}", page_pa);
+            Ok(page_pa)
         }
-        Err(err) => Err(err),
+        Err(err) => {
+            println!("error:pagealloc:allocate_physpage:failed to allocate: {:?}", err);
+            Err(err)
+        }
     }
 }
 
 /// Try to allocate a physical page and map it into virtual memory.
 pub fn allocate_virtpage(
-    kpage_table: &mut PageTable,
+    debug_name: &str,
+    page_table: &mut PageTable,
+    entry: Entry,
+    va_offset: usize, // TODO Remove this?  Should be inferred from page_table
 ) -> Result<&'static mut VirtPage4K, PageAllocError> {
-    let physpage = allocate_physpage()?;
-    let pagepa = addr_of!(physpage) as u64;
-    let range = PhysRange::with_end(pagepa, pagepa + PAGE_SIZE_4K as u64);
-    // TODO making a bit of an assumption here...
-    let entry = Entry::rw_user_text();
+    println!("pagealloc:allocate_virtpage:start");
+    let page_pa = allocate_physpage()?;
+    let range = PhysRange::with_pa_len(page_pa, PAGE_SIZE_4K);
     if let Ok(page_va) =
-        kpage_table.map_phys_range(&range, 4096, entry, crate::vm::PageSize::Page4K)
+        page_table.map_phys_range(debug_name, &range, va_offset, entry, crate::vm::PageSize::Page4K)
     {
-        println!("pagealloc::allocate va:{:#x}", page_va.0);
+        println!("pagealloc:allocate_virtpage:va:{:#x} -> physpage:{:?}", page_va.0, page_pa);
         let virtpage = page_va.0 as *mut VirtPage4K;
         Ok(unsafe { &mut *virtpage })
     } else {
-        println!("pagealloc::allocate unable to map");
+        println!("error:pagealloc:allocate_virtpage:unable to map");
         Err(PageAllocError::UnableToMap)
     }
 }

@@ -61,6 +61,10 @@ impl PhysAddr {
         assert!(step.is_power_of_two());
         PhysAddr(self.0 & !(step - 1))
     }
+
+    pub const fn is_multiple_of(&self, n: u64) -> bool {
+        self.0.is_multiple_of(n)
+    }
 }
 
 impl ops::Add<u64> for PhysAddr {
@@ -113,6 +117,10 @@ impl PhysRange {
 
     pub fn with_len(start: u64, len: usize) -> Self {
         Self(PhysAddr(start)..PhysAddr(start + len as u64))
+    }
+
+    pub fn with_pa_len(start: PhysAddr, len: usize) -> Self {
+        Self(start..PhysAddr(start.0 + len as u64))
     }
 
     #[allow(dead_code)]

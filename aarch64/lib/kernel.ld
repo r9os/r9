@@ -53,12 +53,12 @@ SECTIONS {
 		*(.bss*)
 		*(COMMON)
 	}
-	. = ALIGN(4096);
+	. = ALIGN(2097152);
 	PROVIDE(ebss = .);
 
 
 	/* Reserve section for early pagetables. */
-	. = ALIGN(32 * 4096);
+	. = ALIGN(4096);
     early_pagetables = .;
 	. += 32 * 4096;
 	eearly_pagetables = .;
