@@ -10,8 +10,8 @@ use crate::{
     registers::rpi_mmio,
 };
 use bitstruct::bitstruct;
-use core::fmt;
 use core::ptr::write_volatile;
+use core::{fmt, ptr::addr_of};
 use num_enum::{FromPrimitive, IntoPrimitive};
 use port::{
     mem::{PhysAddr, PhysRange, PAGE_SIZE_1G, PAGE_SIZE_2M, PAGE_SIZE_4K},
@@ -52,6 +52,10 @@ impl PhysPage4K {
 
     pub fn data(&mut self) -> &mut [u8] {
         &mut self.0
+    }
+
+    pub fn pa(&self) -> PhysAddr {
+        PhysAddr::new(addr_of!(self) as u64)
     }
 }
 
@@ -126,7 +130,7 @@ impl Entry {
         Entry(0)
     }
 
-    fn rw_kernel_data() -> Self {
+    pub fn rw_kernel_data() -> Self {
         Entry(0)
             .with_access_permission(AccessPermission::PrivRw)
             .with_shareable(Shareable::Inner)
@@ -194,7 +198,7 @@ impl Entry {
         physaddr_as_virt(self.phys_page_addr())
     }
 
-    fn table(self, level: Level) -> bool {
+    fn is_table(self, level: Level) -> bool {
         self.page_or_table() && level != Level::Level3
     }
 }
@@ -311,6 +315,7 @@ pub enum PageTableError {
     AllocationFailed(PageAllocError),
     EntryIsNotTable,
     PhysRangeIsZero,
+    PhysRangeIsNotOnPageBoundary,
 }
 
 impl From<PageAllocError> for PageTableError {
@@ -340,17 +345,29 @@ impl Table {
         let mut entry = self.entries[index];
         if !entry.valid() {
             // Create a new page table and write the entry into the parent table
-            let table = Self::alloc_pagetable()?;
-            entry = Entry::rw_kernel_data()
-                .with_phys_addr(from_ptr_to_physaddr(table))
-                .with_page_or_table(true);
+            let page_pa = pagealloc::allocate_physpage();
+            //let table = Self::alloc_pagetable();
+            let page_pa = match page_pa {
+                Ok(p) => p,
+                Err(err) => {
+                    println!("error:vm:next_mut:can't allocate physpage");
+                    return Err(PageTableError::AllocationFailed(err));
+                }
+            };
+            entry = Entry::rw_kernel_data().with_phys_addr(page_pa).with_page_or_table(true);
             unsafe {
                 write_volatile(&mut self.entries[index], entry);
             }
-        }
 
-        if !entry.table(level) {
-            return Err(PageTableError::EntryIsNotTable);
+            // Clear out the new page
+            let recursive_page_addr = recursive_table_addr(va, level.next().unwrap());
+            let page = unsafe { &mut *(recursive_page_addr as *mut PhysPage4K) };
+            page.clear();
+        } else {
+            if !entry.is_table(level) {
+                println!("error:vm:next_mut:entry is not a valid table entry:{entry:?} {level:?}");
+                return Err(PageTableError::EntryIsNotTable);
+            }
         }
 
         // Return the address of the next table as a recursive address
@@ -358,11 +375,11 @@ impl Table {
         Ok(unsafe { &mut *(recursive_page_addr as *mut Table) })
     }
 
-    fn alloc_pagetable() -> Result<&'static mut Table, PageTableError> {
-        let page = pagealloc::allocate_physpage()?;
-        page.clear();
-        Ok(unsafe { &mut *(page as *mut PhysPage4K as *mut Table) })
-    }
+    // fn alloc_pagetable() -> Result<&'static mut Table, PageTableError> {
+    //     let page = pagealloc::allocate_physpage()?;
+    //     //page.clear();
+    //     Ok(unsafe { &mut *(page as *mut PhysPage4K as *mut Table) })
+    // }
 }
 
 pub type PageTable = Table;
@@ -411,13 +428,23 @@ impl PageTable {
                 self.next_mut(Level::Level0, va).and_then(|t1| t1.entry_mut(Level::Level1, va))
             }
         };
+        let dest_entry = match dest_entry {
+            Ok(e) => e,
+            Err(err) => {
+                println!(
+                    "error:vm:map_to:couldn't find page table entry. va:{:#x} err:{:?}",
+                    va, err
+                );
+                return Err(err);
+            }
+        };
 
         // Entries at level 3 should have the page flag set
         let entry =
             if page_size == PageSize::Page4K { entry.with_page_or_table(true) } else { entry };
 
         unsafe {
-            write_volatile(dest_entry?, entry);
+            write_volatile(dest_entry, entry);
             // Return the recursive entry to its original state
             write_volatile(&mut kernel_root().entries[511], old_recursive_entry);
             // TODO Need to invalidate the single cache entry (+ optionally the recursive entry)
@@ -436,11 +463,21 @@ impl PageTable {
     /// fails.
     pub fn map_phys_range(
         &mut self,
+        debug_name: &str,
         range: &PhysRange,
         va_offset: usize,
         entry: Entry,
         page_size: PageSize,
     ) -> Result<(usize, usize), PageTableError> {
+        if !range.start().is_multiple_of(page_size.size() as u64)
+            || !range.end().is_multiple_of(page_size.size() as u64)
+        {
+            println!(
+                "error:vm:map_phys_range:range not on page boundary. debug_name:{debug_name} range:{range} page_size:{page_size:?}",
+            );
+            return Err(PageTableError::PhysRangeIsNotOnPageBoundary);
+        }
+
         let mut startva = None;
         let mut endva = 0;
         for pa in range.step_by_rounded(page_size.size()) {
@@ -467,7 +504,7 @@ impl PageTable {
                 print_pte(indent, i, level, pte);
 
                 // Recurse into child table (unless it's the recursive index)
-                if i != 511 && pte.table(level) {
+                if i != 511 && pte.is_table(level) {
                     let next_nevel = level.next().unwrap();
                     let child_va = (table_va << 9) | (i << 12);
                     let child_table = unsafe { &*(child_va as *const PageTable) };
@@ -486,7 +523,7 @@ impl fmt::Debug for PageTable {
 
 /// Helper to print out PTE as part of a table
 fn print_pte(indent: usize, i: usize, level: Level, pte: Entry) {
-    if pte.table(level) {
+    if pte.is_table(level) {
         println!("{:indent$}[{:03}] Table {:?} (pte:{:#016x})", "", i, pte, pte.0,);
     } else {
         println!(
@@ -519,13 +556,18 @@ pub unsafe fn init(kpage_table: &mut PageTable, dtb_range: PhysRange, available_
 
     // TODO leave the first page unmapped to catch null pointer dereferences in unsafe code
     let custom_map = {
+        // The DTB range might not end on a page boundary, so round up.
+        let dtb_page_size = PageSize::Page4K;
+        let dtb_range =
+            PhysRange(dtb_range.start()..dtb_range.end().round_up(dtb_page_size.size() as u64));
+
         let text_range = boottext_range().add(&text_range());
         let ro_data_range = rodata_range();
         let data_range = data_range().add(&bss_range());
         let mmio_range = rpi_mmio().expect("mmio base detect failed");
 
         let mut map = [
-            ("DTB", dtb_range, Entry::ro_kernel_data(), PageSize::Page4K),
+            ("DTB", dtb_range, Entry::ro_kernel_data(), dtb_page_size),
             ("Kernel Text", text_range, Entry::ro_kernel_text(), PageSize::Page2M),
             ("Kernel RO Data", ro_data_range, Entry::ro_kernel_data(), PageSize::Page2M),
             ("Kernel Data", data_range, Entry::rw_kernel_data(), PageSize::Page2M),
@@ -538,8 +580,8 @@ pub unsafe fn init(kpage_table: &mut PageTable, dtb_range: PhysRange, available_
     println!("Memory map:");
     for (name, range, flags, page_size) in custom_map.iter() {
         let mapped_range = kpage_table
-            .map_phys_range(range, KZERO, *flags, *page_size)
-            .expect("init mapping failed");
+            .map_phys_range(name, range, KZERO, *flags, *page_size)
+            .expect("error:init:mapping failed");
 
         println!(
             "  {:16}{} to {:#018x}..{:#018x} flags: {:?} page_size: {:?}",
@@ -549,7 +591,7 @@ pub unsafe fn init(kpage_table: &mut PageTable, dtb_range: PhysRange, available_
 
     if let Err(err) = pagealloc::free_unused_ranges(&available_mem, custom_map.map(|m| m.1).iter())
     {
-        panic!("Couldn't mark unused pages as free: err: {:?}", err);
+        panic!("error:Couldn't mark unused pages as free: err: {:?}", err);
     }
 }
 
