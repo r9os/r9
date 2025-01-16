@@ -25,7 +25,6 @@ extern crate alloc;
 
 use crate::kmem::from_virt_to_physaddr;
 use crate::vm::kernel_root;
-use aarch64_cpu::registers::SCTLR_EL1::M;
 use alloc::boxed::Box;
 use core::alloc::Layout;
 use core::ptr;
@@ -137,7 +136,7 @@ pub extern "C" fn main9(dtb_va: usize) {
     {
         let page_table = unsafe { &mut *ptr::addr_of_mut!(KPGTBL) };
         let entry = Entry::rw_kernel_data();
-        for i in 0..1 {
+        for i in 0..100 {
             let alloc_result = pagealloc::allocate_virtpage("test", page_table, entry, KZERO);
             match alloc_result {
                 Ok(allocated_page) => {
