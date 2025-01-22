@@ -24,7 +24,6 @@ mod vm;
 extern crate alloc;
 
 use crate::kmem::from_virt_to_physaddr;
-use crate::vm::kernel_root;
 use alloc::boxed::Box;
 use core::alloc::Layout;
 use core::ptr;
@@ -34,12 +33,13 @@ use param::KZERO;
 use port::fdt::DeviceTree;
 use port::mem::PhysRange;
 use port::println;
-use vm::{Entry, PageTable};
+use vm::{root_page_table, Entry, RootPageTable, RootPageTableType};
 
 #[cfg(not(test))]
 core::arch::global_asm!(include_str!("l.S"));
 
-static mut KPGTBL: PageTable = PageTable::empty();
+static mut KERNEL_PAGETABLE: RootPageTable = RootPageTable::empty();
+static mut USER_PAGETABLE: RootPageTable = RootPageTable::empty();
 
 unsafe fn print_memory_range(name: &str, range: &PhysRange) {
     let size = range.size();
@@ -125,8 +125,8 @@ pub extern "C" fn main9(dtb_va: usize) {
     // Map address space accurately using rust VM code to manage page tables
     unsafe {
         let dtb_range = PhysRange::with_len(from_virt_to_physaddr(dtb_va).addr(), dt.size());
-        vm::init(&mut *ptr::addr_of_mut!(KPGTBL), dtb_range, mailbox::get_arm_memory());
-        vm::switch(&*ptr::addr_of!(KPGTBL));
+        vm::init(&mut *ptr::addr_of_mut!(KERNEL_PAGETABLE), dtb_range, mailbox::get_arm_memory());
+        vm::switch(&*ptr::addr_of!(KERNEL_PAGETABLE), RootPageTableType::Kernel);
     }
 
     // From this point we can use the global allocator
@@ -134,10 +134,16 @@ pub extern "C" fn main9(dtb_va: usize) {
     print_memory_info();
 
     {
-        let page_table = unsafe { &mut *ptr::addr_of_mut!(KPGTBL) };
+        let page_table = unsafe { &mut *ptr::addr_of_mut!(KERNEL_PAGETABLE) };
         let entry = Entry::rw_kernel_data();
-        for i in 0..100 {
-            let alloc_result = pagealloc::allocate_virtpage("test", page_table, entry, KZERO);
+        for i in 0..3 {
+            let alloc_result = pagealloc::allocate_virtpage(
+                page_table,
+                RootPageTableType::Kernel,
+                "test",
+                entry,
+                KZERO,
+            );
             match alloc_result {
                 Ok(allocated_page) => {
                     //         let pa = allocated_page.pa;
@@ -160,7 +166,7 @@ pub extern "C" fn main9(dtb_va: usize) {
             }
         }
     }
-    kernel_root().print_recursive_tables();
+    root_page_table(RootPageTableType::Kernel).print_recursive_tables();
 
     // test_sysexit();
 

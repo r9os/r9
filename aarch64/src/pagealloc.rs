@@ -9,7 +9,8 @@
 ///    physical memory map within the bounds of the available memory.
 use crate::kmem;
 use crate::vm::Entry;
-use crate::vm::PageTable;
+use crate::vm::RootPageTable;
+use crate::vm::RootPageTableType;
 use crate::vm::VirtPage4K;
 use port::bitmapalloc::BitmapPageAlloc;
 use port::mem::PhysAddr;
@@ -86,17 +87,23 @@ pub fn allocate_physpage() -> Result<PhysAddr, PageAllocError> {
 
 /// Try to allocate a physical page and map it into virtual memory.
 pub fn allocate_virtpage(
+    page_table: &mut RootPageTable,
+    page_table_type: RootPageTableType,
     debug_name: &str,
-    page_table: &mut PageTable,
     entry: Entry,
     va_offset: usize, // TODO Remove this?  Should be inferred from page_table
 ) -> Result<&'static mut VirtPage4K, PageAllocError> {
     println!("pagealloc:allocate_virtpage:start");
     let page_pa = allocate_physpage()?;
     let range = PhysRange::with_pa_len(page_pa, PAGE_SIZE_4K);
-    if let Ok(page_va) =
-        page_table.map_phys_range(debug_name, &range, va_offset, entry, crate::vm::PageSize::Page4K)
-    {
+    if let Ok(page_va) = page_table.map_phys_range(
+        page_table_type,
+        debug_name,
+        &range,
+        va_offset,
+        entry,
+        crate::vm::PageSize::Page4K,
+    ) {
         println!("pagealloc:allocate_virtpage:va:{:#x} -> physpage:{:?}", page_va.0, page_pa);
         let virtpage = page_va.0 as *mut VirtPage4K;
         Ok(unsafe { &mut *virtpage })

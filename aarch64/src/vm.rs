@@ -382,11 +382,17 @@ impl Table {
     // }
 }
 
-pub type PageTable = Table;
+impl fmt::Debug for Table {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:x}", (self as *const Self).addr())
+    }
+}
 
-impl PageTable {
-    pub const fn empty() -> PageTable {
-        PageTable { entries: [Entry::empty(); 512] }
+pub type RootPageTable = Table;
+
+impl RootPageTable {
+    pub const fn empty() -> RootPageTable {
+        RootPageTable { entries: [Entry::empty(); 512] }
     }
 
     /// Ensure there's a mapping from va to entry, creating any intermediate
@@ -394,6 +400,7 @@ impl PageTable {
     /// replace it.
     fn map_to(
         &mut self,
+        page_table_type: RootPageTableType,
         entry: Entry,
         va: usize,
         page_size: PageSize,
@@ -403,13 +410,16 @@ impl PageTable {
         // this hierarchy of pagetables even if it's not the current translation
         // table.  We *must* return it to its original state on exit.
         // TODO Only do this if self != kernel_root()
-        let old_recursive_entry = kernel_root().entries[511];
+        let old_recursive_entry = root_page_table(page_table_type).entries[511];
         let temp_recursive_entry = Entry::rw_kernel_data()
             .with_phys_addr(from_ptr_to_physaddr(self))
             .with_page_or_table(true);
 
         unsafe {
-            write_volatile(&mut kernel_root().entries[511], temp_recursive_entry);
+            write_volatile(
+                &mut root_page_table(page_table_type).entries[511],
+                temp_recursive_entry,
+            );
             // TODO Need to invalidate the single cache entry
             invalidate_all_tlb_entries();
         };
@@ -446,7 +456,7 @@ impl PageTable {
         unsafe {
             write_volatile(dest_entry, entry);
             // Return the recursive entry to its original state
-            write_volatile(&mut kernel_root().entries[511], old_recursive_entry);
+            write_volatile(&mut root_page_table(page_table_type).entries[511], old_recursive_entry);
             // TODO Need to invalidate the single cache entry (+ optionally the recursive entry)
             invalidate_all_tlb_entries();
         }
@@ -463,6 +473,7 @@ impl PageTable {
     /// fails.
     pub fn map_phys_range(
         &mut self,
+        page_table_type: RootPageTableType,
         debug_name: &str,
         range: &PhysRange,
         va_offset: usize,
@@ -482,7 +493,7 @@ impl PageTable {
         let mut endva = 0;
         for pa in range.step_by_rounded(page_size.size()) {
             let va = (pa.addr() as usize).wrapping_add(va_offset);
-            self.map_to(entry.with_phys_addr(pa), va, page_size)?;
+            self.map_to(page_table_type, entry.with_phys_addr(pa), va, page_size)?;
             startva.get_or_insert(va);
             endva = va + page_size.size();
         }
@@ -507,17 +518,11 @@ impl PageTable {
                 if i != 511 && pte.is_table(level) {
                     let next_nevel = level.next().unwrap();
                     let child_va = (table_va << 9) | (i << 12);
-                    let child_table = unsafe { &*(child_va as *const PageTable) };
+                    let child_table = unsafe { &*(child_va as *const RootPageTable) };
                     child_table.print_table_at_level(next_nevel, child_va);
                 }
             }
         }
-    }
-}
-
-impl fmt::Debug for PageTable {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:x}", (self as *const Self).addr())
     }
 }
 
@@ -537,7 +542,7 @@ fn print_pte(indent: usize, i: usize, level: Level, pte: Entry) {
     }
 }
 
-pub unsafe fn init(kpage_table: &mut PageTable, dtb_range: PhysRange, available_mem: PhysRange) {
+pub unsafe fn init(page_table: &mut RootPageTable, dtb_range: PhysRange, available_mem: PhysRange) {
     pagealloc::init_page_allocator();
 
     // We use recursive page tables, but we have to be careful in the init call,
@@ -549,9 +554,9 @@ pub unsafe fn init(kpage_table: &mut PageTable, dtb_range: PhysRange, available_
     // Write the recursive entry
     unsafe {
         let entry = Entry::rw_kernel_data()
-            .with_phys_addr(from_ptr_to_physaddr(kpage_table))
+            .with_phys_addr(from_ptr_to_physaddr(page_table))
             .with_page_or_table(true);
-        write_volatile(&mut kpage_table.entries[511], entry);
+        write_volatile(&mut page_table.entries[511], entry);
     }
 
     // TODO leave the first page unmapped to catch null pointer dereferences in unsafe code
@@ -579,8 +584,8 @@ pub unsafe fn init(kpage_table: &mut PageTable, dtb_range: PhysRange, available_
 
     println!("Memory map:");
     for (name, range, flags, page_size) in custom_map.iter() {
-        let mapped_range = kpage_table
-            .map_phys_range(name, range, KZERO, *flags, *page_size)
+        let mapped_range = page_table
+            .map_phys_range(RootPageTableType::Kernel, name, range, KZERO, *flags, *page_size)
             .expect("error:init:mapping failed");
 
         println!(
@@ -595,34 +600,76 @@ pub unsafe fn init(kpage_table: &mut PageTable, dtb_range: PhysRange, available_
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum RootPageTableType {
+    User,
+    Kernel,
+}
+
+/// Return the root user-level page table physical address
+fn ttbr0_el1() -> PhysAddr {
+    #[cfg(not(test))]
+    {
+        let mut addr: u64;
+        unsafe {
+            core::arch::asm!("mrs {value}, ttbr0_el1", value = out(reg) addr);
+        }
+        PhysAddr::new(addr)
+    }
+    #[cfg(test)]
+    0
+}
+
 /// Return the root kernel page table physical address
-fn ttbr1_el1() -> u64 {
+fn ttbr1_el1() -> PhysAddr {
     #[cfg(not(test))]
     {
         let mut addr: u64;
         unsafe {
             core::arch::asm!("mrs {value}, ttbr1_el1", value = out(reg) addr);
         }
-        addr
+        PhysAddr::new(addr)
     }
     #[cfg(test)]
     0
 }
 
+/// Return the root user-level page table
+pub fn root_page_table(pgtype: RootPageTableType) -> &'static mut RootPageTable {
+    let page_table_pa = match pgtype {
+        RootPageTableType::User => ttbr0_el1(),
+        RootPageTableType::Kernel => ttbr1_el1(),
+    };
+    unsafe { &mut *physaddr_as_ptr_mut::<RootPageTable>(page_table_pa) }
+}
+
 // TODO this should just call invalidate_all_tlb_entries afterwards?
 #[allow(unused_variables)]
-pub unsafe fn switch(kpage_table: &PageTable) {
+pub unsafe fn switch(page_table: &RootPageTable, pgtype: RootPageTableType) {
     #[cfg(not(test))]
     unsafe {
-        let pt_phys = from_ptr_to_physaddr(kpage_table).addr();
+        let pt_phys = from_ptr_to_physaddr(page_table).addr();
         // https://forum.osdev.org/viewtopic.php?t=36412&p=303237
-        core::arch::asm!(
-            "msr ttbr1_el1, {pt_phys}",
-            "tlbi vmalle1is", // invalidate all TLB entries
-            "dsb ish",      // ensure write has completed
-            "isb",          // synchronize context and ensure that no instructions
-                            // are fetched using the old translation
-            pt_phys = in(reg) pt_phys);
+        match pgtype {
+            RootPageTableType::User => {
+                core::arch::asm!(
+                    "msr ttbr0_el1, {pt_phys}",
+                    "tlbi vmalle1is", // invalidate all TLB entries
+                    "dsb ish",      // ensure write has completed
+                    "isb",          // synchronize context and ensure that no instructions
+                                    // are fetched using the old translation
+                    pt_phys = in(reg) pt_phys);
+            }
+            RootPageTableType::Kernel => {
+                core::arch::asm!(
+                    "msr ttbr1_el1, {pt_phys}",
+                    "tlbi vmalle1is", // invalidate all TLB entries
+                    "dsb ish",      // ensure write has completed
+                    "isb",          // synchronize context and ensure that no instructions
+                                    // are fetched using the old translation
+                    pt_phys = in(reg) pt_phys);
+            }
+        }
     }
 }
 
@@ -638,11 +685,6 @@ pub unsafe fn invalidate_all_tlb_entries() {
         ); // synchronize context and ensure that no instructions
            // are fetched using the old translation
     }
-}
-
-/// Return the root kernel page table
-pub fn kernel_root() -> &'static mut PageTable {
-    unsafe { &mut *physaddr_as_ptr_mut::<PageTable>(PhysAddr::new(ttbr1_el1())) }
 }
 
 #[cfg(test)]
