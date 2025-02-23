@@ -3,6 +3,7 @@
 /// Benefits of the current implementation:
 ///  - Doesn't require any allocations, so can be used without fear while
 ///    manipulating the page tables.
+///
 /// Downsides:
 ///  - Can't be dynamically resized.
 use core::fmt;

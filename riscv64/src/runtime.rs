@@ -8,7 +8,7 @@ use core::panic::PanicInfo;
 
 use port::{print, println};
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 extern "C" fn eh_personality() {}
 
 #[panic_handler]
@@ -21,7 +21,8 @@ fn panic(info: &PanicInfo) -> ! {
     }
     abort();
 }
-#[no_mangle]
+
+#[unsafe(no_mangle)]
 extern "C" fn abort() -> ! {
     loop {
         unsafe {

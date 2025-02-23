@@ -3,7 +3,7 @@ cargo-features = ["per-package-target"]
 [package]
 name = "riscv64"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 default-target = "riscv64gc-unknown-none-elf"
 
 [dependencies]
@@ -13,4 +13,7 @@ sbi-rt = "0.0.3"
 [features]
 
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(platform, values("nezha"))', 'cfg(platform, values("virt"))'] }
+unexpected_cfgs = { level = "warn", check-cfg = [
+    'cfg(platform, values("nezha"))',
+    'cfg(platform, values("virt"))',
+] }
