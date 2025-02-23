@@ -1,7 +1,7 @@
 #![allow(non_upper_case_globals)]
 
-use aarch64_cpu::registers::{Readable, Writeable};
-use aarch64_cpu::{asm, registers::MIDR_EL1};
+use aarch64_cpu::registers::Readable;
+use aarch64_cpu::registers::MIDR_EL1;
 use bitstruct::bitstruct;
 use core::fmt;
 use num_enum::TryFromPrimitive;

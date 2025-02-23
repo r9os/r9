@@ -2,7 +2,7 @@ use crate::param::KZERO;
 use port::mem::{PhysAddr, PhysRange};
 
 // These map to definitions in kernel.ld
-extern "C" {
+unsafe extern "C" {
     static eboottext: [u64; 0];
     static text: [u64; 0];
     static etext: [u64; 0];

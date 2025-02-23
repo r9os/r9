@@ -3,11 +3,11 @@ cargo-features = ["per-package-target"]
 [package]
 name = "aarch64"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 default-target = "aarch64-unknown-none"
 
 [dependencies]
-aarch64-cpu = "9.4.0"
+aarch64-cpu = "10.0"
 bitstruct = "0.1"
 port = { path = "../port" }
 num_enum = { version = "0.7", default-features = false }

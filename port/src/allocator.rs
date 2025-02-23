@@ -477,10 +477,9 @@ impl QuickFit {
 }
 
 #[cfg(not(test))]
-mod global {
-    use super::{Block, BumpAlloc, QuickFit};
+pub mod global {
+    use super::QuickFit;
     use alloc::alloc::{GlobalAlloc, Layout};
-    use core::mem;
     use core::ptr;
     use core::sync::atomic::{AtomicPtr, Ordering};
 
@@ -489,17 +488,23 @@ mod global {
     /// A GlobalHeap is an aligned wrapper around an owned
     /// buffer.
     #[repr(C, align(4096))]
-    struct GlobalHeap([u8; GLOBAL_HEAP_SIZE]);
+    pub struct GlobalHeap([u8; GLOBAL_HEAP_SIZE]);
     impl GlobalHeap {
-        const fn new() -> GlobalHeap {
+        pub const fn new() -> GlobalHeap {
             Self([0u8; GLOBAL_HEAP_SIZE])
+        }
+    }
+
+    impl Default for GlobalHeap {
+        fn default() -> Self {
+            Self::new()
         }
     }
 
     /// GlobalQuickAlloc is a wrapper around a QuickFit over a
     /// GlobalHeap that uses interior mutability to implement
     /// the GlobalAlloc trait.
-    struct GlobalQuickAlloc(AtomicPtr<QuickFit>);
+    pub struct GlobalQuickAlloc(pub AtomicPtr<QuickFit>);
     impl GlobalQuickAlloc {
         fn with_allocator<F, R>(&self, thunk: F) -> R
         where
@@ -524,13 +529,4 @@ mod global {
             self.with_allocator(|quick| unsafe { quick.realloc(ptr, layout, new_size) })
         }
     }
-
-    #[global_allocator]
-    static GLOBAL_ALLOCATOR: GlobalQuickAlloc = GlobalQuickAlloc(AtomicPtr::new({
-        static mut HEAP: GlobalHeap = GlobalHeap::new();
-        static mut ALLOC: QuickFit = QuickFit::new(BumpAlloc::new(unsafe {
-            Block::new_from_raw_parts((&raw mut HEAP).cast(), mem::size_of::<GlobalHeap>())
-        }));
-        &raw mut ALLOC
-    }));
 }

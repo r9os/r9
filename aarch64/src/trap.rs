@@ -58,7 +58,7 @@ pub struct TrapFrame {
     interrupt_type: u64,
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn trap_unsafe(frame: *mut TrapFrame) {
     unsafe { trap(&mut *frame) }
 }

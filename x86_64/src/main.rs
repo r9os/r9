@@ -6,13 +6,14 @@
 #![allow(clippy::upper_case_acronyms)]
 #![forbid(unsafe_op_in_unsafe_fn)]
 
+mod allocator;
 mod dat;
 mod devcons;
 mod pio;
 mod proc;
 mod uart16550;
 
-use proc::{swtch, Label};
+use proc::{Label, swtch};
 
 #[cfg(not(test))]
 core::arch::global_asm!(include_str!("l.S"), options(att_syntax));
@@ -32,7 +33,7 @@ fn jumpback() {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn main9() {
     devcons::init();
     println!();

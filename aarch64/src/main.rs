@@ -7,6 +7,7 @@
 #![feature(sync_unsafe_cell)]
 #![forbid(unsafe_op_in_unsafe_fn)]
 
+mod allocator;
 mod devcons;
 mod io;
 mod kmem;
@@ -94,7 +95,7 @@ fn print_board_info() {
 
 /// dtb_va is the virtual address of the DTB structure.  The physical address is
 /// assumed to be dtb_va-KZERO.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn main9(dtb_va: usize) {
     trap::init();
 

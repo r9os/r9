@@ -298,7 +298,7 @@ struct BuildStep {
 
 impl BuildStep {
     fn new(matches: &clap::ArgMatches) -> Self {
-        let arch = *matches.get_one::<Arch>("arch").unwrap();
+        let arch = Arch::from(matches);
         let config = load_config(arch, matches);
         let profile = Profile::from(matches);
         let verbose = verbose(matches);
