@@ -6,15 +6,16 @@ use crate::{
         physaddr_as_virt, rodata_range, text_range,
     },
     pagealloc,
+    param::KZERO,
     registers::rpi_mmio,
 };
 use bitstruct::bitstruct;
-use core::fmt;
 use core::ptr::write_volatile;
+use core::{fmt, ptr::addr_of};
 use num_enum::{FromPrimitive, IntoPrimitive};
 use port::{
-    bitmapalloc::BitmapPageAllocError,
     mem::{PhysAddr, PhysRange, PAGE_SIZE_1G, PAGE_SIZE_2M, PAGE_SIZE_4K},
+    pagealloc::PageAllocError,
 };
 
 #[cfg(not(test))]
@@ -40,9 +41,29 @@ impl PageSize {
 
 #[repr(C, align(4096))]
 #[derive(Clone, Copy)]
-pub struct Page4K([u8; PAGE_SIZE_4K]);
+pub struct PhysPage4K([u8; PAGE_SIZE_4K]);
 
-impl Page4K {
+impl PhysPage4K {
+    pub fn clear(&mut self) {
+        unsafe {
+            core::intrinsics::volatile_set_memory(&mut self.0, 0u8, 1);
+        }
+    }
+
+    pub fn data(&mut self) -> &mut [u8] {
+        &mut self.0
+    }
+
+    pub fn pa(&self) -> PhysAddr {
+        PhysAddr::new(addr_of!(self) as u64)
+    }
+}
+
+#[repr(C, align(4096))]
+#[derive(Clone, Copy)]
+pub struct VirtPage4K([u8; PAGE_SIZE_4K]);
+
+impl VirtPage4K {
     pub fn clear(&mut self) {
         unsafe {
             core::intrinsics::volatile_set_memory(&mut self.0, 0u8, 1);
@@ -109,8 +130,9 @@ impl Entry {
         Entry(0)
     }
 
-    fn rw_kernel_data() -> Self {
+    pub fn rw_kernel_data() -> Self {
         Entry(0)
+            .with_access_permission(AccessPermission::PrivRw)
             .with_shareable(Shareable::Inner)
             .with_accessed(true)
             .with_uxn(true)
@@ -132,7 +154,7 @@ impl Entry {
 
     fn ro_kernel_text() -> Self {
         Entry(0)
-            .with_access_permission(AccessPermission::PrivRw)
+            .with_access_permission(AccessPermission::PrivRo)
             .with_shareable(Shareable::Inner)
             .with_accessed(true)
             .with_uxn(true)
@@ -141,7 +163,7 @@ impl Entry {
             .with_valid(true)
     }
 
-    fn ro_kernel_device() -> Self {
+    fn rw_device() -> Self {
         Entry(0)
             .with_access_permission(AccessPermission::PrivRw)
             .with_shareable(Shareable::Inner)
@@ -149,6 +171,17 @@ impl Entry {
             .with_uxn(true)
             .with_pxn(true)
             .with_mair_index(Mair::Device)
+            .with_valid(true)
+    }
+
+    pub fn rw_user_text() -> Self {
+        Entry(0)
+            .with_access_permission(AccessPermission::AllRw)
+            .with_shareable(Shareable::Inner)
+            .with_accessed(true)
+            .with_uxn(true)
+            .with_pxn(false)
+            .with_mair_index(Mair::Normal)
             .with_valid(true)
     }
 
@@ -165,7 +198,7 @@ impl Entry {
         physaddr_as_virt(self.phys_page_addr())
     }
 
-    fn table(self, level: Level) -> bool {
+    fn is_table(self, level: Level) -> bool {
         self.page_or_table() && level != Level::Level3
     }
 }
@@ -279,13 +312,14 @@ fn recursive_table_addr(va: usize, level: Level) -> usize {
 #[derive(Debug)]
 #[allow(dead_code)]
 pub enum PageTableError {
-    AllocationFailed(BitmapPageAllocError),
+    AllocationFailed(PageAllocError),
     EntryIsNotTable,
     PhysRangeIsZero,
+    PhysRangeIsNotOnPageBoundary,
 }
 
-impl From<BitmapPageAllocError> for PageTableError {
-    fn from(err: BitmapPageAllocError) -> PageTableError {
+impl From<PageAllocError> for PageTableError {
+    fn from(err: PageAllocError) -> PageTableError {
         PageTableError::AllocationFailed(err)
     }
 }
@@ -311,17 +345,29 @@ impl Table {
         let mut entry = self.entries[index];
         if !entry.valid() {
             // Create a new page table and write the entry into the parent table
-            let table = Self::alloc_pagetable()?;
-            entry = Entry::rw_kernel_data()
-                .with_phys_addr(from_ptr_to_physaddr(table))
-                .with_page_or_table(true);
+            let page_pa = pagealloc::allocate_physpage();
+            //let table = Self::alloc_pagetable();
+            let page_pa = match page_pa {
+                Ok(p) => p,
+                Err(err) => {
+                    println!("error:vm:next_mut:can't allocate physpage");
+                    return Err(PageTableError::AllocationFailed(err));
+                }
+            };
+            entry = Entry::rw_kernel_data().with_phys_addr(page_pa).with_page_or_table(true);
             unsafe {
                 write_volatile(&mut self.entries[index], entry);
             }
-        }
 
-        if !entry.table(level) {
-            return Err(PageTableError::EntryIsNotTable);
+            // Clear out the new page
+            let recursive_page_addr = recursive_table_addr(va, level.next().unwrap());
+            let page = unsafe { &mut *(recursive_page_addr as *mut PhysPage4K) };
+            page.clear();
+        } else {
+            if !entry.is_table(level) {
+                println!("error:vm:next_mut:entry is not a valid table entry:{entry:?} {level:?}");
+                return Err(PageTableError::EntryIsNotTable);
+            }
         }
 
         // Return the address of the next table as a recursive address
@@ -329,18 +375,24 @@ impl Table {
         Ok(unsafe { &mut *(recursive_page_addr as *mut Table) })
     }
 
-    fn alloc_pagetable() -> Result<&'static mut Table, PageTableError> {
-        let page = pagealloc::allocate()?;
-        page.clear();
-        Ok(unsafe { &mut *(page as *mut Page4K as *mut Table) })
+    // fn alloc_pagetable() -> Result<&'static mut Table, PageTableError> {
+    //     let page = pagealloc::allocate_physpage()?;
+    //     //page.clear();
+    //     Ok(unsafe { &mut *(page as *mut PhysPage4K as *mut Table) })
+    // }
+}
+
+impl fmt::Debug for Table {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:x}", (self as *const Self).addr())
     }
 }
 
-pub type PageTable = Table;
+pub type RootPageTable = Table;
 
-impl PageTable {
-    pub const fn empty() -> PageTable {
-        PageTable { entries: [Entry::empty(); 512] }
+impl RootPageTable {
+    pub const fn empty() -> RootPageTable {
+        RootPageTable { entries: [Entry::empty(); 512] }
     }
 
     /// Ensure there's a mapping from va to entry, creating any intermediate
@@ -348,6 +400,7 @@ impl PageTable {
     /// replace it.
     fn map_to(
         &mut self,
+        page_table_type: RootPageTableType,
         entry: Entry,
         va: usize,
         page_size: PageSize,
@@ -357,13 +410,16 @@ impl PageTable {
         // this hierarchy of pagetables even if it's not the current translation
         // table.  We *must* return it to its original state on exit.
         // TODO Only do this if self != kernel_root()
-        let old_recursive_entry = kernel_root().entries[511];
+        let old_recursive_entry = root_page_table(page_table_type).entries[511];
         let temp_recursive_entry = Entry::rw_kernel_data()
             .with_phys_addr(from_ptr_to_physaddr(self))
             .with_page_or_table(true);
 
         unsafe {
-            write_volatile(&mut kernel_root().entries[511], temp_recursive_entry);
+            write_volatile(
+                &mut root_page_table(page_table_type).entries[511],
+                temp_recursive_entry,
+            );
             // TODO Need to invalidate the single cache entry
             invalidate_all_tlb_entries();
         };
@@ -382,15 +438,25 @@ impl PageTable {
                 self.next_mut(Level::Level0, va).and_then(|t1| t1.entry_mut(Level::Level1, va))
             }
         };
+        let dest_entry = match dest_entry {
+            Ok(e) => e,
+            Err(err) => {
+                println!(
+                    "error:vm:map_to:couldn't find page table entry. va:{:#x} err:{:?}",
+                    va, err
+                );
+                return Err(err);
+            }
+        };
 
         // Entries at level 3 should have the page flag set
         let entry =
             if page_size == PageSize::Page4K { entry.with_page_or_table(true) } else { entry };
 
         unsafe {
-            write_volatile(dest_entry?, entry);
+            write_volatile(dest_entry, entry);
             // Return the recursive entry to its original state
-            write_volatile(&mut kernel_root().entries[511], old_recursive_entry);
+            write_volatile(&mut root_page_table(page_table_type).entries[511], old_recursive_entry);
             // TODO Need to invalidate the single cache entry (+ optionally the recursive entry)
             invalidate_all_tlb_entries();
         }
@@ -407,15 +473,27 @@ impl PageTable {
     /// fails.
     pub fn map_phys_range(
         &mut self,
+        page_table_type: RootPageTableType,
+        debug_name: &str,
         range: &PhysRange,
+        va_offset: usize,
         entry: Entry,
         page_size: PageSize,
     ) -> Result<(usize, usize), PageTableError> {
+        if !range.start().is_multiple_of(page_size.size() as u64)
+            || !range.end().is_multiple_of(page_size.size() as u64)
+        {
+            println!(
+                "error:vm:map_phys_range:range not on page boundary. debug_name:{debug_name} range:{range} page_size:{page_size:?}",
+            );
+            return Err(PageTableError::PhysRangeIsNotOnPageBoundary);
+        }
+
         let mut startva = None;
         let mut endva = 0;
         for pa in range.step_by_rounded(page_size.size()) {
-            let va = physaddr_as_virt(pa);
-            self.map_to(entry.with_phys_addr(pa), va, page_size)?;
+            let va = (pa.addr() as usize).wrapping_add(va_offset);
+            self.map_to(page_table_type, entry.with_phys_addr(pa), va, page_size)?;
             startva.get_or_insert(va);
             endva = va + page_size.size();
         }
@@ -437,10 +515,10 @@ impl PageTable {
                 print_pte(indent, i, level, pte);
 
                 // Recurse into child table (unless it's the recursive index)
-                if i != 511 && pte.table(level) {
+                if i != 511 && pte.is_table(level) {
                     let next_nevel = level.next().unwrap();
                     let child_va = (table_va << 9) | (i << 12);
-                    let child_table = unsafe { &*(child_va as *const PageTable) };
+                    let child_table = unsafe { &*(child_va as *const RootPageTable) };
                     child_table.print_table_at_level(next_nevel, child_va);
                 }
             }
@@ -448,15 +526,9 @@ impl PageTable {
     }
 }
 
-impl fmt::Debug for PageTable {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:x}", (self as *const Self).addr())
-    }
-}
-
 /// Helper to print out PTE as part of a table
 fn print_pte(indent: usize, i: usize, level: Level, pte: Entry) {
-    if pte.table(level) {
+    if pte.is_table(level) {
         println!("{:indent$}[{:03}] Table {:?} (pte:{:#016x})", "", i, pte, pte.0,);
     } else {
         println!(
@@ -470,7 +542,7 @@ fn print_pte(indent: usize, i: usize, level: Level, pte: Entry) {
     }
 }
 
-pub unsafe fn init(kpage_table: &mut PageTable, dtb_range: PhysRange, available_mem: PhysRange) {
+pub unsafe fn init(page_table: &mut RootPageTable, dtb_range: PhysRange, available_mem: PhysRange) {
     pagealloc::init_page_allocator();
 
     // We use recursive page tables, but we have to be careful in the init call,
@@ -482,24 +554,29 @@ pub unsafe fn init(kpage_table: &mut PageTable, dtb_range: PhysRange, available_
     // Write the recursive entry
     unsafe {
         let entry = Entry::rw_kernel_data()
-            .with_phys_addr(from_ptr_to_physaddr(kpage_table))
+            .with_phys_addr(from_ptr_to_physaddr(page_table))
             .with_page_or_table(true);
-        write_volatile(&mut kpage_table.entries[511], entry);
+        write_volatile(&mut page_table.entries[511], entry);
     }
 
     // TODO leave the first page unmapped to catch null pointer dereferences in unsafe code
     let custom_map = {
+        // The DTB range might not end on a page boundary, so round up.
+        let dtb_page_size = PageSize::Page4K;
+        let dtb_range =
+            PhysRange(dtb_range.start()..dtb_range.end().round_up(dtb_page_size.size() as u64));
+
         let text_range = boottext_range().add(&text_range());
-        let data_range = rodata_range().add(&data_range());
-        let bss_range = bss_range();
+        let ro_data_range = rodata_range();
+        let data_range = data_range().add(&bss_range());
         let mmio_range = rpi_mmio().expect("mmio base detect failed");
 
         let mut map = [
-            ("DTB", dtb_range, Entry::ro_kernel_data(), PageSize::Page4K),
-            ("Kernel Text", text_range, Entry::ro_kernel_text(), PageSize::Page4K),
-            ("Kernel Data", data_range, Entry::rw_kernel_data(), PageSize::Page4K),
-            ("Kernel BSS", bss_range, Entry::rw_kernel_data(), PageSize::Page4K),
-            ("MMIO", mmio_range, Entry::ro_kernel_device(), PageSize::Page2M),
+            ("DTB", dtb_range, Entry::ro_kernel_data(), dtb_page_size),
+            ("Kernel Text", text_range, Entry::ro_kernel_text(), PageSize::Page2M),
+            ("Kernel RO Data", ro_data_range, Entry::ro_kernel_data(), PageSize::Page2M),
+            ("Kernel Data", data_range, Entry::rw_kernel_data(), PageSize::Page2M),
+            ("MMIO", mmio_range, Entry::rw_device(), PageSize::Page2M),
         ];
         map.sort_by_key(|a| a.1.start());
         map
@@ -507,49 +584,92 @@ pub unsafe fn init(kpage_table: &mut PageTable, dtb_range: PhysRange, available_
 
     println!("Memory map:");
     for (name, range, flags, page_size) in custom_map.iter() {
-        let mapped_range =
-            kpage_table.map_phys_range(range, *flags, *page_size).expect("init mapping failed");
+        let mapped_range = page_table
+            .map_phys_range(RootPageTableType::Kernel, name, range, KZERO, *flags, *page_size)
+            .expect("error:init:mapping failed");
 
         println!(
-            "  {:14}{} to {:#018x}..{:#018x} flags: {:?} page_size: {:?}",
+            "  {:16}{} to {:#018x}..{:#018x} flags: {:?} page_size: {:?}",
             name, range, mapped_range.0, mapped_range.1, flags, page_size
         );
     }
 
     if let Err(err) = pagealloc::free_unused_ranges(&available_mem, custom_map.map(|m| m.1).iter())
     {
-        panic!("Couldn't mark unused pages as free: err: {:?}", err);
+        panic!("error:Couldn't mark unused pages as free: err: {:?}", err);
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum RootPageTableType {
+    User,
+    Kernel,
+}
+
+/// Return the root user-level page table physical address
+fn ttbr0_el1() -> PhysAddr {
+    #[cfg(not(test))]
+    {
+        let mut addr: u64;
+        unsafe {
+            core::arch::asm!("mrs {value}, ttbr0_el1", value = out(reg) addr);
+        }
+        PhysAddr::new(addr)
+    }
+    #[cfg(test)]
+    0
+}
+
 /// Return the root kernel page table physical address
-fn ttbr1_el1() -> u64 {
+fn ttbr1_el1() -> PhysAddr {
     #[cfg(not(test))]
     {
         let mut addr: u64;
         unsafe {
             core::arch::asm!("mrs {value}, ttbr1_el1", value = out(reg) addr);
         }
-        addr
+        PhysAddr::new(addr)
     }
     #[cfg(test)]
     0
 }
 
+/// Return the root user-level page table
+pub fn root_page_table(pgtype: RootPageTableType) -> &'static mut RootPageTable {
+    let page_table_pa = match pgtype {
+        RootPageTableType::User => ttbr0_el1(),
+        RootPageTableType::Kernel => ttbr1_el1(),
+    };
+    unsafe { &mut *physaddr_as_ptr_mut::<RootPageTable>(page_table_pa) }
+}
+
 // TODO this should just call invalidate_all_tlb_entries afterwards?
 #[allow(unused_variables)]
-pub unsafe fn switch(kpage_table: &PageTable) {
+pub unsafe fn switch(page_table: &RootPageTable, pgtype: RootPageTableType) {
     #[cfg(not(test))]
     unsafe {
-        let pt_phys = from_ptr_to_physaddr(kpage_table).addr();
+        let pt_phys = from_ptr_to_physaddr(page_table).addr();
         // https://forum.osdev.org/viewtopic.php?t=36412&p=303237
-        core::arch::asm!(
-            "msr ttbr1_el1, {pt_phys}",
-            "tlbi vmalle1is", // invalidate all TLB entries
-            "dsb ish",      // ensure write has completed
-            "isb",          // synchronize context and ensure that no instructions
-                            // are fetched using the old translation
-            pt_phys = in(reg) pt_phys);
+        match pgtype {
+            RootPageTableType::User => {
+                core::arch::asm!(
+                    "msr ttbr0_el1, {pt_phys}",
+                    "tlbi vmalle1is", // invalidate all TLB entries
+                    "dsb ish",      // ensure write has completed
+                    "isb",          // synchronize context and ensure that no instructions
+                                    // are fetched using the old translation
+                    pt_phys = in(reg) pt_phys);
+            }
+            RootPageTableType::Kernel => {
+                core::arch::asm!(
+                    "msr ttbr1_el1, {pt_phys}",
+                    "tlbi vmalle1is", // invalidate all TLB entries
+                    "dsb ish",      // ensure write has completed
+                    "isb",          // synchronize context and ensure that no instructions
+                                    // are fetched using the old translation
+                    pt_phys = in(reg) pt_phys);
+            }
+        }
     }
 }
 
@@ -565,11 +685,6 @@ pub unsafe fn invalidate_all_tlb_entries() {
         ); // synchronize context and ensure that no instructions
            // are fetched using the old translation
     }
-}
-
-/// Return the root kernel page table
-pub fn kernel_root() -> &'static mut PageTable {
-    unsafe { &mut *physaddr_as_ptr_mut::<PageTable>(PhysAddr::new(ttbr1_el1())) }
 }
 
 #[cfg(test)]
