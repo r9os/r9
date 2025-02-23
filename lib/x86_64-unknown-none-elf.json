@@ -12,10 +12,11 @@
   "relocation-model": "pie",
   "code-model": "medium",
   "disable-redzone": true,
-  "features": "",
+  "features": "-mmx,-sse,+soft-float",
   "panic-strategy": "abort",
   "frame-pointer": "always",
   "pre-link-args": {
     "ld.lld": ["-nostdlib"]
-  }
+  },
+  "rustc-abi": "x86-softfloat"
 }
