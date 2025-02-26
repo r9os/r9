@@ -23,13 +23,13 @@ pub struct Context {
 }
 
 impl Context {
-    pub fn set_return(&mut self, addr: u64) {
-        self.x30 = addr;
-    }
+    // pub fn set_return(&mut self, addr: u64) {
+    //     self.x30 = addr;
+    // }
 
-    pub fn set_stack_pointer(&mut self, addr: u64) {
-        self.sp = addr;
-    }
+    // pub fn set_stack_pointer(&mut self, addr: u64) {
+    //     self.sp = addr;
+    // }
 }
 
 impl fmt::Debug for Context {
@@ -53,6 +53,6 @@ impl fmt::Debug for Context {
     }
 }
 
-extern "C" {
-    pub(crate) fn swtch(from: *mut *mut Context, to: &Context);
+unsafe extern "C" {
+    // pub(crate) fn swtch(from: *mut *mut Context, to: &Context);
 }

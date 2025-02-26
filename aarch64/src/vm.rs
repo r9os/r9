@@ -10,11 +10,11 @@ use crate::{
     registers::rpi_mmio,
 };
 use bitstruct::bitstruct;
+use core::fmt;
 use core::ptr::write_volatile;
-use core::{fmt, ptr::addr_of};
 use num_enum::{FromPrimitive, IntoPrimitive};
 use port::{
-    mem::{PhysAddr, PhysRange, PAGE_SIZE_1G, PAGE_SIZE_2M, PAGE_SIZE_4K},
+    mem::{PAGE_SIZE_1G, PAGE_SIZE_2M, PAGE_SIZE_4K, PhysAddr, PhysRange},
     pagealloc::PageAllocError,
 };
 
@@ -50,13 +50,13 @@ impl PhysPage4K {
         }
     }
 
-    pub fn data(&mut self) -> &mut [u8] {
-        &mut self.0
-    }
+    // pub fn data(&mut self) -> &mut [u8] {
+    //     &mut self.0
+    // }
 
-    pub fn pa(&self) -> PhysAddr {
-        PhysAddr::new(addr_of!(self) as u64)
-    }
+    // pub fn pa(&self) -> PhysAddr {
+    //     PhysAddr::new(addr_of!(self) as u64)
+    // }
 }
 
 #[repr(C, align(4096))]
@@ -64,15 +64,15 @@ impl PhysPage4K {
 pub struct VirtPage4K([u8; PAGE_SIZE_4K]);
 
 impl VirtPage4K {
-    pub fn clear(&mut self) {
-        unsafe {
-            core::intrinsics::volatile_set_memory(&mut self.0, 0u8, 1);
-        }
-    }
+    // pub fn clear(&mut self) {
+    //     unsafe {
+    //         core::intrinsics::volatile_set_memory(&mut self.0, 0u8, 1);
+    //     }
+    // }
 
-    pub fn data(&mut self) -> &mut [u8] {
-        &mut self.0
-    }
+    // pub fn data(&mut self) -> &mut [u8] {
+    //     &mut self.0
+    // }
 }
 
 #[derive(Debug, IntoPrimitive, FromPrimitive)]
@@ -683,7 +683,7 @@ pub unsafe fn invalidate_all_tlb_entries() {
             "dsb ish",        // ensure write has completed
             "isb"
         ); // synchronize context and ensure that no instructions
-           // are fetched using the old translation
+        // are fetched using the old translation
     }
 }
 
