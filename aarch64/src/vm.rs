@@ -634,7 +634,7 @@ fn ttbr0_el1() -> PhysAddr {
         PhysAddr::new(addr)
     }
     #[cfg(test)]
-    PhysAddr(0)
+    PhysAddr::new(0)
 }
 
 /// Return the root kernel page table physical address
@@ -648,7 +648,7 @@ fn ttbr1_el1() -> PhysAddr {
         PhysAddr::new(addr)
     }
     #[cfg(test)]
-    PhysAddr(0)
+    PhysAddr::new(0)
 }
 
 /// Return the root user-level page table
