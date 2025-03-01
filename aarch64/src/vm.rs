@@ -398,6 +398,20 @@ impl fmt::Debug for Table {
     }
 }
 
+pub enum VaMapping {
+    Addr(usize),   // Map to exact virtual address
+    Offset(usize), // Map to offset of physical address
+}
+
+impl VaMapping {
+    fn map(&self, pa: PhysAddr) -> usize {
+        match self {
+            Self::Addr(va) => *va,
+            Self::Offset(offset) => (pa.addr() as usize).wrapping_add(*offset),
+        }
+    }
+}
+
 pub type RootPageTable = Table;
 
 impl RootPageTable {
@@ -481,7 +495,7 @@ impl RootPageTable {
         &mut self,
         debug_name: &str,
         range: &PhysRange,
-        va_offset: usize,
+        va_mapping: VaMapping,
         entry: Entry,
         page_size: PageSize,
         pgtype: RootPageTableType,
@@ -497,11 +511,16 @@ impl RootPageTable {
 
         let mut startva = None;
         let mut endva = 0;
+        let mut currva = 0;
         for pa in range.step_by_rounded(page_size.size()) {
-            let va = (pa.addr() as usize).wrapping_add(va_offset);
-            self.map_to(entry.with_phys_addr(pa), va, page_size, pgtype)?;
-            startva.get_or_insert(va);
-            endva = va + page_size.size();
+            if startva.is_none() {
+                currva = va_mapping.map(pa);
+                startva = Some(currva);
+            } else {
+                currva += page_size.size();
+            }
+            endva = currva + page_size.size();
+            self.map_to(entry.with_phys_addr(pa), currva, page_size, pgtype)?;
         }
         startva.map(|startva| (startva, endva)).ok_or(PageTableError::PhysRangeIsZero)
     }
@@ -605,7 +624,14 @@ pub unsafe fn init_kernel_page_tables(
     println!("Memory map:");
     for (name, range, flags, page_size) in custom_map.iter() {
         let mapped_range = page_table
-            .map_phys_range(name, range, KZERO, *flags, *page_size, RootPageTableType::Kernel)
+            .map_phys_range(
+                name,
+                range,
+                VaMapping::Offset(KZERO),
+                *flags,
+                *page_size,
+                RootPageTableType::Kernel,
+            )
             .expect("error:init:mapping failed");
 
         println!(

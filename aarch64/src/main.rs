@@ -31,7 +31,7 @@ use param::KZERO;
 use port::fdt::DeviceTree;
 use port::mem::PhysRange;
 use port::println;
-use vm::{Entry, RootPageTable, RootPageTableType, root_page_table};
+use vm::{Entry, RootPageTable, RootPageTableType, VaMapping, root_page_table};
 
 #[cfg(not(test))]
 core::arch::global_asm!(include_str!("l.S"));
@@ -149,7 +149,7 @@ pub extern "C" fn main9(dtb_va: usize) {
                 page_table,
                 "testkernel",
                 entry,
-                KZERO,
+                VaMapping::Offset(KZERO),
                 RootPageTableType::Kernel,
             );
             match alloc_result {
@@ -168,7 +168,7 @@ pub extern "C" fn main9(dtb_va: usize) {
                     //         //kernel_root().map_phys_range(&range, entry, page_size).expect("dynamic mapping failed");
                 }
                 Err(err) => {
-                    println!("Error allocating page ({i}): {:?}", err);
+                    println!("Error allocating page in kernel space ({i}): {:?}", err);
                     break;
                 }
             }

@@ -11,6 +11,7 @@ use crate::kmem;
 use crate::vm::Entry;
 use crate::vm::RootPageTable;
 use crate::vm::RootPageTableType;
+use crate::vm::VaMapping;
 use crate::vm::VirtPage4K;
 use port::bitmapalloc::BitmapPageAlloc;
 use port::mem::PhysAddr;
@@ -90,7 +91,7 @@ pub fn allocate_virtpage(
     page_table: &mut RootPageTable,
     debug_name: &str,
     entry: Entry,
-    va_offset: usize, // TODO Remove this?  Should be inferred from page_table
+    va: VaMapping,
     pgtype: RootPageTableType,
 ) -> Result<&'static mut VirtPage4K, PageAllocError> {
     println!("pagealloc:allocate_virtpage:start");
@@ -100,7 +101,7 @@ pub fn allocate_virtpage(
     if let Ok(page_va) = page_table.map_phys_range(
         debug_name,
         &range,
-        va_offset,
+        va,
         entry,
         crate::vm::PageSize::Page4K,
         pgtype,
