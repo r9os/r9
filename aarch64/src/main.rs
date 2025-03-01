@@ -164,7 +164,7 @@ pub extern "C" fn main9(dtb_va: usize) {
             }
         }
     }
-    root_page_table(RootPageTableType::Kernel).print_recursive_tables();
+    vm::print_recursive_tables(root_page_table(RootPageTableType::Kernel));
 
     // test_sysexit();
 

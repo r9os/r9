@@ -499,47 +499,57 @@ impl RootPageTable {
         }
         startva.map(|startva| (startva, endva)).ok_or(PageTableError::PhysRangeIsZero)
     }
+}
 
-    /// Recursively write out all the tables and all its children
-    pub fn print_recursive_tables(&self) {
-        println!("Root va:{:p}", self);
-        self.print_table_at_level(Level::Level0, 0xffff_ffff_ffff_f000);
-    }
+/// Recursively write out all the tables and all its children
+pub fn print_recursive_tables(root_page_table: &RootPageTable) {
+    println!("Root va:{:p}", root_page_table);
+    print_table_at_level(root_page_table, Level::Level0, 0xffff_ffff_ffff_f000);
+}
 
-    /// Recursively write out the table and all its children
-    fn print_table_at_level(&self, level: Level, table_va: usize) {
-        let indent = 2 + level.depth() * 2;
-        println!("{:indent$}Table {:?} va:{:p}", "", level, self);
-        for (i, &pte) in self.entries.iter().enumerate() {
-            if pte.valid() {
-                print_pte(indent, i, level, pte);
+/// Recursively write out the table and all its children
+fn print_table_at_level(page_table: &Table, level: Level, table_va: usize) {
+    let indent = 2 + level.depth() * 2;
+    println!("{:indent$}Table {:?} va:{:p}", "", level, page_table);
+    for (i, &pte) in page_table.entries.iter().enumerate() {
+        if !pte.valid() {
+            continue;
+        }
 
-                // Recurse into child table (unless it's the recursive index)
-                if i != 511 && pte.is_table(level) {
-                    let next_nevel = level.next().unwrap();
-                    let child_va = (table_va << 9) | (i << 12);
-                    let child_table = unsafe { &*(child_va as *const RootPageTable) };
-                    child_table.print_table_at_level(next_nevel, child_va);
-                }
+        if !pte.is_table(level) {
+            print_pte_page(indent, i, level, pte);
+        } else {
+            // Recurse into child table (unless it's the recursive index)
+            if i != 511 {
+                let child_table_va = (table_va << 9) | (i << 12);
+                print_pte_table(indent, i, level, pte, child_table_va);
+
+                let next_nevel = level.next().unwrap();
+                let child_table = unsafe { &*(child_table_va as *const RootPageTable) };
+                print_table_at_level(child_table, next_nevel, child_table_va);
             }
         }
     }
 }
 
-/// Helper to print out PTE as part of a table
-fn print_pte(indent: usize, i: usize, level: Level, pte: Entry) {
-    if pte.is_table(level) {
-        println!("{:indent$}[{:03}] Table {:?} (pte:{:#016x})", "", i, pte, pte.0,);
-    } else {
-        println!(
-            "{:indent$}[{:03}] Entry va:{:#018x} -> {:?} (pte:{:#016x})",
-            "",
-            i,
-            pte.virt_page_addr(),
-            pte,
-            pte.0,
-        );
-    }
+/// Helper to print out page PTE
+fn print_pte_page(indent: usize, i: usize, level: Level, pte: Entry) {
+    println!(
+        "{:indent$}[{:03}] Entry va:{:#018x} -> {:?} (pte:{:#016x})",
+        "",
+        i,
+        pte.virt_page_addr(),
+        pte,
+        pte.0,
+    );
+}
+
+/// Helper to print out table PTE
+fn print_pte_table(indent: usize, i: usize, level: Level, pte: Entry, table_va: usize) {
+    println!(
+        "{:indent$}[{:03}] Table va:{:#018x} {:?} (pte:{:#016x})",
+        "", i, table_va, pte, pte.0,
+    );
 }
 
 pub unsafe fn init(page_table: &mut RootPageTable, dtb_range: PhysRange, available_mem: PhysRange) {
