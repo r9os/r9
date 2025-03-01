@@ -291,7 +291,7 @@ fn va_indices(va: usize) -> (usize, usize, usize, usize) {
 
 /// Return the virtual address for the page table at level `level` for the
 /// given virtual address, assuming the use of recursive page tables.
-fn recursive_table_addr(va: usize, level: Level) -> usize {
+fn recursive_table_addr(_pgtype: RootPageTableType, va: usize, level: Level) -> usize {
     let indices_mask = 0x0000_ffff_ffff_f000;
     let indices = va & indices_mask;
     let shift = match level {
@@ -306,7 +306,12 @@ fn recursive_table_addr(va: usize, level: Level) -> usize {
         Level::Level2 => (511 << 39) | (511 << 30),
         Level::Level3 => 511 << 39,
     };
-    0xffff_0000_0000_0000 | recursive_indices | ((indices >> shift) & indices_mask)
+    // let msbits = match pgtype {
+    //     RootPageTableType::Kernel => 0xffff_0000_0000_0000,
+    //     RootPageTableType::User => 0x0000_0000_0000_0000,
+    // };
+    let msbits = 0xffff_0000_0000_0000;
+    msbits | recursive_indices | ((indices >> shift) & indices_mask)
 }
 
 #[derive(Debug)]
@@ -339,7 +344,12 @@ impl Table {
     }
 
     /// Return the next table in the walk.  If it doesn't exist, create it.
-    fn next_mut(&mut self, level: Level, va: usize) -> Result<&mut Table, PageTableError> {
+    fn next_mut(
+        &mut self,
+        pgtype: RootPageTableType,
+        level: Level,
+        va: usize,
+    ) -> Result<&mut Table, PageTableError> {
         // Try to get a valid page table entry.  If it doesn't exist, create it.
         let index = va_index(va, level);
         let mut entry = self.entries[index];
@@ -360,7 +370,7 @@ impl Table {
             }
 
             // Clear out the new page
-            let recursive_page_addr = recursive_table_addr(va, level.next().unwrap());
+            let recursive_page_addr = recursive_table_addr(pgtype, va, level.next().unwrap());
             let page = unsafe { &mut *(recursive_page_addr as *mut PhysPage4K) };
             page.clear();
         } else {
@@ -371,7 +381,7 @@ impl Table {
         }
 
         // Return the address of the next table as a recursive address
-        let recursive_page_addr = recursive_table_addr(va, level.next().unwrap());
+        let recursive_page_addr = recursive_table_addr(pgtype, va, level.next().unwrap());
         Ok(unsafe { &mut *(recursive_page_addr as *mut Table) })
     }
 
@@ -400,43 +410,40 @@ impl RootPageTable {
     /// replace it.
     fn map_to(
         &mut self,
-        page_table_type: RootPageTableType,
         entry: Entry,
         va: usize,
         page_size: PageSize,
+        pgtype: RootPageTableType,
     ) -> Result<(), PageTableError> {
         // We change the last entry of the root page table to the address of
         // self for the duration of this method.  This allows us to work with
         // this hierarchy of pagetables even if it's not the current translation
         // table.  We *must* return it to its original state on exit.
         // TODO Only do this if self != kernel_root()
-        let old_recursive_entry = root_page_table(page_table_type).entries[511];
+        let old_recursive_entry = root_page_table(pgtype).entries[511];
         let temp_recursive_entry = Entry::rw_kernel_data()
             .with_phys_addr(from_ptr_to_physaddr(self))
             .with_page_or_table(true);
 
         unsafe {
-            write_volatile(
-                &mut root_page_table(page_table_type).entries[511],
-                temp_recursive_entry,
-            );
+            write_volatile(&mut root_page_table(pgtype).entries[511], temp_recursive_entry);
             // TODO Need to invalidate the single cache entry
             invalidate_all_tlb_entries();
         };
 
         let dest_entry = match page_size {
             PageSize::Page4K => self
-                .next_mut(Level::Level0, va)
-                .and_then(|t1| t1.next_mut(Level::Level1, va))
-                .and_then(|t2| t2.next_mut(Level::Level2, va))
+                .next_mut(pgtype, Level::Level0, va)
+                .and_then(|t1| t1.next_mut(pgtype, Level::Level1, va))
+                .and_then(|t2| t2.next_mut(pgtype, Level::Level2, va))
                 .and_then(|t3| t3.entry_mut(Level::Level3, va)),
             PageSize::Page2M => self
-                .next_mut(Level::Level0, va)
-                .and_then(|t1| t1.next_mut(Level::Level1, va))
+                .next_mut(pgtype, Level::Level0, va)
+                .and_then(|t1| t1.next_mut(pgtype, Level::Level1, va))
                 .and_then(|t2| t2.entry_mut(Level::Level2, va)),
-            PageSize::Page1G => {
-                self.next_mut(Level::Level0, va).and_then(|t1| t1.entry_mut(Level::Level1, va))
-            }
+            PageSize::Page1G => self
+                .next_mut(pgtype, Level::Level0, va)
+                .and_then(|t1| t1.entry_mut(Level::Level1, va)),
         };
         let dest_entry = match dest_entry {
             Ok(e) => e,
@@ -456,7 +463,7 @@ impl RootPageTable {
         unsafe {
             write_volatile(dest_entry, entry);
             // Return the recursive entry to its original state
-            write_volatile(&mut root_page_table(page_table_type).entries[511], old_recursive_entry);
+            write_volatile(&mut root_page_table(pgtype).entries[511], old_recursive_entry);
             // TODO Need to invalidate the single cache entry (+ optionally the recursive entry)
             invalidate_all_tlb_entries();
         }
@@ -493,7 +500,7 @@ impl RootPageTable {
         let mut endva = 0;
         for pa in range.step_by_rounded(page_size.size()) {
             let va = (pa.addr() as usize).wrapping_add(va_offset);
-            self.map_to(page_table_type, entry.with_phys_addr(pa), va, page_size)?;
+            self.map_to(entry.with_phys_addr(pa), va, page_size, page_table_type)?;
             startva.get_or_insert(va);
             endva = va + page_size.size();
         }
@@ -517,12 +524,12 @@ fn print_table_at_level(page_table: &Table, level: Level, table_va: usize) {
         }
 
         if !pte.is_table(level) {
-            print_pte_page(indent, i, level, pte);
+            print_pte_page(indent, i, pte);
         } else {
             // Recurse into child table (unless it's the recursive index)
             if i != 511 {
                 let child_table_va = (table_va << 9) | (i << 12);
-                print_pte_table(indent, i, level, pte, child_table_va);
+                print_pte_table(indent, i, pte, child_table_va);
 
                 let next_nevel = level.next().unwrap();
                 let child_table = unsafe { &*(child_table_va as *const RootPageTable) };
@@ -533,7 +540,7 @@ fn print_table_at_level(page_table: &Table, level: Level, table_va: usize) {
 }
 
 /// Helper to print out page PTE
-fn print_pte_page(indent: usize, i: usize, level: Level, pte: Entry) {
+fn print_pte_page(indent: usize, i: usize, pte: Entry) {
     println!(
         "{:indent$}[{:03}] Entry va:{:#018x} -> {:?} (pte:{:#016x})",
         "",
@@ -545,7 +552,7 @@ fn print_pte_page(indent: usize, i: usize, level: Level, pte: Entry) {
 }
 
 /// Helper to print out table PTE
-fn print_pte_table(indent: usize, i: usize, level: Level, pte: Entry, table_va: usize) {
+fn print_pte_table(indent: usize, i: usize, pte: Entry, table_va: usize) {
     println!(
         "{:indent$}[{:03}] Table va:{:#018x} {:?} (pte:{:#016x})",
         "", i, table_va, pte, pte.0,
@@ -627,7 +634,7 @@ fn ttbr0_el1() -> PhysAddr {
         PhysAddr::new(addr)
     }
     #[cfg(test)]
-    0
+    PhysAddr(0)
 }
 
 /// Return the root kernel page table physical address
@@ -641,7 +648,7 @@ fn ttbr1_el1() -> PhysAddr {
         PhysAddr::new(addr)
     }
     #[cfg(test)]
-    0
+    PhysAddr(0)
 }
 
 /// Return the root user-level page table
@@ -691,9 +698,9 @@ pub unsafe fn invalidate_all_tlb_entries() {
         core::arch::asm!(
             "tlbi vmalle1is", // invalidate all TLB entries
             "dsb ish",        // ensure write has completed
-            "isb"
-        ); // synchronize context and ensure that no instructions
-        // are fetched using the old translation
+            "isb"             // synchronize context and ensure that no instructions
+                              // are fetched using the old translation
+        );
     }
 }
 
@@ -708,26 +715,53 @@ mod tests {
 
     #[test]
     fn test_to_use_for_debugging_vaddrs() {
-        assert_eq!(va_indices(0xffff8000049fd000), (256, 0, 36, 509));
+        assert_eq!(va_indices(0xffffffffffe00000), (256, 0, 36, 509));
+        // assert_eq!(va_indices(0xfffffffffff00000), (256, 0, 36, 509));
+        // assert_eq!(va_indices(0xffffffffe0000000), (256, 0, 36, 509));
+        // assert_eq!(va_indices(0x1000), (0, 0, 0, 1));
     }
 
     #[test]
     fn test_recursive_table_addr() {
         assert_eq!(va_indices(0xffff800008000000), (256, 0, 64, 0));
         assert_eq!(
-            va_indices(recursive_table_addr(0xffff800008000000, Level::Level0)),
+            va_indices(recursive_table_addr(
+                RootPageTableType::Kernel,
+                0xffff800008000000,
+                Level::Level0
+            )),
             (511, 511, 511, 511)
         );
         assert_eq!(
-            va_indices(recursive_table_addr(0xffff800008000000, Level::Level1)),
+            va_indices(recursive_table_addr(
+                RootPageTableType::Kernel,
+                0xffff800008000000,
+                Level::Level1
+            )),
             (511, 511, 511, 256)
         );
         assert_eq!(
-            va_indices(recursive_table_addr(0xffff800008000000, Level::Level2)),
+            va_indices(recursive_table_addr(
+                RootPageTableType::Kernel,
+                0xffff800008000000,
+                Level::Level2
+            )),
             (511, 511, 256, 0)
         );
         assert_eq!(
-            va_indices(recursive_table_addr(0xffff800008000000, Level::Level3)),
+            va_indices(recursive_table_addr(
+                RootPageTableType::Kernel,
+                0xffff800008000000,
+                Level::Level3
+            )),
+            (511, 256, 0, 64)
+        );
+        assert_eq!(
+            va_indices(recursive_table_addr(
+                RootPageTableType::Kernel,
+                0xffff800008000000,
+                Level::Level3
+            )),
             (511, 256, 0, 64)
         );
     }
