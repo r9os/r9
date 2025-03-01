@@ -123,13 +123,23 @@ pub extern "C" fn main9(dtb_va: usize) {
     // Map address space accurately using rust VM code to manage page tables
     unsafe {
         let dtb_range = PhysRange::with_len(from_virt_to_physaddr(dtb_va).addr(), dt.size());
-        vm::init(&mut *ptr::addr_of_mut!(KERNEL_PAGETABLE), dtb_range, mailbox::get_arm_memory());
+        vm::init_kernel_page_tables(
+            &mut *ptr::addr_of_mut!(KERNEL_PAGETABLE),
+            dtb_range,
+            mailbox::get_arm_memory(),
+        );
         vm::switch(&*ptr::addr_of!(KERNEL_PAGETABLE), RootPageTableType::Kernel);
+
+        vm::init_user_page_tables(&mut *ptr::addr_of_mut!(USER_PAGETABLE));
+        vm::switch(&*ptr::addr_of!(USER_PAGETABLE), RootPageTableType::User);
     }
 
     // From this point we can use the global allocator
 
     print_memory_info();
+
+    vm::print_recursive_tables(root_page_table(RootPageTableType::Kernel));
+    vm::print_recursive_tables(root_page_table(RootPageTableType::User));
 
     {
         let page_table = unsafe { &mut *ptr::addr_of_mut!(KERNEL_PAGETABLE) };
@@ -137,10 +147,10 @@ pub extern "C" fn main9(dtb_va: usize) {
         for i in 0..3 {
             let alloc_result = pagealloc::allocate_virtpage(
                 page_table,
-                RootPageTableType::Kernel,
-                "test",
+                "testkernel",
                 entry,
                 KZERO,
+                RootPageTableType::Kernel,
             );
             match alloc_result {
                 Ok(_allocated_page) => {
@@ -164,7 +174,14 @@ pub extern "C" fn main9(dtb_va: usize) {
             }
         }
     }
+
     vm::print_recursive_tables(root_page_table(RootPageTableType::Kernel));
+    vm::print_recursive_tables(root_page_table(RootPageTableType::User));
+
+    println!("Now try user space");
+
+    vm::print_recursive_tables(root_page_table(RootPageTableType::Kernel));
+    vm::print_recursive_tables(root_page_table(RootPageTableType::User));
 
     // test_sysexit();
 

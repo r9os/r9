@@ -476,16 +476,15 @@ impl RootPageTable {
     /// that both the alignment requirements are met and the requested range are
     /// covered.
     /// TODO Assuming some of these requests are dynamic, but should not fail,
-    /// we should fall back to the smaller page sizes if the requested size
-    /// fails.
+    /// we should fall back to the smaller page sizes if the requested size fails.
     pub fn map_phys_range(
         &mut self,
-        page_table_type: RootPageTableType,
         debug_name: &str,
         range: &PhysRange,
         va_offset: usize,
         entry: Entry,
         page_size: PageSize,
+        pgtype: RootPageTableType,
     ) -> Result<(usize, usize), PageTableError> {
         if !range.start().is_multiple_of(page_size.size() as u64)
             || !range.end().is_multiple_of(page_size.size() as u64)
@@ -500,7 +499,7 @@ impl RootPageTable {
         let mut endva = 0;
         for pa in range.step_by_rounded(page_size.size()) {
             let va = (pa.addr() as usize).wrapping_add(va_offset);
-            self.map_to(entry.with_phys_addr(pa), va, page_size, page_table_type)?;
+            self.map_to(entry.with_phys_addr(pa), va, page_size, pgtype)?;
             startva.get_or_insert(va);
             endva = va + page_size.size();
         }
@@ -559,7 +558,11 @@ fn print_pte_table(indent: usize, i: usize, pte: Entry, table_va: usize) {
     );
 }
 
-pub unsafe fn init(page_table: &mut RootPageTable, dtb_range: PhysRange, available_mem: PhysRange) {
+pub unsafe fn init_kernel_page_tables(
+    page_table: &mut RootPageTable,
+    dtb_range: PhysRange,
+    available_mem: PhysRange,
+) {
     pagealloc::init_page_allocator();
 
     // We use recursive page tables, but we have to be careful in the init call,
@@ -602,7 +605,7 @@ pub unsafe fn init(page_table: &mut RootPageTable, dtb_range: PhysRange, availab
     println!("Memory map:");
     for (name, range, flags, page_size) in custom_map.iter() {
         let mapped_range = page_table
-            .map_phys_range(RootPageTableType::Kernel, name, range, KZERO, *flags, *page_size)
+            .map_phys_range(name, range, KZERO, *flags, *page_size, RootPageTableType::Kernel)
             .expect("error:init:mapping failed");
 
         println!(
@@ -614,6 +617,16 @@ pub unsafe fn init(page_table: &mut RootPageTable, dtb_range: PhysRange, availab
     if let Err(err) = pagealloc::free_unused_ranges(&available_mem, custom_map.map(|m| m.1).iter())
     {
         panic!("error:Couldn't mark unused pages as free: err: {:?}", err);
+    }
+}
+
+pub unsafe fn init_user_page_tables(page_table: &mut RootPageTable) {
+    // Write the recursive entry
+    unsafe {
+        let entry = Entry::rw_kernel_data()
+            .with_phys_addr(from_ptr_to_physaddr(page_table))
+            .with_page_or_table(true);
+        write_volatile(&mut page_table.entries[511], entry);
     }
 }
 
