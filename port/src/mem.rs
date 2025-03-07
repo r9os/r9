@@ -19,11 +19,7 @@ impl VirtRange {
 
     pub fn offset_addr(&self, offset: usize) -> Option<usize> {
         let addr = self.0.start + offset;
-        if self.0.contains(&addr) {
-            Some(addr)
-        } else {
-            None
-        }
+        if self.0.contains(&addr) { Some(addr) } else { None }
     }
 
     pub fn start(&self) -> usize {
@@ -64,6 +60,10 @@ impl PhysAddr {
     pub const fn round_down(&self, step: u64) -> PhysAddr {
         assert!(step.is_power_of_two());
         PhysAddr(self.0 & !(step - 1))
+    }
+
+    pub const fn is_multiple_of(&self, n: u64) -> bool {
+        self.0.is_multiple_of(n)
     }
 }
 
@@ -119,14 +119,14 @@ impl PhysRange {
         Self(PhysAddr(start)..PhysAddr(start + len as u64))
     }
 
+    pub fn with_pa_len(start: PhysAddr, len: usize) -> Self {
+        Self(start..PhysAddr(start.0 + len as u64))
+    }
+
     #[allow(dead_code)]
     pub fn offset_addr(&self, offset: u64) -> Option<PhysAddr> {
         let addr = self.0.start + offset;
-        if self.0.contains(&addr) {
-            Some(addr)
-        } else {
-            None
-        }
+        if self.0.contains(&addr) { Some(addr) } else { None }
     }
 
     pub fn start(&self) -> PhysAddr {

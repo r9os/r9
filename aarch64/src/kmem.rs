@@ -93,6 +93,7 @@ pub fn total_kernel_range() -> PhysRange {
     PhysRange(from_virt_to_physaddr(base_addr())..from_virt_to_physaddr(end_addr()))
 }
 
+// TODO Meh, this is only valid if it's been mapped as an offset - should probably remove
 pub const fn physaddr_as_virt(pa: PhysAddr) -> usize {
     (pa.addr() as usize).wrapping_add(KZERO)
 }
