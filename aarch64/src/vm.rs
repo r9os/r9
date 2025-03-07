@@ -52,31 +52,13 @@ impl PhysPage4K {
             core::intrinsics::volatile_set_memory(&mut self.0, 0u8, 1);
         }
     }
-
-    // pub fn data(&mut self) -> &mut [u8] {
-    //     &mut self.0
-    // }
-
-    // pub fn pa(&self) -> PhysAddr {
-    //     PhysAddr::new(addr_of!(self) as u64)
-    // }
 }
 
 #[repr(C, align(4096))]
 #[derive(Clone, Copy)]
 pub struct VirtPage4K([u8; PAGE_SIZE_4K]);
 
-impl VirtPage4K {
-    // pub fn clear(&mut self) {
-    //     unsafe {
-    //         core::intrinsics::volatile_set_memory(&mut self.0, 0u8, 1);
-    //     }
-    // }
-
-    // pub fn data(&mut self) -> &mut [u8] {
-    //     &mut self.0
-    // }
-}
+impl VirtPage4K {}
 
 #[derive(Debug, IntoPrimitive, FromPrimitive)]
 #[repr(u8)]
@@ -459,12 +441,6 @@ impl Table {
         let recursive_page_addr = recursive_table_addr(pgtype, va, level.next().unwrap());
         Ok(unsafe { &mut *(recursive_page_addr as *mut Table) })
     }
-
-    // fn alloc_pagetable() -> Result<&'static mut Table, PageTableError> {
-    //     let page = pagealloc::allocate_physpage()?;
-    //     //page.clear();
-    //     Ok(unsafe { &mut *(page as *mut PhysPage4K as *mut Table) })
-    // }
 }
 
 impl fmt::Debug for Table {
