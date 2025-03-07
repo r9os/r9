@@ -31,7 +31,7 @@ use param::KZERO;
 use port::fdt::DeviceTree;
 use port::mem::PhysRange;
 use port::println;
-use vm::{Entry, RootPageTable, RootPageTableType, VaMapping, root_page_table};
+use vm::{Entry, RootPageTable, RootPageTableType, VaMapping};
 
 #[cfg(not(test))]
 core::arch::global_asm!(include_str!("l.S"));
@@ -138,8 +138,8 @@ pub extern "C" fn main9(dtb_va: usize) {
 
     print_memory_info();
 
-    vm::print_recursive_tables(root_page_table(RootPageTableType::Kernel));
-    vm::print_recursive_tables(root_page_table(RootPageTableType::User));
+    vm::print_recursive_tables(RootPageTableType::Kernel);
+    vm::print_recursive_tables(RootPageTableType::User);
 
     {
         let page_table = unsafe { &mut *ptr::addr_of_mut!(KERNEL_PAGETABLE) };
@@ -175,13 +175,34 @@ pub extern "C" fn main9(dtb_va: usize) {
         }
     }
 
-    vm::print_recursive_tables(root_page_table(RootPageTableType::Kernel));
-    vm::print_recursive_tables(root_page_table(RootPageTableType::User));
+    vm::print_recursive_tables(RootPageTableType::Kernel);
+    vm::print_recursive_tables(RootPageTableType::User);
 
     println!("Now try user space");
 
-    vm::print_recursive_tables(root_page_table(RootPageTableType::Kernel));
-    vm::print_recursive_tables(root_page_table(RootPageTableType::User));
+    {
+        let page_table = unsafe { &mut *ptr::addr_of_mut!(USER_PAGETABLE) };
+        let entry = Entry::rw_user_text();
+        for i in 0..100 {
+            let alloc_result = pagealloc::allocate_virtpage(
+                page_table,
+                "testuser",
+                entry,
+                VaMapping::Addr((i + 1) * 4096),
+                RootPageTableType::User,
+            );
+            match alloc_result {
+                Ok(_allocated_page) => {}
+                Err(err) => {
+                    println!("Error allocating page in user space ({i}): {:?}", err);
+                    break;
+                }
+            }
+        }
+    }
+
+    vm::print_recursive_tables(RootPageTableType::Kernel);
+    vm::print_recursive_tables(RootPageTableType::User);
 
     // test_sysexit();
 
