@@ -13,6 +13,7 @@
 	"code-model": "medium",
 	"disable-redzone": true,
 	"features": "-mmx,-sse,+soft-float",
+	"rustc-abi": "x86-softfloat",
 	"panic-strategy": "abort",
 	"frame-pointer": "always",
 	"pre-link-args": {

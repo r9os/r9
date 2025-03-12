@@ -76,15 +76,10 @@ impl ops::Add<u64> for PhysAddr {
 
 /// Note that this implementation will round down the startpa and round up the endpa
 impl Step for PhysAddr {
-    fn steps_between(&startpa: &Self, &endpa: &Self) -> Option<usize> {
-        if startpa.0 <= endpa.0 {
-            match endpa.0.checked_sub(startpa.0) {
-                Some(result) => usize::try_from(result).ok(),
-                None => None,
-            }
-        } else {
-            None
-        }
+    fn steps_between(&startpa: &Self, &endpa: &Self) -> (usize, Option<usize>) {
+        let spa = startpa.0 as usize;
+        let epa = endpa.0 as usize;
+        usize::steps_between(&spa, &epa)
     }
 
     fn forward_checked(startpa: Self, count: usize) -> Option<Self> {

@@ -1,9 +1,6 @@
 #![allow(clippy::too_long_first_doc_paragraph)]
 
-use core::{
-    ffi::CStr,
-    mem::{self, MaybeUninit},
-};
+use core::{ffi::CStr, mem};
 
 #[derive(Debug)]
 pub enum ParseError {
@@ -18,28 +15,28 @@ type Result<T> = core::result::Result<T, ParseError>;
 /// Extract u32 from bytes
 fn bytes_to_u32(bytes: &[mem::MaybeUninit<u8>]) -> Option<u32> {
     let maybe_uninit_bytes = bytes.get(..4)?;
-    let init_bytes = unsafe { MaybeUninit::slice_assume_init_ref(maybe_uninit_bytes) };
+    let init_bytes = unsafe { maybe_uninit_bytes.assume_init_ref() };
     Some(u32::from_be_bytes(init_bytes.try_into().unwrap()))
 }
 
 /// Extract u32 from bytes + offset
 fn bytes_to_u32_offset(bytes: &[mem::MaybeUninit<u8>], offset: usize) -> Option<u32> {
     let maybe_uninit_bytes = bytes.get(offset..offset + 4)?;
-    let init_bytes = unsafe { MaybeUninit::slice_assume_init_ref(maybe_uninit_bytes) };
+    let init_bytes = unsafe { maybe_uninit_bytes.assume_init_ref() };
     Some(u32::from_be_bytes(init_bytes.try_into().unwrap()))
 }
 
 /// Extract u64 from bytes
 fn bytes_to_u64(bytes: &[mem::MaybeUninit<u8>]) -> Option<u64> {
     let maybe_uninit_bytes = bytes.get(..8)?;
-    let init_bytes = unsafe { MaybeUninit::slice_assume_init_ref(maybe_uninit_bytes) };
+    let init_bytes = unsafe { maybe_uninit_bytes.assume_init_ref() };
     Some(u64::from_be_bytes(init_bytes.try_into().unwrap()))
 }
 
 /// Extract u32 from bytes, but cast as u64
 fn bytes_to_u32_as_u64(bytes: &[mem::MaybeUninit<u8>]) -> Option<u64> {
     let maybe_uninit_bytes = bytes.get(..4)?;
-    let init_bytes = unsafe { MaybeUninit::slice_assume_init_ref(maybe_uninit_bytes) };
+    let init_bytes = unsafe { maybe_uninit_bytes.assume_init_ref() };
     Some(u32::from_be_bytes(init_bytes.try_into().unwrap()).into())
 }
 
@@ -341,7 +338,7 @@ impl<'a> DeviceTree<'a> {
 
     fn property_value_contains(&self, prop: &Property, bytes_to_find: &str) -> bool {
         if let Some(uninit_value) = self.property_value_bytes(prop) {
-            let init_value = unsafe { MaybeUninit::slice_assume_init_ref(uninit_value) };
+            let init_value = unsafe { uninit_value.assume_init_ref() };
             return init_value.split(|b| *b == b'\0').any(|bs| bs == bytes_to_find.as_bytes());
         }
         false
@@ -399,7 +396,7 @@ impl<'a> DeviceTree<'a> {
 
     fn inline_str(bytes: &[mem::MaybeUninit<u8>], start: usize) -> Option<&str> {
         let maybe_uninit_bytes = bytes.get(start..)?;
-        let init_bytes = unsafe { MaybeUninit::slice_assume_init_ref(maybe_uninit_bytes) };
+        let init_bytes = unsafe { maybe_uninit_bytes.assume_init_ref() };
         let cstr = CStr::from_bytes_until_nul(init_bytes).ok()?;
         cstr.to_str().ok()
     }
@@ -554,9 +551,7 @@ impl<'a> DeviceTree<'a> {
                 // Null terminated string follow token
                 let str_size = structs
                     .get((i + 4)..)
-                    .and_then(|bs| unsafe {
-                        MaybeUninit::slice_assume_init_ref(bs).iter().position(|&b| b == 0)
-                    })
+                    .and_then(|bs| unsafe { bs.assume_init_ref().iter().position(|&b| b == 0) })
                     .map(|sz| align4(sz + 1))
                     .unwrap_or(0);
                 Some(FdtToken::BeginNode(FdtBeginNodeContext {
