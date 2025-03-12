@@ -59,10 +59,9 @@ SECTIONS {
 
 	/* Reserve section for early pagetables. */
 	. = ALIGN(4096);
-    early_pagetables = .;
+	early_pagetables = .;
 	. += 32 * 4096;
 	eearly_pagetables = .;
-
 
 	PROVIDE(end = .);
 
