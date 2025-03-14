@@ -119,6 +119,8 @@ pub extern "C" fn main9(dtb_va: usize) {
     print_physical_memory_info();
     print_board_info();
 
+    pagealloc::init_page_allocator();
+
     // Map address space accurately using rust VM code to manage page tables
     unsafe {
         let dtb_range = PhysRange::with_len(from_virt_to_physaddr(dtb_va).addr(), dt.size());
