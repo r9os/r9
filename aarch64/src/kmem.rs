@@ -98,16 +98,20 @@ pub const fn physaddr_as_virt(pa: PhysAddr) -> usize {
     (pa.addr() as usize).wrapping_add(KZERO)
 }
 
+// TODO remove?
 pub const fn physaddr_as_ptr_mut<T>(pa: PhysAddr) -> *mut T {
     physaddr_as_virt(pa) as *mut T
 }
 
+// TODO remove?
 pub const fn from_virt_to_physaddr(va: usize) -> PhysAddr {
     PhysAddr::new((va - KZERO) as u64)
 }
 
-pub fn from_ptr_to_physaddr<T>(a: *const T) -> PhysAddr {
-    from_virt_to_physaddr(a.addr())
+/// Given an address, return the physical address.  Makes a massive assumption
+/// that the code is mapped offset to KZERO, so should be used with extreme care.
+pub fn from_ptr_to_physaddr_offset_from_kzero<T>(a: *const T) -> PhysAddr {
+    PhysAddr::new((a.addr() - KZERO) as u64)
 }
 
 pub fn early_pages_range() -> PhysRange {

@@ -5,8 +5,8 @@
 /// 4KiB tables here, although it supports various sizes of pages.
 use crate::{
     kmem::{
-        boottext_range, bss_range, data_range, from_ptr_to_physaddr, physaddr_as_ptr_mut,
-        rodata_range, text_range,
+        boottext_range, bss_range, data_range, from_ptr_to_physaddr_offset_from_kzero,
+        physaddr_as_ptr_mut, rodata_range, text_range,
     },
     pagealloc,
     param::KZERO,
@@ -487,7 +487,7 @@ impl RootPageTable {
         // TODO Only do this if self != kernel_root()
         let old_recursive_entry = root_page_table(pgtype).entries[511];
         let temp_recursive_entry = Entry::rw_kernel_data()
-            .with_phys_addr(from_ptr_to_physaddr(self))
+            .with_phys_addr(from_ptr_to_physaddr_offset_from_kzero(self))
             .with_page_or_table(true);
 
         unsafe {
@@ -680,25 +680,16 @@ fn print_pte_table(indent: usize, i: usize, pte: Entry, table_va: usize) {
 }
 
 pub unsafe fn init_kernel_page_tables(
-    page_table: &mut RootPageTable,
+    new_kernel_root_page_table: &mut RootPageTable,
     dtb_range: PhysRange,
     available_mem: PhysRange,
 ) {
-    pagealloc::init_page_allocator();
-
     // We use recursive page tables, but we have to be careful in the init call,
     // since the kpage_table is not currently pointed to by ttbr1_el1.  Any
     // recursive addressing of (511, 511, 511, 511) always points to the
     // physical address of the root page table, which isn't what we want here
     // because kpage_table hasn't been switched to yet.
-
-    // Write the recursive entry
-    unsafe {
-        let entry = Entry::rw_kernel_data()
-            .with_phys_addr(from_ptr_to_physaddr(page_table))
-            .with_page_or_table(true);
-        write_volatile(&mut page_table.entries[511], entry);
-    }
+    unsafe { init_empty_root_page_table(new_kernel_root_page_table) };
 
     // TODO leave the first page unmapped to catch null pointer dereferences in unsafe code
     let custom_map = {
@@ -725,7 +716,7 @@ pub unsafe fn init_kernel_page_tables(
 
     println!("Memory map:");
     for (name, range, flags, page_size) in custom_map.iter() {
-        let mapped_range = page_table
+        let mapped_range = new_kernel_root_page_table
             .map_phys_range(
                 name,
                 range,
@@ -748,13 +739,19 @@ pub unsafe fn init_kernel_page_tables(
     }
 }
 
-pub unsafe fn init_user_page_tables(page_table: &mut RootPageTable) {
-    // Write the recursive entry
+pub unsafe fn init_user_page_tables(new_user_root_page_table: &mut RootPageTable) {
+    unsafe { init_empty_root_page_table(new_user_root_page_table) };
+}
+
+/// Given an empty, statically allocated page table.  We need to write a
+/// recursive entry in the last entry.  To do this, we need to know the physical
+/// address, but all we have is the virtual address
+unsafe fn init_empty_root_page_table(root_page_table: &mut RootPageTable) {
     unsafe {
         let entry = Entry::rw_kernel_data()
-            .with_phys_addr(from_ptr_to_physaddr(page_table))
+            .with_phys_addr(from_ptr_to_physaddr_offset_from_kzero(root_page_table))
             .with_page_or_table(true);
-        write_volatile(&mut page_table.entries[511], entry);
+        write_volatile(&mut root_page_table.entries[511], entry);
     }
 }
 
@@ -797,7 +794,7 @@ fn ttbr1_el1() -> PhysAddr {
 pub unsafe fn switch(page_table: &RootPageTable, pgtype: RootPageTableType) {
     #[cfg(not(test))]
     unsafe {
-        let pt_phys = from_ptr_to_physaddr(page_table).addr();
+        let pt_phys = from_ptr_to_physaddr_offset_from_kzero(page_table).addr();
         // https://forum.osdev.org/viewtopic.php?t=36412&p=303237
         match pgtype {
             RootPageTableType::User => {
