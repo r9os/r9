@@ -6,7 +6,7 @@
 use crate::{
     kmem::{
         boottext_range, bss_range, data_range, from_ptr_to_physaddr_offset_from_kzero,
-        physaddr_as_ptr_mut, rodata_range, text_range,
+        physaddr_as_ptr_mut_offset_from_kzero, rodata_range, text_range,
     },
     pagealloc,
     param::KZERO,
@@ -96,17 +96,17 @@ bitstruct! {
     /// Process' secrtion of the Arm Architecture Reference Manual.
     #[derive(Copy, Clone, PartialEq)]
     #[repr(transparent)]
-    pub struct Entry(u64) {
-        valid: bool = 0;
-        page_or_table: bool = 1;
-        mair_index: Mair = 2..5;
-        non_secure: bool = 5;
-        access_permission: AccessPermission = 6..8;
-        shareable: Shareable = 8..10;
-        accessed: bool = 10; // Was accessed by code
-        addr: u64 = 12..48;
-        pxn: bool = 53; // Privileged eXecute Never
-        uxn: bool = 54; // Unprivileged eXecute Never
+    pub struct Entry(pub u64) {
+        pub valid: bool = 0;
+        pub page_or_table: bool = 1;
+        pub mair_index: Mair = 2..5;
+        pub non_secure: bool = 5;
+        pub access_permission: AccessPermission = 6..8;
+        pub shareable: Shareable = 8..10;
+        pub accessed: bool = 10; // Was accessed by code
+        pub addr: u64 = 12..48;
+        pub pxn: bool = 53; // Privileged eXecute Never
+        pub uxn: bool = 54; // Unprivileged eXecute Never
     }
 }
 
@@ -126,7 +126,7 @@ impl Entry {
             .with_valid(true)
     }
 
-    fn ro_kernel_data() -> Self {
+    pub fn ro_kernel_data() -> Self {
         Entry(0)
             .with_access_permission(AccessPermission::PrivRo)
             .with_shareable(Shareable::Inner)
@@ -137,7 +137,7 @@ impl Entry {
             .with_valid(true)
     }
 
-    fn ro_kernel_text() -> Self {
+    pub fn ro_kernel_text() -> Self {
         Entry(0)
             .with_access_permission(AccessPermission::PrivRo)
             .with_shareable(Shareable::Inner)
@@ -148,7 +148,7 @@ impl Entry {
             .with_valid(true)
     }
 
-    fn rw_device() -> Self {
+    pub fn rw_device() -> Self {
         Entry(0)
             .with_access_permission(AccessPermission::PrivRw)
             .with_shareable(Shareable::Inner)
@@ -174,7 +174,7 @@ impl Entry {
         Entry(self.0).with_addr(pa.addr() >> 12)
     }
 
-    fn is_table(self, level: Level) -> bool {
+    pub fn is_table(self, level: Level) -> bool {
         self.page_or_table() && level != Level::Level3
     }
 }
@@ -254,99 +254,6 @@ pub fn va_index(va: usize, level: Level) -> usize {
     }
 }
 
-/// Returns a tuple of page table indices for the given virtual address
-#[cfg(test)]
-fn va_indices(va: usize) -> (usize, usize, usize, usize) {
-    (
-        va_index(va, Level::Level0),
-        va_index(va, Level::Level1),
-        va_index(va, Level::Level2),
-        va_index(va, Level::Level3),
-    )
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct PteIndices {
-    pgtype: RootPageTableType,
-    l0: Option<usize>,
-    l1: Option<usize>,
-    l2: Option<usize>,
-    l3: Option<usize>,
-}
-
-impl PteIndices {
-    #[cfg(test)]
-    fn new(
-        pgtype: RootPageTableType,
-        l0: Option<usize>,
-        l1: Option<usize>,
-        l2: Option<usize>,
-        l3: Option<usize>,
-    ) -> Self {
-        Self { pgtype, l0, l1, l2, l3 }
-    }
-
-    fn none(pgtype: RootPageTableType) -> Self {
-        Self { pgtype, l0: None, l1: None, l2: None, l3: None }
-    }
-
-    fn with_next_index(&self, i: usize) -> Option<Self> {
-        if self.l0.is_none() {
-            Some(Self { pgtype: self.pgtype, l0: Some(i), l1: None, l2: None, l3: None })
-        } else if self.l1.is_none() {
-            Some(Self { pgtype: self.pgtype, l0: self.l0, l1: Some(i), l2: None, l3: None })
-        } else if self.l2.is_none() {
-            Some(Self { pgtype: self.pgtype, l0: self.l0, l1: self.l1, l2: Some(i), l3: None })
-        } else if self.l3.is_none() {
-            Some(Self { pgtype: self.pgtype, l0: self.l0, l1: self.l1, l2: self.l2, l3: Some(i) })
-        } else {
-            None
-        }
-    }
-
-    fn with_last_index(&self, i: usize) -> Option<Self> {
-        if self.l0.is_none() {
-            None
-        } else if self.l1.is_none() {
-            Some(Self { pgtype: self.pgtype, l0: Some(i), l1: None, l2: None, l3: None })
-        } else if self.l2.is_none() {
-            Some(Self { pgtype: self.pgtype, l0: self.l0, l1: Some(i), l2: None, l3: None })
-        } else if self.l3.is_none() {
-            Some(Self { pgtype: self.pgtype, l0: self.l0, l1: self.l1, l2: Some(i), l3: None })
-        } else {
-            Some(Self { pgtype: self.pgtype, l0: self.l0, l1: self.l1, l2: self.l2, l3: Some(i) })
-        }
-    }
-
-    fn last_index(&self) -> Option<usize> {
-        if let Some(i) = self.l3 {
-            Some(i)
-        } else if let Some(i) = self.l2 {
-            Some(i)
-        } else if let Some(i) = self.l1 {
-            Some(i)
-        } else if let Some(i) = self.l0 {
-            Some(i)
-        } else {
-            None
-        }
-    }
-
-    fn to_va(&self) -> usize {
-        let mut va = match self.pgtype {
-            RootPageTableType::Kernel => 0xffff_0000_0000_0000,
-            RootPageTableType::User => 0x0000_0000_0000_0000,
-        };
-
-        va |= if let Some(i) = self.l0 { i << 39 } else { 0 };
-        va |= if let Some(i) = self.l1 { i << 30 } else { 0 };
-        va |= if let Some(i) = self.l2 { i << 21 } else { 0 };
-        va |= if let Some(i) = self.l3 { i << 12 } else { 0 };
-
-        va
-    }
-}
-
 /// Return the virtual address for the page table at level `level` for the
 /// given virtual address, assuming the use of recursive page tables.
 fn recursive_table_addr(pgtype: RootPageTableType, va: usize, level: Level) -> usize {
@@ -388,7 +295,7 @@ impl From<PageAllocError> for PageTableError {
 
 #[repr(C, align(4096))]
 pub struct Table {
-    entries: [Entry; 512],
+    pub entries: [Entry; 512],
 }
 
 impl Table {
@@ -473,11 +380,13 @@ impl RootPageTable {
     /// Ensure there's a mapping from va to entry, creating any intermediate
     /// page tables that don't already exist.  If a mapping already exists,
     /// replace it.
+    /// root_page_table should be a direct va - not a recursive va.
     fn map_to(
         &mut self,
         entry: Entry,
         va: usize,
         page_size: PageSize,
+        root_page_table: &mut RootPageTable,
         pgtype: RootPageTableType,
     ) -> Result<(), PageTableError> {
         // We change the last entry of the root page table to the address of
@@ -485,13 +394,13 @@ impl RootPageTable {
         // this hierarchy of pagetables even if it's not the current translation
         // table.  We *must* return it to its original state on exit.
         // TODO Only do this if self != kernel_root()
-        let old_recursive_entry = root_page_table(pgtype).entries[511];
+        let old_recursive_entry = root_page_table.entries[511];
         let temp_recursive_entry = Entry::rw_kernel_data()
             .with_phys_addr(from_ptr_to_physaddr_offset_from_kzero(self))
             .with_page_or_table(true);
 
         unsafe {
-            write_volatile(&mut root_page_table(pgtype).entries[511], temp_recursive_entry);
+            write_volatile(&mut root_page_table.entries[511], temp_recursive_entry);
             // TODO Need to invalidate the single cache entry
             invalidate_all_tlb_entries();
         };
@@ -528,7 +437,7 @@ impl RootPageTable {
         unsafe {
             write_volatile(dest_entry, entry);
             // Return the recursive entry to its original state
-            write_volatile(&mut root_page_table(pgtype).entries[511], old_recursive_entry);
+            write_volatile(&mut root_page_table.entries[511], old_recursive_entry);
             // TODO Need to invalidate the single cache entry (+ optionally the recursive entry)
             invalidate_all_tlb_entries();
         }
@@ -560,6 +469,8 @@ impl RootPageTable {
             return Err(PageTableError::PhysRangeIsNotOnPageBoundary);
         }
 
+        let root_page_table = root_page_table(pgtype);
+
         let mut startva = None;
         let mut endva = 0;
         let mut currva = 0;
@@ -571,7 +482,7 @@ impl RootPageTable {
                 currva += page_size.size();
             }
             endva = currva + page_size.size();
-            self.map_to(entry.with_phys_addr(pa), currva, page_size, pgtype)?;
+            self.map_to(entry.with_phys_addr(pa), currva, page_size, root_page_table, pgtype)?;
         }
         startva.map(|startva| (startva, endva)).ok_or(PageTableError::PhysRangeIsZero)
     }
@@ -583,100 +494,7 @@ pub fn root_page_table(pgtype: RootPageTableType) -> &'static mut RootPageTable 
         RootPageTableType::User => ttbr0_el1(),
         RootPageTableType::Kernel => ttbr1_el1(),
     };
-    unsafe { &mut *physaddr_as_ptr_mut::<RootPageTable>(page_table_pa) }
-}
-
-/// Return recursive virtual addresses for the current kernel or user page tables.
-/// This depends on the recursive entry of root page tables to have been set up correctly.
-pub fn curr_page_table_va(pgtype: RootPageTableType) -> usize {
-    match pgtype {
-        RootPageTableType::User => 0x0000_ffff_ffff_f000,
-        RootPageTableType::Kernel => 0xffff_ffff_ffff_f000,
-    }
-}
-
-/// Return the current kernel or user page table.
-/// This depends on the recursive entry of root page tables to have been set up correctly.
-pub fn curr_page_table(pgtype: RootPageTableType) -> &'static mut RootPageTable {
-    let ptr = curr_page_table_va(pgtype) as *mut RootPageTable;
-    unsafe { &mut *ptr }
-}
-
-/// Recursively write out all the tables and all its children
-pub fn print_recursive_tables(pgtype: RootPageTableType) {
-    let root_page_table = curr_page_table(pgtype);
-    println!("Root va:{:018p}", root_page_table);
-    print_table_at_level(
-        root_page_table,
-        Level::Level0,
-        curr_page_table_va(pgtype),
-        pgtype,
-        PteIndices::none(pgtype),
-    );
-}
-
-/// Recursively write out the table and all its children
-fn print_table_at_level(
-    page_table: &Table,
-    level: Level,
-    table_va: usize,
-    pgtype: RootPageTableType,
-    pte_indices: PteIndices,
-) {
-    let indent = 2 + level.depth() * 2;
-    println!("{:indent$}Table {:?} va:{:018p}", "", level, page_table);
-
-    for i in 0..512 {
-        let pte = page_table.entries[i];
-        if !pte.valid() {
-            continue;
-        }
-
-        if !pte.is_table(level) {
-            if let Some(pte_indices) = pte_indices.with_last_index(i) {
-                print_pte_page(indent, pte_indices, pte);
-            }
-        } else if i != 511 {
-            // Recurse into child table (unless it's the recursive index)
-            let child_table_va = match pgtype {
-                RootPageTableType::User => ((table_va << 9) | (i << 12)) & 0x0000_ffff_ffff_ffff,
-                RootPageTableType::Kernel => (table_va << 9) | (i << 12),
-            };
-            print_pte_table(indent, i, pte, child_table_va);
-
-            if let Some(next_level_pte_indices) = pte_indices.with_next_index(i) {
-                let next_nevel = level.next().unwrap();
-                let child_table = unsafe { &*(child_table_va as *const RootPageTable) };
-                print_table_at_level(
-                    child_table,
-                    next_nevel,
-                    child_table_va,
-                    pgtype,
-                    next_level_pte_indices,
-                );
-            }
-        }
-    }
-}
-
-/// Helper to print out page PTE
-fn print_pte_page(indent: usize, pte_indices: PteIndices, pte: Entry) {
-    println!(
-        "{:indent$}[{:03}] Entry va:{:#018x} -> {:?} (pte:{:#016x})",
-        "",
-        pte_indices.last_index().unwrap_or(0),
-        pte_indices.to_va(),
-        pte,
-        pte.0,
-    );
-}
-
-/// Helper to print out table PTE
-fn print_pte_table(indent: usize, i: usize, pte: Entry, table_va: usize) {
-    println!(
-        "{:indent$}[{:03}] Table va:{:#018x} {:?} (pte:{:#016x})",
-        "", i, table_va, pte, pte.0,
-    );
+    unsafe { &mut *physaddr_as_ptr_mut_offset_from_kzero::<RootPageTable>(page_table_pa) }
 }
 
 pub unsafe fn init_kernel_page_tables(
@@ -835,6 +653,8 @@ pub unsafe fn invalidate_all_tlb_entries() {
 
 #[cfg(test)]
 mod tests {
+    use crate::vmdebug::va_indices;
+
     use super::*;
 
     #[test]
@@ -893,42 +713,5 @@ mod tests {
             )),
             (511, 256, 0, 64)
         );
-    }
-
-    #[test]
-    fn test_pte_indices() {
-        let p = PteIndices::none(RootPageTableType::User);
-        assert_eq!(p, PteIndices::none(RootPageTableType::User));
-
-        let p = p.with_next_index(1).unwrap();
-        assert_eq!(p, PteIndices::new(RootPageTableType::User, Some(1), None, None, None));
-
-        let p = p.with_next_index(2).unwrap();
-        assert_eq!(p, PteIndices::new(RootPageTableType::User, Some(1), Some(2), None, None));
-
-        let p = p.with_next_index(3).unwrap();
-        assert_eq!(p, PteIndices::new(RootPageTableType::User, Some(1), Some(2), Some(3), None));
-
-        let p = p.with_next_index(4).unwrap();
-        assert_eq!(p, PteIndices::new(RootPageTableType::User, Some(1), Some(2), Some(3), Some(4)));
-
-        let p = PteIndices::new(RootPageTableType::Kernel, Some(1), Some(2), None, None);
-        let p = p.with_last_index(33).unwrap();
-        assert_eq!(p, PteIndices::new(RootPageTableType::Kernel, Some(1), Some(33), None, None));
-        assert_eq!(p.last_index(), Some(33));
-
-        let p = PteIndices::new(RootPageTableType::Kernel, Some(1), Some(2), Some(3), Some(4));
-        let p = p.with_last_index(100).unwrap();
-        assert_eq!(
-            p,
-            PteIndices::new(RootPageTableType::Kernel, Some(1), Some(2), Some(3), Some(100))
-        );
-        assert_eq!(p.last_index(), Some(100));
-
-        let p = PteIndices::new(RootPageTableType::Kernel, Some(15), Some(0), Some(400), Some(4));
-        assert_eq!(va_indices(p.to_va()), (15, 0, 400, 4));
-
-        let p = PteIndices::new(RootPageTableType::User, Some(0), Some(10), Some(40), Some(23));
-        assert_eq!(va_indices(p.to_va()), (0, 10, 40, 23));
     }
 }

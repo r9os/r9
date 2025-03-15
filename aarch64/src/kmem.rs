@@ -18,7 +18,7 @@ unsafe extern "C" {
 }
 
 fn base_addr() -> usize {
-    0xffff_8000_0000_0000
+    KZERO
 }
 
 fn eboottext_addr() -> usize {
@@ -93,25 +93,23 @@ pub fn total_kernel_range() -> PhysRange {
     PhysRange(from_virt_to_physaddr(base_addr())..from_virt_to_physaddr(end_addr()))
 }
 
-// TODO Meh, this is only valid if it's been mapped as an offset - should probably remove
-pub const fn physaddr_as_virt(pa: PhysAddr) -> usize {
-    (pa.addr() as usize).wrapping_add(KZERO)
+/// Transform the physical address to a virtual address, under the assumption that
+/// the virtual address is the physical address offset from KZERO.
+pub const fn physaddr_as_ptr_mut_offset_from_kzero<T>(pa: PhysAddr) -> *mut T {
+    (pa.addr() as usize).wrapping_add(KZERO) as *mut T
 }
 
-// TODO remove?
-pub const fn physaddr_as_ptr_mut<T>(pa: PhysAddr) -> *mut T {
-    physaddr_as_virt(pa) as *mut T
-}
-
-// TODO remove?
-pub const fn from_virt_to_physaddr(va: usize) -> PhysAddr {
+/// Given a virtual address, return the physical address.  Makes a massive assumption
+/// that the code is mapped offset to KZERO, so should be used with extreme care.
+pub fn from_virt_to_physaddr(va: usize) -> PhysAddr {
+    debug_assert!(va >= KZERO, "from_virt_to_physaddr: va {} must be >= KZERO ({})", va, KZERO);
     PhysAddr::new((va - KZERO) as u64)
 }
 
 /// Given an address, return the physical address.  Makes a massive assumption
 /// that the code is mapped offset to KZERO, so should be used with extreme care.
 pub fn from_ptr_to_physaddr_offset_from_kzero<T>(a: *const T) -> PhysAddr {
-    PhysAddr::new((a.addr() - KZERO) as u64)
+    from_virt_to_physaddr(a.addr())
 }
 
 pub fn early_pages_range() -> PhysRange {

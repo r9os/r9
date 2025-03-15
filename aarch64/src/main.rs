@@ -19,6 +19,7 @@ mod trap;
 mod uartmini;
 mod uartpl011;
 mod vm;
+mod vmdebug;
 
 extern crate alloc;
 
@@ -139,8 +140,8 @@ pub extern "C" fn main9(dtb_va: usize) {
 
     print_memory_info();
 
-    vm::print_recursive_tables(RootPageTableType::Kernel);
-    vm::print_recursive_tables(RootPageTableType::User);
+    vmdebug::print_recursive_tables(RootPageTableType::Kernel);
+    vmdebug::print_recursive_tables(RootPageTableType::User);
 
     {
         let page_table = unsafe { &mut *ptr::addr_of_mut!(KERNEL_PAGETABLE) };
@@ -163,8 +164,8 @@ pub extern "C" fn main9(dtb_va: usize) {
         }
     }
 
-    vm::print_recursive_tables(RootPageTableType::Kernel);
-    vm::print_recursive_tables(RootPageTableType::User);
+    vmdebug::print_recursive_tables(RootPageTableType::Kernel);
+    vmdebug::print_recursive_tables(RootPageTableType::User);
 
     println!("Now try user space");
 
@@ -189,8 +190,8 @@ pub extern "C" fn main9(dtb_va: usize) {
         }
     }
 
-    vm::print_recursive_tables(RootPageTableType::Kernel);
-    vm::print_recursive_tables(RootPageTableType::User);
+    vmdebug::print_recursive_tables(RootPageTableType::Kernel);
+    vmdebug::print_recursive_tables(RootPageTableType::User);
 
     let _b = Box::new("ddododo");
 
