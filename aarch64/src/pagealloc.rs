@@ -94,10 +94,8 @@ pub fn allocate_virtpage(
     va: VaMapping,
     pgtype: RootPageTableType,
 ) -> Result<&'static mut VirtPage4K, PageAllocError> {
-    println!("pagealloc:allocate_virtpage:start");
     let page_pa = allocate_physpage()?;
     let range = PhysRange::with_pa_len(page_pa, PAGE_SIZE_4K);
-    println!("pagealloc:allocate_virtpage:try map");
     if let Ok(page_va) = page_table.map_phys_range(
         debug_name,
         &range,
