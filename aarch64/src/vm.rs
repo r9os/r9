@@ -283,6 +283,7 @@ fn recursive_table_addr(pgtype: RootPageTableType, va: usize, level: Level) -> u
 pub enum PageTableError {
     AllocationFailed(PageAllocError),
     EntryIsNotTable,
+    EntryAlreadyInUse,
     PhysRangeIsZero,
     PhysRangeIsNotOnPageBoundary,
 }
@@ -429,6 +430,11 @@ impl RootPageTable {
                 return Err(err);
             }
         };
+
+        if dest_entry.valid() {
+            println!("error:vm:map_to:entry already in use. va:{:#x}", va);
+            return Err(PageTableError::EntryAlreadyInUse);
+        }
 
         // Entries at level 3 should have the page flag set
         let entry =
