@@ -125,8 +125,6 @@ fn print_table_at_level(
     pte_indices: PteIndices,
 ) {
     let indent = 2 + level.depth() * 2;
-    println!("{:indent$}Table {:?} va:{:018p}", "", level, page_table);
-
     for i in 0..512 {
         let pte = page_table.entries[i];
         if !pte.valid() {
@@ -134,7 +132,7 @@ fn print_table_at_level(
         }
 
         if !pte.is_table(level) {
-            if let Some(pte_indices) = pte_indices.with_last_index(i) {
+            if let Some(pte_indices) = pte_indices.with_next_index(i) {
                 print_pte_page(indent, pte_indices, pte);
             }
         } else if i != 511 {
@@ -232,5 +230,8 @@ mod tests {
 
         let p = PteIndices::new(RootPageTableType::User, Some(0), Some(10), Some(40), Some(23));
         assert_eq!(va_indices(p.to_va()), (0, 10, 40, 23));
+
+        let va = 0x0000000000001000;
+        assert_eq!(va_indices(va), (0, 0, 0, 1));
     }
 }
