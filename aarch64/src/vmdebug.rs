@@ -44,20 +44,6 @@ impl PteIndices {
         }
     }
 
-    fn with_last_index(&self, i: usize) -> Option<Self> {
-        if self.l0.is_none() {
-            None
-        } else if self.l1.is_none() {
-            Some(Self { pgtype: self.pgtype, l0: Some(i), l1: None, l2: None, l3: None })
-        } else if self.l2.is_none() {
-            Some(Self { pgtype: self.pgtype, l0: self.l0, l1: Some(i), l2: None, l3: None })
-        } else if self.l3.is_none() {
-            Some(Self { pgtype: self.pgtype, l0: self.l0, l1: self.l1, l2: Some(i), l3: None })
-        } else {
-            Some(Self { pgtype: self.pgtype, l0: self.l0, l1: self.l1, l2: self.l2, l3: Some(i) })
-        }
-    }
-
     fn last_index(&self) -> Option<usize> {
         if let Some(i) = self.l3 {
             Some(i)
@@ -211,19 +197,6 @@ mod tests {
 
         let p = p.with_next_index(4).unwrap();
         assert_eq!(p, PteIndices::new(RootPageTableType::User, Some(1), Some(2), Some(3), Some(4)));
-
-        let p = PteIndices::new(RootPageTableType::Kernel, Some(1), Some(2), None, None);
-        let p = p.with_last_index(33).unwrap();
-        assert_eq!(p, PteIndices::new(RootPageTableType::Kernel, Some(1), Some(33), None, None));
-        assert_eq!(p.last_index(), Some(33));
-
-        let p = PteIndices::new(RootPageTableType::Kernel, Some(1), Some(2), Some(3), Some(4));
-        let p = p.with_last_index(100).unwrap();
-        assert_eq!(
-            p,
-            PteIndices::new(RootPageTableType::Kernel, Some(1), Some(2), Some(3), Some(100))
-        );
-        assert_eq!(p.last_index(), Some(100));
 
         let p = PteIndices::new(RootPageTableType::Kernel, Some(15), Some(0), Some(400), Some(4));
         assert_eq!(va_indices(p.to_va()), (15, 0, 400, 4));
