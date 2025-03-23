@@ -1,3 +1,9 @@
+INTERRUPTSTACKSZ = 4096
+
+.bss
+.balign	4096
+interruptstack:	.space INTERRUPTSTACKSZ
+
 .section .text
 
 .equ	SYNC_INVALID_EL1t,	0
@@ -35,6 +41,11 @@
 // - ELR_EL1 (Exception link register EL1)
 // - FAR_EL1 (Fault address register EL1)
 .macro handle_interrupt type
+	// Switch to the interrupt stack
+	ldr	x0, =interruptstack
+	add	x0, x0, #INTERRUPTSTACKSZ
+	mov	sp, x0
+
 	sub 	sp, sp, #288
 
 	// Caller-saved registers, FP

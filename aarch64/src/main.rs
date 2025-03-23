@@ -15,6 +15,7 @@ mod mailbox;
 mod pagealloc;
 mod param;
 mod registers;
+mod swtch;
 mod trap;
 mod uartmini;
 mod uartpl011;
@@ -25,7 +26,7 @@ extern crate alloc;
 
 use crate::kmem::from_virt_to_physaddr;
 use alloc::boxed::Box;
-use core::ptr;
+use core::ptr::{self, null_mut};
 use kmem::{boottext_range, bss_range, data_range, rodata_range, text_range, total_kernel_range};
 use param::KZERO;
 use port::fdt::DeviceTree;
@@ -167,28 +168,9 @@ pub extern "C" fn main9(dtb_va: usize) {
     vmdebug::print_recursive_tables(RootPageTableType::Kernel);
     vmdebug::print_recursive_tables(RootPageTableType::User);
 
-    println!("Now try user space");
+    println!("Set up a user process");
 
-    {
-        let page_table = unsafe { &mut *ptr::addr_of_mut!(USER_PAGETABLE) };
-        let entry = Entry::rw_user_text();
-        for i in 0..100 {
-            let alloc_result = pagealloc::allocate_virtpage(
-                page_table,
-                "testuser",
-                entry,
-                VaMapping::Addr((i + 1) * 4096),
-                RootPageTableType::User,
-            );
-            match alloc_result {
-                Ok(_allocated_page) => {}
-                Err(err) => {
-                    println!("Error allocating page in user space ({i}): {:?}", err);
-                    break;
-                }
-            }
-        }
-    }
+    test_sysexit();
 
     vmdebug::print_recursive_tables(RootPageTableType::Kernel);
     vmdebug::print_recursive_tables(RootPageTableType::User);
@@ -202,3 +184,62 @@ pub extern "C" fn main9(dtb_va: usize) {
 }
 
 mod runtime;
+
+fn test_sysexit() {
+    let page_table = unsafe { &mut *ptr::addr_of_mut!(USER_PAGETABLE) };
+
+    // Allocate pages for a user process
+    let user_text = {
+        let user_text = pagealloc::allocate_virtpage(
+            page_table,
+            "usertext",
+            Entry::rw_user_text(),
+            VaMapping::Addr(0x1000),
+            RootPageTableType::User,
+        )
+        .expect("couldn't allocate user_text");
+
+        // Machine code and assembly to call syscall exit
+        //   00 00 80 D2    ; mov x0, #0
+        //   21 00 80 D2    ; mov x1, #1
+        //   61 00 00 D4    ; svc #3
+        let proc_text_bytes: [u8; 12] =
+            [0x00, 0x00, 0x80, 0xd2, 0x21, 0x00, 0x80, 0xd2, 0x61, 0x00, 0x00, 0xd4];
+        user_text.0[..proc_text_bytes.len()].copy_from_slice(&proc_text_bytes);
+        user_text
+    };
+    let user_text_va = user_text as *const _ as u64;
+
+    let user_stack = pagealloc::allocate_virtpage(
+        page_table,
+        "userstack",
+        Entry::rw_user_data(),
+        VaMapping::Addr(KZERO - 0x1000),
+        RootPageTableType::User,
+    )
+    .expect("couldn't allocate user_stack");
+
+    // Executing user process!
+    println!("Executing user process");
+    let proc_stack = unsafe { core::slice::from_raw_parts_mut(user_stack, 4096) };
+
+    // Initialise a Context struct on the process stack, at the end of the proc_stack_buffer.
+    let ps_addr = &proc_stack as *const _ as u64;
+    let proc_stack_initial_ctx = ps_addr + (4096 - size_of::<swtch::Context>()) as u64;
+    let proc_context_ptr: *mut swtch::Context = proc_stack_initial_ctx as *mut swtch::Context;
+
+    // Need to push a context object onto the stack, with x30 populated at the
+    // address of proc_textbuf
+    let proc_context_ref: &mut swtch::Context = unsafe { &mut *proc_context_ptr };
+    proc_context_ref.set_stack_pointer(&proc_context_ptr as *const _ as u64);
+    proc_context_ref.set_return(user_text_va);
+
+    let mut kernel_context: *mut swtch::Context = null_mut();
+    let kernel_context_ptr: *mut *mut swtch::Context = &mut kernel_context;
+
+    //println!("proc ctx: {:#?}", proc_context_ref);
+
+    unsafe { swtch::swtch(kernel_context_ptr, &*proc_context_ptr) };
+
+    //println!("x30: {:#016x}", proc_context_ref.x30);
+}

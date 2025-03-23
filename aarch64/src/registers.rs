@@ -1,11 +1,11 @@
 #![allow(non_upper_case_globals)]
 
-use aarch64_cpu::registers::Readable;
 use aarch64_cpu::registers::MIDR_EL1;
+use aarch64_cpu::registers::Readable;
 use bitstruct::bitstruct;
 use core::fmt;
 use num_enum::TryFromPrimitive;
-use port::mem::{PhysRange, PAGE_SIZE_2M};
+use port::mem::{PAGE_SIZE_2M, PhysRange};
 
 // GPIO registers
 pub const GPFSEL1: usize = 0x04; // GPIO function select register 1
@@ -102,10 +102,10 @@ pub fn rpi_mmio() -> Option<PhysRange> {
 bitstruct! {
     #[derive(Copy, Clone)]
     pub struct EsrEl1(pub u64) {
-        iss: u32 = 0..25;
-        il: bool = 25;
-        ec: u8 = 26..32;
-        iss2: u8 = 32..37;
+        pub iss: u32 = 0..25;
+        pub il: bool = 25;
+        pub ec: u8 = 26..32;
+        pub iss2: u8 = 32..37;
     }
 }
 
