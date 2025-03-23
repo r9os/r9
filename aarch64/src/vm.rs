@@ -56,7 +56,7 @@ impl PhysPage4K {
 
 #[repr(C, align(4096))]
 #[derive(Clone, Copy)]
-pub struct VirtPage4K([u8; PAGE_SIZE_4K]);
+pub struct VirtPage4K(pub [u8; PAGE_SIZE_4K]);
 
 impl VirtPage4K {}
 
@@ -164,8 +164,19 @@ impl Entry {
             .with_access_permission(AccessPermission::AllRw)
             .with_shareable(Shareable::Inner)
             .with_accessed(true)
+            .with_uxn(false)
+            .with_pxn(true)
+            .with_mair_index(Mair::Normal)
+            .with_valid(true)
+    }
+
+    pub fn rw_user_data() -> Self {
+        Entry(0)
+            .with_access_permission(AccessPermission::AllRw)
+            .with_shareable(Shareable::Inner)
+            .with_accessed(true)
             .with_uxn(true)
-            .with_pxn(false)
+            .with_pxn(true)
             .with_mair_index(Mair::Normal)
             .with_valid(true)
     }

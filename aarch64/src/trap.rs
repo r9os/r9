@@ -18,8 +18,8 @@ pub fn init() {
 }
 
 /// Register frame at time interrupt was taken
-#[derive(Copy, Clone, Debug)]
-#[repr(C)]
+#[derive(Debug)]
+#[repr(C, align(16))]
 pub struct TrapFrame {
     x0: u64,
     x1: u64,
@@ -60,13 +60,18 @@ pub struct TrapFrame {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn trap_unsafe(frame: *mut TrapFrame) {
-    unsafe { trap(&mut *frame) }
+    unsafe { trap(frame.as_mut().unwrap()) }
 }
 
 fn trap(frame: &mut TrapFrame) {
-    // Just print out the frame and loop for now
-    // TODO Make it a little prettier and more space efficient
-    println!("{:#x?}", frame);
+    if frame.esr_el1.ec() == 0x15 {
+        // Handle syscall
+        let syscallid = frame.esr_el1.iss();
+        println!("Syscall {syscallid}");
+    } else {
+        println!("Unrecognised interrupt");
+    }
+
     loop {
         core::hint::spin_loop();
     }
