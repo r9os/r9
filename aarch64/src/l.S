@@ -27,14 +27,14 @@ CPACR_EL1_FPEN			= (1<<21) | (1<<20)	// Don't trap FPU instr at EL1,0
 
 TCR_EL1_IPS			= (4 << 32)		// 48bit physical addresses
 TCR_EL1_TG1			= (2 << 30)		// TTBR1_EL1 4KiB granule
-TCR_EL1_SH1			= (3 << 28)		// 
-TCR_EL1_ORGN1			= (1 << 26)		// 
-TCR_EL1_IRGN1			= (1 << 24)		// 
+TCR_EL1_SH1			= (3 << 28)		//
+TCR_EL1_ORGN1			= (1 << 26)		//
+TCR_EL1_IRGN1			= (1 << 24)		//
 TCR_EL1_T1SZ			= (16 << 16)		// 2^(64-N) size offset of region addressed by TTBR1_EL1: 2^(64-N)
 TCR_EL1_TG0			= (0 << 14)		// TTBR0_EL1 4KiB granule
-TCR_EL1_SH0			= (3 << 12)		// 
-TCR_EL1_ORGN0			= (1 << 10)		// 
-TCR_EL1_IRGN0			= (1 << 8)		// 
+TCR_EL1_SH0			= (3 << 12)		//
+TCR_EL1_ORGN0			= (1 << 10)		//
+TCR_EL1_IRGN0			= (1 << 8)		//
 TCR_EL1_T0SZ			= (16 << 0)		// 2^(64-N) size offset of region addressed by TTBR0_EL1: 2^(64-N)
 TCR_EL1				= (TCR_EL1_IPS|TCR_EL1_TG1|TCR_EL1_SH1|TCR_EL1_ORGN1|TCR_EL1_IRGN1|TCR_EL1_T1SZ|TCR_EL1_TG0|TCR_EL1_SH0|TCR_EL1_ORGN0|TCR_EL1_IRGN0|TCR_EL1_T0SZ)
 
@@ -232,7 +232,7 @@ start:
 	adr	x0, el2
 	msr	elr_el3, x0
 	eret
-	
+
 el2:	// Now in EL2, so prepare jump to EL1
 	// Enable AArch64 in EL1
 	ldr	x0, =HCR_EL2_RW
@@ -357,7 +357,7 @@ el1:	// In EL1
 	add	x0, x1, x26
 	ldr	w1, =GPPUD_ENABLE_14_15
 	str	w1, [x0]
-	
+
 	spin	x3, #150
 
 	// Write 0 to GPPUDCLK0
@@ -502,14 +502,14 @@ el1:	// In EL1
 	//  [47-39] Index into L4 table, used to get address of the L3 table
 	//  [38-30] Index into L3 table, used to get address of the L2 table
 	//  [29-21] Index into L2 table, used to get address of the L1 table
-	//  [20-12] Index into L1 table, used to get address of physical page 
+	//  [20-12] Index into L1 table, used to get address of physical page
 	//  [11-0]  Offset into physical page corresponding to virtual address
 	// L4-L1 simply refers to the page table with L1 always being the last
 	// to be translated, giving the address of the physical page.
 	// With a 4KiB granule, each index is 9 bits, so there are 512 (2^9)
 	// entries in each table.  In this example the physical page would
 	// also be 4KiB.
-	
+
 	// If we reduce the number of page tables from 4 to 3 (L3 to L1),
 	// we have 21 bits [20-0] for the physical page offset, giving 2MiB
 	// pages.  If we reduce to 2 tables, we have 30 bits [29-0], giving
@@ -518,7 +518,7 @@ el1:	// In EL1
 	// If we use 16KiB granules, the virtual address is split as follows:
 	//  [46-36] Index into L3 table, used to get address of the L2 table
 	//  [35-25] Index into L2 table, used to get address of the L1 table
-	//  [24-14] Index into L1 table, used to get address of physical page 
+	//  [24-14] Index into L1 table, used to get address of physical page
 	//  [13-0]  Offset into physical page corresponding to virtual address
 	// The 14 bits in the offset results in 16KiB pages.  Each table is
 	// 16KiB, consisting of 2048 entries, so requiring 11 bits per index.
