@@ -88,6 +88,17 @@ fn print_board_info() {
     println!("  Firmware Rev:\t{fw_revision:#010x}");
 }
 
+fn print_stacks() {
+    unsafe extern "C" {
+        static interruptstackbase: [u64; 0];
+        static interruptstacksz: [u64; 0];
+    }
+
+    let interrupt_stack_base = unsafe { interruptstackbase.as_ptr().addr() };
+    let interrupt_stack_max = interrupt_stack_base + unsafe { interruptstacksz.as_ptr().addr() };
+    println!("Interrupt stack: {:018x}..{:018x}", interrupt_stack_base, interrupt_stack_max);
+}
+
 /// dtb_va is the virtual address of the DTB structure.  The physical address is
 /// assumed to be dtb_va-KZERO.
 #[unsafe(no_mangle)]
@@ -105,6 +116,8 @@ pub extern "C" fn main9(dtb_va: usize) {
     println!("r9 from the Internet");
     println!("DTB found at: {:#x}", dtb_va);
     println!("midr_el1: {:?}", registers::MidrEl1::read());
+
+    print_stacks();
 
     print_binary_sections();
 

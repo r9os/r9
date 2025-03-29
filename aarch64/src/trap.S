@@ -1,8 +1,16 @@
-INTERRUPTSTACKSZ = 4096
+// Space reserved for interrupt stack:
+//    interruptstackbase to interruptstackbase+INTERRUPTSTACKSZ.
+// Stack base address (bottom):
+//    interruptstackbase+INTERRUPTSTACKSZ
+// Stack pointer will reduce in value as data is pushed to the stack.
+INTERRUPTSTACKSZ = 4096*16
 
 .bss
 .balign	4096
-interruptstack:	.space INTERRUPTSTACKSZ
+.globl	interruptstackbase
+interruptstackbase:	.space INTERRUPTSTACKSZ
+.globl	interruptstacksz
+.equ	interruptstacksz,	INTERRUPTSTACKSZ
 
 .section .text
 
@@ -42,7 +50,7 @@ interruptstack:	.space INTERRUPTSTACKSZ
 // - FAR_EL1 (Fault address register EL1)
 .macro handle_interrupt type
 	// Switch to the interrupt stack
-	ldr	x0, =interruptstack
+	ldr	x0, =interruptstackbase
 	add	x0, x0, #INTERRUPTSTACKSZ
 	mov	sp, x0
 
