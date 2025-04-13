@@ -57,14 +57,6 @@ fn print_binary_sections() {
     }
 }
 
-fn print_physical_memory_info() {
-    println!("Physical memory map:");
-    let arm_mem = mailbox::get_arm_memory();
-    println!("  Memory:\t{arm_mem} ({:#x})", arm_mem.size());
-    let vc_mem = mailbox::get_vc_memory();
-    println!("  Video:\t{vc_mem} ({:#x})", vc_mem.size());
-}
-
 fn print_memory_info() {
     println!("Memory usage:");
     let (used, total) = pagealloc::usage_bytes();
@@ -118,7 +110,6 @@ pub extern "C" fn main9(dtb_va: usize) {
     println!("midr_el1: {:?}", registers::MidrEl1::read());
 
     print_binary_sections();
-    print_physical_memory_info();
     print_board_info();
 
     pagealloc::init_page_allocator();
@@ -126,11 +117,7 @@ pub extern "C" fn main9(dtb_va: usize) {
     // Map address space accurately using rust VM code to manage page tables
     unsafe {
         let dtb_range = PhysRange::with_len(from_virt_to_physaddr(dtb_va).addr(), dt.size());
-        vm::init_kernel_page_tables(
-            &mut *ptr::addr_of_mut!(KERNEL_PAGETABLE),
-            dtb_range,
-            mailbox::get_arm_memory(),
-        );
+        vm::init_kernel_page_tables(&dt, &mut *ptr::addr_of_mut!(KERNEL_PAGETABLE), dtb_range);
         vm::switch(&*ptr::addr_of!(KERNEL_PAGETABLE), RootPageTableType::Kernel);
 
         vm::init_user_page_tables(&mut *ptr::addr_of_mut!(USER_PAGETABLE));

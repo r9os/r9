@@ -39,6 +39,12 @@ impl From<&RegBlock> for VirtRange {
     }
 }
 
+impl fmt::Display for VirtRange {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:#018x}..{:#018x}", self.0.start, self.0.end)
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, PartialOrd, Eq, Ord)]
 #[repr(transparent)]
 pub struct PhysAddr(pub u64);
@@ -154,7 +160,7 @@ impl PhysRange {
 
 impl fmt::Display for PhysRange {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:#016x}..{:#016x}", self.0.start.addr(), self.0.end.addr())
+        write!(f, "{:#018x}..{:#018x}", self.0.start.addr(), self.0.end.addr())
     }
 }
 

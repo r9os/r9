@@ -194,6 +194,7 @@ pub struct MemoryInfo {
     pub end: u32,
 }
 
+#[allow(dead_code)]
 pub fn get_arm_memory() -> PhysRange {
     let tags = Tag::<EmptyRequest> {
         tag_id0: TagId::GetArmMemory,
@@ -210,6 +211,7 @@ pub fn get_arm_memory() -> PhysRange {
     PhysRange::new(PhysAddr::new(start as u64), PhysAddr::new(end as u64))
 }
 
+#[allow(dead_code)]
 pub fn get_vc_memory() -> PhysRange {
     let tags = Tag::<EmptyRequest> {
         tag_id0: TagId::GetVcMemory,
