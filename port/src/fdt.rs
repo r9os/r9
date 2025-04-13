@@ -104,15 +104,19 @@ impl<'a> DeviceTree<'a> {
         self.node_from_index(0, 0)
     }
 
-    pub fn children(&self, parent: &Node) -> impl Iterator<Item = Node> + '_ {
+    pub fn children<'b>(&'b self, parent: &'b Node) -> impl Iterator<Item = Node> + 'b {
         // Start searching linearly after node.start (which points to the start of the parent)
         let mut i = parent.next_token_start;
         let child_depth = parent.depth + 1;
 
         core::iter::from_fn(move || {
             let child = self.node_from_index(i, child_depth)?;
-            i = child.start + child.total_len;
-            Some(child)
+            if parent.encloses(&child) {
+                i = child.start + child.total_len;
+                Some(child)
+            } else {
+                None
+            }
         })
     }
 
@@ -389,6 +393,16 @@ impl<'a> DeviceTree<'a> {
         self.nodes().filter(|n| {
             if let Some(comp_prop) = self.property(n, "compatible") {
                 return self.property_value_contains(&comp_prop, comp);
+            }
+            false
+        })
+    }
+
+    /// Return iterator of nodes matching the device_type string 'device_type'
+    pub fn find_device_type(&'a self, device_type: &'a str) -> impl Iterator<Item = Node> + 'a {
+        self.nodes().filter(|n| {
+            if let Some(prop) = self.property(n, "device_type") {
+                return self.property_value_contains(&prop, device_type);
             }
             false
         })

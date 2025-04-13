@@ -75,18 +75,14 @@ fn find_compatible() {
     );
 
     // Doesn't find substrings
-    assert!(dt
-        .find_compatible("arm")
-        .flat_map(|n| dt.node_name(&n))
-        .collect::<Vec<&str>>()
-        .is_empty());
+    assert!(
+        dt.find_compatible("arm").flat_map(|n| dt.node_name(&n)).collect::<Vec<&str>>().is_empty()
+    );
 
     // No match
-    assert!(dt
-        .find_compatible("xxxx")
-        .flat_map(|n| dt.node_name(&n))
-        .collect::<Vec<&str>>()
-        .is_empty());
+    assert!(
+        dt.find_compatible("xxxx").flat_map(|n| dt.node_name(&n)).collect::<Vec<&str>>().is_empty()
+    );
 }
 
 #[test]
@@ -112,6 +108,28 @@ fn get_cells() {
         dt.property(&node, "#size-cells").and_then(|p| dt.property_value_as_u32(&p)),
         Some(0)
     );
+}
+
+#[test]
+fn iterate_over_children() {
+    let dt = DeviceTree::new(TEST1_DTB).unwrap();
+
+    let children = dt
+        .find_by_path("/thermal-zones")
+        .iter()
+        .flat_map(|resmem| dt.children(resmem))
+        .flat_map(|n| dt.node_name(&n))
+        .collect::<Vec<&str>>();
+
+    assert_eq!(children, vec!["cpu-thermal"]);
+}
+
+#[test]
+fn iterate_over_device_types() {
+    let dt = DeviceTree::new(TEST1_DTB).unwrap();
+
+    let cpus = dt.find_device_type("cpu").flat_map(|n| dt.node_name(&n)).collect::<Vec<&str>>();
+    assert_eq!(cpus, vec!["cpu@0", "cpu@1", "cpu@2", "cpu@3"]);
 }
 
 #[test]

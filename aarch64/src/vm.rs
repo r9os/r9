@@ -17,6 +17,7 @@ use core::fmt;
 use core::ptr::write_volatile;
 use num_enum::{FromPrimitive, IntoPrimitive};
 use port::{
+    fdt::DeviceTree,
     mem::{PAGE_SIZE_1G, PAGE_SIZE_2M, PAGE_SIZE_4K, PhysAddr, PhysRange},
     pagealloc::PageAllocError,
 };
@@ -509,9 +510,9 @@ pub fn root_page_table(pgtype: RootPageTableType) -> &'static mut RootPageTable 
 }
 
 pub unsafe fn init_kernel_page_tables(
+    dt: &DeviceTree,
     new_kernel_root_page_table: &mut RootPageTable,
     dtb_range: PhysRange,
-    available_mem: PhysRange,
 ) {
     // We use recursive page tables, but we have to be careful in the init call,
     // since the kpage_table is not currently pointed to by ttbr1_el1.  Any
@@ -519,6 +520,17 @@ pub unsafe fn init_kernel_page_tables(
     // physical address of the root page table, which isn't what we want here
     // because kpage_table hasn't been switched to yet.
     unsafe { init_empty_root_page_table(new_kernel_root_page_table) };
+
+    // We only use the first memory range for now.
+    // TODO Handle multiple memory ranges
+    let available_mem = dt
+        .find_device_type("memory")
+        .flat_map(|memory| dt.property_translated_reg_iter(memory).flat_map(|r| r.regblock()))
+        .map(|memory| PhysRange::from(&memory))
+        .next()
+        .expect("No memory range found in device tree");
+    println!("Physical Memory:");
+    println!("  {}", &available_mem);
 
     // TODO leave the first page unmapped to catch null pointer dereferences in unsafe code
     let custom_map = {
