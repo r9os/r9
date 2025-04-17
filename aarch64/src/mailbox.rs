@@ -1,7 +1,7 @@
 use crate::io::{read_reg, write_reg};
 use crate::param::KZERO;
-use core::cell::SyncUnsafeCell;
-use core::mem::MaybeUninit;
+use core::cell::RefCell;
+use core::ops::DerefMut;
 use port::fdt::DeviceTree;
 use port::mcslock::{Lock, LockNode};
 use port::mem::{PhysAddr, PhysRange, VirtRange};
@@ -13,7 +13,7 @@ const MBOX_WRITE: usize = 0x20;
 const MBOX_FULL: u32 = 0x8000_0000;
 const MBOX_EMPTY: u32 = 0x4000_0000;
 
-static MAILBOX: Lock<Option<&'static mut Mailbox>> = Lock::new("mailbox", None);
+static MAILBOX: Lock<RefCell<Option<Mailbox>>> = Lock::new("mailbox", RefCell::new(None));
 
 /// Mailbox init.  Mainly initialises a lock to ensure only one mailbox request
 /// can be made at a time.  We have no heap at this point, so creating a mailbox
@@ -21,15 +21,7 @@ static MAILBOX: Lock<Option<&'static mut Mailbox>> = Lock::new("mailbox", None);
 pub fn init(dt: &DeviceTree) {
     let node = LockNode::new();
     let mut mailbox = MAILBOX.lock(&node);
-    *mailbox = Some({
-        static MAYBE_MAILBOX: SyncUnsafeCell<MaybeUninit<Mailbox>> =
-            SyncUnsafeCell::new(MaybeUninit::uninit());
-        unsafe {
-            let maybe_mailbox = &mut *MAYBE_MAILBOX.get();
-            maybe_mailbox.write(Mailbox::new(dt, KZERO));
-            maybe_mailbox.assume_init_mut()
-        }
-    });
+    *mailbox = RefCell::new(Some(Mailbox::new(dt, KZERO)));
 }
 
 /// https://developer.arm.com/documentation/ddi0306/b/CHDGHAIG
@@ -127,10 +119,17 @@ where
     let req = Request::<Tag<T>> { size, code, tags: *tags };
     let mut msg = MessageWithTags { request: req };
     let node = LockNode::new();
-    let mut mailbox = MAILBOX.lock(&node);
-    mailbox.as_deref_mut().unwrap().request(&mut msg);
-    let res = unsafe { msg.response };
-    res.tags.body
+    MAILBOX
+        .lock(&node)
+        .deref_mut()
+        .borrow_mut()
+        .as_mut()
+        .map(|mb| {
+            mb.request(&mut msg);
+            let res = unsafe { msg.response };
+            res.tags.body
+        })
+        .expect("mailbox not initialised")
 }
 
 // https://github.com/raspberrypi/firmware/wiki/Mailbox-property-interface#tags-arm-to-vc
