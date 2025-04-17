@@ -1,6 +1,5 @@
 use crate::io::{read_reg, write_reg};
 use crate::param::KZERO;
-use core::cell::RefCell;
 use core::ops::DerefMut;
 use port::fdt::DeviceTree;
 use port::mcslock::{Lock, LockNode};
@@ -13,7 +12,7 @@ const MBOX_WRITE: usize = 0x20;
 const MBOX_FULL: u32 = 0x8000_0000;
 const MBOX_EMPTY: u32 = 0x4000_0000;
 
-static MAILBOX: Lock<RefCell<Option<Mailbox>>> = Lock::new("mailbox", RefCell::new(None));
+static MAILBOX: Lock<Option<Mailbox>> = Lock::new("mailbox", None);
 
 /// Mailbox init.  Mainly initialises a lock to ensure only one mailbox request
 /// can be made at a time.  We have no heap at this point, so creating a mailbox
@@ -21,7 +20,7 @@ static MAILBOX: Lock<RefCell<Option<Mailbox>>> = Lock::new("mailbox", RefCell::n
 pub fn init(dt: &DeviceTree) {
     let node = LockNode::new();
     let mut mailbox = MAILBOX.lock(&node);
-    *mailbox = RefCell::new(Some(Mailbox::new(dt, KZERO)));
+    *mailbox = Some(Mailbox::new(dt, KZERO));
 }
 
 /// https://developer.arm.com/documentation/ddi0306/b/CHDGHAIG
@@ -122,7 +121,6 @@ where
     MAILBOX
         .lock(&node)
         .deref_mut()
-        .borrow_mut()
         .as_mut()
         .map(|mb| {
             mb.request(&mut msg);
