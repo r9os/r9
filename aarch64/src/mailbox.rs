@@ -1,6 +1,5 @@
 use crate::io::{read_reg, write_reg};
 use crate::param::KZERO;
-use core::ops::DerefMut;
 use port::fdt::DeviceTree;
 use port::mcslock::{Lock, LockNode};
 use port::mem::{PhysAddr, PhysRange, VirtRange};
@@ -120,12 +119,10 @@ where
     let node = LockNode::new();
     MAILBOX
         .lock(&node)
-        .deref_mut()
         .as_mut()
         .map(|mb| {
             mb.request(&mut msg);
-            let res = unsafe { msg.response };
-            res.tags.body
+            unsafe { msg.response.tags.body }
         })
         .expect("mailbox not initialised")
 }
