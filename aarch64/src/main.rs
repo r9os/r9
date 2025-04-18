@@ -101,7 +101,6 @@ pub extern "C" fn main9(dtb_va: usize) {
     let dt = unsafe { DeviceTree::from_usize(dtb_va).unwrap() };
 
     // Set up uart so we can log as early as possible
-    mailbox::init(&dt);
     devcons::init(&dt);
 
     println!();
@@ -110,7 +109,6 @@ pub extern "C" fn main9(dtb_va: usize) {
     println!("midr_el1: {:?}", registers::MidrEl1::read());
 
     print_binary_sections();
-    print_board_info();
 
     pagealloc::init_page_allocator();
 
@@ -126,6 +124,8 @@ pub extern "C" fn main9(dtb_va: usize) {
 
     // From this point we can use the global allocator
 
+    mailbox::init(&dt);
+    print_board_info();
     print_memory_info();
 
     vmdebug::print_recursive_tables(RootPageTableType::Kernel);
