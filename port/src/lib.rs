@@ -4,7 +4,6 @@
 #![feature(allocator_api)]
 #![feature(maybe_uninit_slice)]
 #![feature(step_trait)]
-#![feature(unsigned_is_multiple_of)]
 #![forbid(unsafe_op_in_unsafe_fn)]
 
 extern crate alloc;
@@ -14,6 +13,9 @@ pub mod bitmapalloc;
 pub mod dat;
 pub mod devcons;
 pub mod fdt;
+pub mod maths;
 pub mod mcslock;
 pub mod mem;
 pub mod pagealloc;
+
+pub type Result<T> = core::result::Result<T, &'static str>;

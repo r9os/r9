@@ -6,7 +6,8 @@ use core::cell::SyncUnsafeCell;
 use core::mem::MaybeUninit;
 use port::devcons::Console;
 use port::fdt::DeviceTree;
-
+#[cfg(not(test))]
+use port::println;
 // The aarch64 devcons implementation is focussed on Raspberry Pi 3, 4 for now.
 
 // Useful links
@@ -27,22 +28,32 @@ use port::fdt::DeviceTree;
 // - UART2 PL011 (rpi4)
 // - UART3 PL011 (rpi4)
 
-// TODO
-// - Detect board type and set MMIO base address accordingly
-//     https://wiki.osdev.org/Detecting_Raspberry_Pi_Board
-// - Break out mailbox, gpio code
+pub fn init(dt: &DeviceTree, is_early_init: bool) {
+    Console::set_uart(|| {
+        let uart = if is_early_init {
+            MiniUart::new_assuming_mapped_mmio(dt, KZERO)
+        } else {
+            MiniUart::new_with_map_ranges(dt)
+        };
 
-pub fn init(dt: &DeviceTree) {
-    Console::new(|| {
-        let uart = MiniUart::new(dt, KZERO);
-        uart.init();
+        // Return a statically initialised MiniUart.  If that couldn't be done for some reason,
+        // return None and hope that things work out regardless
+        match uart {
+            Ok(uart) => {
+                uart.init();
 
-        static UART: SyncUnsafeCell<MaybeUninit<MiniUart>> =
-            SyncUnsafeCell::new(MaybeUninit::uninit());
-        unsafe {
-            let cons = &mut *UART.get();
-            cons.write(uart);
-            cons.assume_init_mut()
+                static UART: SyncUnsafeCell<MaybeUninit<MiniUart>> =
+                    SyncUnsafeCell::new(MaybeUninit::uninit());
+                unsafe {
+                    let cons = &mut *UART.get();
+                    cons.write(uart);
+                    Ok(cons.assume_init_mut())
+                }
+            }
+            Err(msg) => {
+                println!("can't initialise uart: {:?}", msg);
+                Err("can't initialise uart")
+            }
         }
     });
 }

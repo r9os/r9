@@ -5,7 +5,6 @@ use aarch64_cpu::registers::Readable;
 use bitstruct::bitstruct;
 use core::fmt;
 use num_enum::TryFromPrimitive;
-use port::mem::{PAGE_SIZE_2M, PhysRange};
 
 // GPIO registers
 pub const GPFSEL1: usize = 0x04; // GPIO function select register 1
@@ -80,23 +79,6 @@ pub enum PartNum {
     RaspberryPi2 = 0xc07,
     RaspberryPi3 = 0xd03,
     RaspberryPi4 = 0xd08,
-}
-
-impl PartNum {
-    /// Return the physical MMIO base range for the Raspberry Pi MMIO
-    pub fn mmio(&self) -> Option<PhysRange> {
-        let len = 2 * PAGE_SIZE_2M;
-        match self {
-            Self::RaspberryPi1 => Some(PhysRange::with_len(0x20000000, len)),
-            Self::RaspberryPi2 | Self::RaspberryPi3 => Some(PhysRange::with_len(0x3f000000, len)),
-            Self::RaspberryPi4 => Some(PhysRange::with_len(0xfe000000, len)),
-            Self::Unknown => None,
-        }
-    }
-}
-
-pub fn rpi_mmio() -> Option<PhysRange> {
-    MidrEl1::read().partnum_enum().ok().and_then(|p| p.mmio())
 }
 
 bitstruct! {

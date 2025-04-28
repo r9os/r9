@@ -1,8 +1,13 @@
+use crate::deviceutil::map_device_register;
 use crate::io::{read_reg, write_reg};
-use crate::param::KZERO;
+use crate::vm;
+use port::Result;
 use port::fdt::DeviceTree;
 use port::mcslock::{Lock, LockNode};
 use port::mem::{PhysAddr, PhysRange, VirtRange};
+
+#[cfg(not(test))]
+use port::println;
 
 const MBOX_READ: usize = 0x00;
 const MBOX_STATUS: usize = 0x18;
@@ -14,32 +19,46 @@ const MBOX_EMPTY: u32 = 0x4000_0000;
 static MAILBOX: Lock<Option<Mailbox>> = Lock::new("mailbox", None);
 
 /// Mailbox init.  Mainly initialises a lock to ensure only one mailbox request
-/// can be made at a time.  We have no heap at this point, so creating a mailbox
-/// that can be initialised based off the devicetree is rather convoluted.
+/// can be made at a time.
 pub fn init(dt: &DeviceTree) {
-    let node = LockNode::new();
-    let mut mailbox = MAILBOX.lock(&node);
-    *mailbox = Some(Mailbox::new(dt, KZERO));
+    match Mailbox::new(dt) {
+        Ok(mbox) => {
+            let node = LockNode::new();
+            let mut mailbox = MAILBOX.lock(&node);
+            *mailbox = Some(mbox);
+        }
+        Err(msg) => {
+            println!("can't initialise mailbox: {:?}", msg);
+        }
+    }
 }
 
 /// https://developer.arm.com/documentation/ddi0306/b/CHDGHAIG
 /// https://github.com/raspberrypi/firmware/wiki/Mailbox-property-interface
 struct Mailbox {
-    pub mbox_range: VirtRange,
+    pub mbox_virtrange: VirtRange,
 }
 
 impl Mailbox {
-    fn new(dt: &DeviceTree, mmio_virt_offset: usize) -> Mailbox {
-        Mailbox {
-            mbox_range: VirtRange::from(
-                &dt.find_compatible("brcm,bcm2835-mbox")
-                    .next()
-                    .and_then(|uart| dt.property_translated_reg_iter(uart).next())
-                    .and_then(|reg| reg.regblock())
-                    .unwrap()
-                    .with_offset(mmio_virt_offset as u64),
-            ),
+    fn new(dt: &DeviceTree) -> Result<Self> {
+        let mbox_physrange = Self::find_mbox_physrange(dt)?;
+        match map_device_register("mailbox", mbox_physrange, vm::PageSize::Page4K) {
+            Ok(mbox_virtrange) => Ok(Mailbox { mbox_virtrange }),
+            Err(msg) => {
+                println!("can't map mailbox {:?}", msg);
+                Err("can't create mailbox")
+            }
         }
+    }
+
+    /// Get the physical range required for this device
+    fn find_mbox_physrange(dt: &DeviceTree) -> Result<PhysRange> {
+        dt.find_compatible("brcm,bcm2835-mbox")
+            .next()
+            .and_then(|uart| dt.property_translated_reg_iter(uart).next())
+            .and_then(|reg| reg.regblock())
+            .map(|reg| PhysRange::from(&reg))
+            .ok_or("can't find mbox")
     }
 
     fn request<T, U>(&self, req: &mut Message<T, U>)
@@ -48,19 +67,19 @@ impl Mailbox {
         U: Copy,
     {
         // Read status register until full flag not set
-        while (read_reg(&self.mbox_range, MBOX_STATUS) & MBOX_FULL) != 0 {}
+        while (read_reg(&self.mbox_virtrange, MBOX_STATUS) & MBOX_FULL) != 0 {}
 
         // Write the request address combined with the channel to the write register
         let channel = ChannelId::ArmToVc as u32;
         let uart_mbox_u32 = req as *const _ as u32;
         let r = (uart_mbox_u32 & !0xF) | channel;
-        write_reg(&self.mbox_range, MBOX_WRITE, r);
+        write_reg(&self.mbox_virtrange, MBOX_WRITE, r);
 
         // Wait for response
         // FIXME: two infinite loops - can go awry
         loop {
-            while (read_reg(&self.mbox_range, MBOX_STATUS) & MBOX_EMPTY) != 0 {}
-            let response = read_reg(&self.mbox_range, MBOX_READ);
+            while (read_reg(&self.mbox_virtrange, MBOX_STATUS) & MBOX_EMPTY) != 0 {}
+            let response = read_reg(&self.mbox_virtrange, MBOX_READ);
             if response == r {
                 break;
             }

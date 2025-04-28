@@ -21,7 +21,7 @@ pub fn init(dt: &DeviceTree) {
 
         unsafe {
             UART.write(uart);
-            UART.assume_init_mut()
+            Ok(UART.assume_init_mut())
         }
     });
 }

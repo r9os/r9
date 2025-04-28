@@ -1,4 +1,4 @@
-use crate::fdt::RegBlock;
+use crate::{fdt::RegBlock, maths};
 use core::{
     cmp::{max, min},
     fmt,
@@ -15,6 +15,10 @@ pub struct VirtRange(pub Range<usize>);
 impl VirtRange {
     pub fn with_len(start: usize, len: usize) -> Self {
         Self(start..start + len)
+    }
+
+    pub fn from_physrange(pr: &PhysRange, offset: usize) -> Self {
+        Self((pr.0.start.0 as usize + offset)..(pr.0.end.0 as usize + offset))
     }
 
     pub fn offset_addr(&self, offset: usize) -> Option<usize> {
@@ -58,14 +62,14 @@ impl PhysAddr {
         self.0
     }
 
-    pub const fn round_up(&self, step: u64) -> PhysAddr {
-        assert!(step.is_power_of_two());
-        PhysAddr((self.0 + step - 1) & !(step - 1))
+    /// Round up by a power of 2
+    pub const fn round_up2(&self, step: u64) -> PhysAddr {
+        PhysAddr(maths::round_up2_u64(self.0, step))
     }
 
-    pub const fn round_down(&self, step: u64) -> PhysAddr {
-        assert!(step.is_power_of_two());
-        PhysAddr(self.0 & !(step - 1))
+    /// Round down by a power of 2
+    pub const fn round_down2(&self, step: u64) -> PhysAddr {
+        PhysAddr(maths::round_down2_u64(self.0, step))
     }
 
     pub const fn is_multiple_of(&self, n: u64) -> bool {
@@ -148,13 +152,18 @@ impl PhysRange {
     }
 
     pub fn step_by_rounded(&self, step_size: usize) -> StepBy<Range<PhysAddr>> {
-        let startpa = self.start().round_down(step_size as u64);
-        let endpa = self.end().round_up(step_size as u64);
+        let startpa = self.start().round_down2(step_size as u64);
+        let endpa = self.end().round_up2(step_size as u64);
         (startpa..endpa).step_by(step_size)
     }
 
     pub fn add(&self, other: &PhysRange) -> Self {
         Self(min(self.0.start, other.0.start)..max(self.0.end, other.0.end))
+    }
+
+    /// Round extents so that start and end lie on multiples of step_size
+    pub fn round(&self, step_size: usize) -> Self {
+        Self(self.start().round_down2(step_size as u64)..self.end().round_up2(step_size as u64))
     }
 }
 
