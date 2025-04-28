@@ -14,7 +14,7 @@ pub fn init(dt: &DeviceTree) {
         .and_then(|reg| reg.regblock())
         .unwrap();
 
-    Console::new(|| {
+    Console::set_uart(|| {
         let mut uart = Uart16550::new(ns16550a_reg);
         uart.init(115_200);
 
@@ -23,7 +23,7 @@ pub fn init(dt: &DeviceTree) {
         unsafe {
             let cons = &mut *CONS.get();
             cons.write(uart);
-            cons.assume_init_mut()
+            Ok(cons.assume_init_mut())
         }
     });
 }

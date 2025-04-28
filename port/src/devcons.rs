@@ -1,3 +1,4 @@
+use crate::Result;
 use crate::mcslock::{Lock, LockNode};
 use core::fmt;
 
@@ -27,15 +28,13 @@ static CONS: Lock<Option<&'static mut dyn Uart>> = Lock::new("cons", None);
 pub struct Console;
 
 impl Console {
-    /// Create a locking console.  Assumes at this point we can use atomics.
-    pub fn new<F>(uart_fn: F) -> Self
+    pub fn set_uart<F>(uart_fn: F)
     where
-        F: FnOnce() -> &'static mut dyn Uart,
+        F: FnOnce() -> Result<&'static mut dyn Uart>,
     {
         let node = LockNode::new();
         let mut cons = CONS.lock(&node);
-        *cons = Some(uart_fn());
-        Self
+        *cons = uart_fn().ok();
     }
 
     pub fn putstr(&mut self, s: &str) {
@@ -43,51 +42,15 @@ impl Console {
 
         let node = LockNode::new();
         let mut uart_guard = CONS.lock(&node);
-        let uart = uart_guard.as_deref_mut().unwrap();
-        for b in s.bytes() {
-            putb(uart, b);
+        if let Some(uart) = uart_guard.as_deref_mut() {
+            for b in s.bytes() {
+                putb(uart, b);
+            }
         }
     }
 }
 
 impl fmt::Write for Console {
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        self.putstr(s);
-        Ok(())
-    }
-}
-
-/// PanicConsole should only be used in the very early stages of booting, when
-/// we're not sure we can use locks.  This can be particularly useful for
-/// implementing an early panic handler.
-pub struct PanicConsole<T>
-where
-    T: Uart,
-{
-    uart: T,
-}
-
-impl<T> PanicConsole<T>
-where
-    T: Uart,
-{
-    pub fn new(uart: T) -> Self {
-        Self { uart }
-    }
-
-    pub fn putstr(&mut self, s: &str) {
-        // XXX: Just for testing.
-
-        for b in s.bytes() {
-            putb(&mut self.uart, b);
-        }
-    }
-}
-
-impl<T> fmt::Write for PanicConsole<T>
-where
-    T: Uart,
-{
     fn write_str(&mut self, s: &str) -> fmt::Result {
         self.putstr(s);
         Ok(())

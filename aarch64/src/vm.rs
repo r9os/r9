@@ -10,20 +10,30 @@ use crate::{
     },
     pagealloc,
     param::KZERO,
-    registers::rpi_mmio,
 };
 use bitstruct::bitstruct;
-use core::fmt;
-use core::ptr::write_volatile;
+use core::{fmt, ptr, sync::atomic::Ordering};
+use core::{ptr::write_volatile, sync::atomic::AtomicUsize};
 use num_enum::{FromPrimitive, IntoPrimitive};
 use port::{
     fdt::DeviceTree,
-    mem::{PAGE_SIZE_1G, PAGE_SIZE_2M, PAGE_SIZE_4K, PhysAddr, PhysRange},
+    mem::{PAGE_SIZE_1G, PAGE_SIZE_2M, PAGE_SIZE_4K, PhysAddr, PhysRange, VirtRange},
     pagealloc::PageAllocError,
 };
 
 #[cfg(not(test))]
 use port::println;
+
+static mut KERNEL_PAGETABLE: RootPageTable = RootPageTable::empty();
+static mut USER_PAGETABLE: RootPageTable = RootPageTable::empty();
+
+pub fn kernel_pagetable() -> &'static mut RootPageTable {
+    unsafe { &mut *ptr::addr_of_mut!(KERNEL_PAGETABLE) }
+}
+
+pub fn user_pagetable() -> &'static mut RootPageTable {
+    unsafe { &mut *ptr::addr_of_mut!(USER_PAGETABLE) }
+}
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -34,7 +44,7 @@ pub enum PageSize {
 }
 
 impl PageSize {
-    const fn size(&self) -> usize {
+    pub const fn size(&self) -> usize {
         match self {
             PageSize::Page4K => PAGE_SIZE_4K,
             PageSize::Page2M => PAGE_SIZE_2M,
@@ -471,7 +481,7 @@ impl RootPageTable {
         entry: Entry,
         page_size: PageSize,
         pgtype: RootPageTableType,
-    ) -> Result<(usize, usize), PageTableError> {
+    ) -> Result<VirtRange, PageTableError> {
         if !range.start().is_multiple_of(page_size.size() as u64)
             || !range.end().is_multiple_of(page_size.size() as u64)
         {
@@ -496,8 +506,19 @@ impl RootPageTable {
             endva = currva + page_size.size();
             self.map_to(entry.with_phys_addr(pa), currva, page_size, root_page_table, pgtype)?;
         }
-        startva.map(|startva| (startva, endva)).ok_or(PageTableError::PhysRangeIsZero)
+        startva.map(|startva| VirtRange(startva..endva)).ok_or(PageTableError::PhysRangeIsZero)
     }
+}
+
+// TODO this needs to be a real virtual address allocator...
+static next_free_device_page_va: AtomicUsize = AtomicUsize::new(KZERO + 0x100000000000);
+pub fn next_free_device_page4k() -> VaMapping {
+    next_free_device_page_va
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+            Some(current + PageSize::Page4K.size())
+        })
+        .map(|va| VaMapping::Addr(va))
+        .expect("next_free_device_page4k: unable to return new va")
 }
 
 /// Return the root user or kernel level page table
@@ -509,17 +530,13 @@ pub fn root_page_table(pgtype: RootPageTableType) -> &'static mut RootPageTable 
     unsafe { &mut *physaddr_as_ptr_mut_offset_from_kzero::<RootPageTable>(page_table_pa) }
 }
 
-pub unsafe fn init_kernel_page_tables(
-    dt: &DeviceTree,
-    new_kernel_root_page_table: &mut RootPageTable,
-    dtb_range: PhysRange,
-) {
+pub unsafe fn init_kernel_page_tables(dt: &DeviceTree, dtb_physrange: PhysRange) {
     // We use recursive page tables, but we have to be careful in the init call,
     // since the kpage_table is not currently pointed to by ttbr1_el1.  Any
     // recursive addressing of (511, 511, 511, 511) always points to the
     // physical address of the root page table, which isn't what we want here
     // because kpage_table hasn't been switched to yet.
-    unsafe { init_empty_root_page_table(new_kernel_root_page_table) };
+    unsafe { init_empty_root_page_table(kernel_pagetable()) };
 
     // We only use the first memory range for now.
     // TODO Handle multiple memory ranges
@@ -536,28 +553,25 @@ pub unsafe fn init_kernel_page_tables(
     let custom_map = {
         // The DTB range might not end on a page boundary, so round up.
         let dtb_page_size = PageSize::Page4K;
-        let dtb_range =
-            PhysRange(dtb_range.start()..dtb_range.end().round_up(dtb_page_size.size() as u64));
+        let dtb_physrange = dtb_physrange.round(dtb_page_size.size());
 
-        let text_range = boottext_range().add(&text_range());
-        let ro_data_range = rodata_range();
-        let data_range = data_range().add(&bss_range());
-        let mmio_range = rpi_mmio().expect("mmio base detect failed");
+        let text_physrange = boottext_range().add(&text_range());
+        let ro_data_physrange = rodata_range();
+        let data_physrange = data_range().add(&bss_range());
 
         let mut map = [
-            ("DTB", dtb_range, Entry::ro_kernel_data(), dtb_page_size),
-            ("Kernel Text", text_range, Entry::ro_kernel_text(), PageSize::Page2M),
-            ("Kernel RO Data", ro_data_range, Entry::ro_kernel_data(), PageSize::Page2M),
-            ("Kernel Data", data_range, Entry::rw_kernel_data(), PageSize::Page2M),
-            ("MMIO", mmio_range, Entry::rw_device(), PageSize::Page2M),
+            ("DTB", dtb_physrange, Entry::ro_kernel_data(), dtb_page_size),
+            ("Kernel Text", text_physrange, Entry::ro_kernel_text(), PageSize::Page2M),
+            ("Kernel RO Data", ro_data_physrange, Entry::ro_kernel_data(), PageSize::Page2M),
+            ("Kernel Data", data_physrange, Entry::rw_kernel_data(), PageSize::Page2M),
         ];
         map.sort_by_key(|a| a.1.start());
         map
     };
 
-    println!("Memory map:");
+    println!("Memory map ranges:");
     for (name, range, flags, page_size) in custom_map.iter() {
-        let mapped_range = new_kernel_root_page_table
+        let mapped_virtrange = kernel_pagetable()
             .map_phys_range(
                 name,
                 range,
@@ -568,10 +582,11 @@ pub unsafe fn init_kernel_page_tables(
             )
             .expect("error:init:mapping failed");
 
-        println!(
-            "  {:16}{} to {:#018x}..{:#018x} flags: {:?} page_size: {:?}",
-            name, range, mapped_range.0, mapped_range.1, flags, page_size
-        );
+        println!("  {:16}{} to {}", name, range, mapped_virtrange);
+    }
+    println!("Memory map details:");
+    for (name, _, flags, page_size) in custom_map.iter() {
+        println!("  {:16}flags: {:?} page_size: {:?}", name, flags, page_size);
     }
 
     if let Err(err) = pagealloc::free_unused_ranges(&available_mem, custom_map.map(|m| m.1).iter())
@@ -580,8 +595,8 @@ pub unsafe fn init_kernel_page_tables(
     }
 }
 
-pub unsafe fn init_user_page_tables(new_user_root_page_table: &mut RootPageTable) {
-    unsafe { init_empty_root_page_table(new_user_root_page_table) };
+pub unsafe fn init_user_page_tables() {
+    unsafe { init_empty_root_page_table(user_pagetable()) };
 }
 
 /// Given an empty, statically allocated page table.  We need to write a

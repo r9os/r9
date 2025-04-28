@@ -76,7 +76,7 @@ pub fn allocate_physpage() -> Result<PhysAddr, PageAllocError> {
 
     match page_alloc.allocate() {
         Ok(page_pa) => {
-            println!("pagealloc:allocate_physpage pa:{:?}", page_pa);
+            //println!("pagealloc:allocate_physpage pa:{:?}", page_pa);
             Ok(page_pa)
         }
         Err(err) => {
@@ -104,8 +104,8 @@ pub fn allocate_virtpage(
         crate::vm::PageSize::Page4K,
         pgtype,
     ) {
-        println!("pagealloc:allocate_virtpage:va:{:#x} -> physpage:{:?}", page_va.0, page_pa);
-        let virtpage = page_va.0 as *mut VirtPage4K;
+        // println!("pagealloc:allocate_virtpage:va:{:#x} -> physpage:{:?}", page_va.start(), page_pa);
+        let virtpage = page_va.start() as *mut VirtPage4K;
         Ok(unsafe { &mut *virtpage })
     } else {
         println!("error:pagealloc:allocate_virtpage:unable to map");

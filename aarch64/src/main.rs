@@ -9,6 +9,7 @@
 
 mod allocator;
 mod devcons;
+mod deviceutil;
 mod io;
 mod kmem;
 mod mailbox;
@@ -24,21 +25,17 @@ mod vmdebug;
 
 extern crate alloc;
 
-use crate::kmem::from_virt_to_physaddr;
 use alloc::boxed::Box;
-use core::ptr::{self, null_mut};
+use core::ptr::null_mut;
 use kmem::{boottext_range, bss_range, data_range, rodata_range, text_range, total_kernel_range};
 use param::KZERO;
-use port::fdt::DeviceTree;
 use port::mem::PhysRange;
 use port::println;
-use vm::{Entry, RootPageTable, RootPageTableType, VaMapping};
+use port::{fdt::DeviceTree, mem::PhysAddr};
+use vm::{Entry, RootPageTableType, VaMapping};
 
 #[cfg(not(test))]
 core::arch::global_asm!(include_str!("l.S"));
-
-static mut KERNEL_PAGETABLE: RootPageTable = RootPageTable::empty();
-static mut USER_PAGETABLE: RootPageTable = RootPageTable::empty();
 
 unsafe fn print_memory_range(name: &str, range: &PhysRange) {
     let size = range.size();
@@ -99,9 +96,10 @@ pub extern "C" fn main9(dtb_va: usize) {
 
     // Parse the DTB before we set up memory so we can correctly map it
     let dt = unsafe { DeviceTree::from_usize(dtb_va).unwrap() };
+    let dtb_physrange = PhysRange::with_pa_len(PhysAddr::new((dtb_va - KZERO) as u64), dt.size());
 
-    // Set up uart so we can log as early as possible
-    devcons::init(&dt);
+    // Try to set up the miniuart so we can log as early as possible.
+    devcons::init(&dt, true);
 
     println!();
     println!("r9 from the Internet");
@@ -114,25 +112,26 @@ pub extern "C" fn main9(dtb_va: usize) {
 
     // Map address space accurately using rust VM code to manage page tables
     unsafe {
-        let dtb_range = PhysRange::with_len(from_virt_to_physaddr(dtb_va).addr(), dt.size());
-        vm::init_kernel_page_tables(&dt, &mut *ptr::addr_of_mut!(KERNEL_PAGETABLE), dtb_range);
-        vm::switch(&*ptr::addr_of!(KERNEL_PAGETABLE), RootPageTableType::Kernel);
+        vm::init_kernel_page_tables(&dt, dtb_physrange);
+        vm::switch(vm::kernel_pagetable(), RootPageTableType::Kernel);
 
-        vm::init_user_page_tables(&mut *ptr::addr_of_mut!(USER_PAGETABLE));
-        vm::switch(&*ptr::addr_of!(USER_PAGETABLE), RootPageTableType::User);
+        vm::init_user_page_tables();
+        vm::switch(vm::user_pagetable(), RootPageTableType::User);
     }
 
     // From this point we can use the global allocator
 
+    devcons::init(&dt, false);
     mailbox::init(&dt);
+
     print_board_info();
     print_memory_info();
 
-    vmdebug::print_recursive_tables(RootPageTableType::Kernel);
-    vmdebug::print_recursive_tables(RootPageTableType::User);
+    // vmdebug::print_recursive_tables(RootPageTableType::Kernel);
+    // vmdebug::print_recursive_tables(RootPageTableType::User);
 
     {
-        let page_table = unsafe { &mut *ptr::addr_of_mut!(KERNEL_PAGETABLE) };
+        let page_table = vm::kernel_pagetable();
         let entry = Entry::rw_kernel_data();
         for i in 0..3 {
             let alloc_result = pagealloc::allocate_virtpage(
@@ -152,8 +151,8 @@ pub extern "C" fn main9(dtb_va: usize) {
         }
     }
 
-    vmdebug::print_recursive_tables(RootPageTableType::Kernel);
-    vmdebug::print_recursive_tables(RootPageTableType::User);
+    // vmdebug::print_recursive_tables(RootPageTableType::Kernel);
+    // vmdebug::print_recursive_tables(RootPageTableType::User);
 
     println!("Set up a user process");
 
@@ -173,7 +172,7 @@ pub extern "C" fn main9(dtb_va: usize) {
 mod runtime;
 
 fn test_sysexit() {
-    let page_table = unsafe { &mut *ptr::addr_of_mut!(USER_PAGETABLE) };
+    let page_table = vm::user_pagetable();
 
     // Allocate pages for a user process
     let user_text = {

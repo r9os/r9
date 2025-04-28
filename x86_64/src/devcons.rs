@@ -14,8 +14,8 @@ impl Uart for Uart16550 {
 }
 
 pub fn init() {
-    Console::new(|| {
+    Console::set_uart(|| {
         static CONS: SyncUnsafeCell<Uart16550> = SyncUnsafeCell::new(Uart16550 { port: 0x3f8 });
-        unsafe { &mut *CONS.get() }
+        unsafe { Ok(&mut *CONS.get()) }
     });
 }
