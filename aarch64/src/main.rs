@@ -29,7 +29,7 @@ use alloc::boxed::Box;
 use core::ptr::null_mut;
 use kmem::{boottext_range, bss_range, data_range, rodata_range, text_range, total_kernel_range};
 use param::KZERO;
-use port::mem::PhysRange;
+use port::mem::{PhysRange, VirtRange};
 use port::println;
 use port::{fdt::DeviceTree, mem::PhysAddr};
 use vm::{Entry, RootPageTableType, VaMapping};
@@ -37,21 +37,19 @@ use vm::{Entry, RootPageTableType, VaMapping};
 #[cfg(not(test))]
 core::arch::global_asm!(include_str!("l.S"));
 
-unsafe fn print_memory_range(name: &str, range: &PhysRange) {
+fn print_memory_range(name: &str, range: &PhysRange) {
     let size = range.size();
     println!("  {name}{range} ({size:#x})");
 }
 
 fn print_binary_sections() {
     println!("Binary sections:");
-    unsafe {
-        print_memory_range("boottext:\t", &boottext_range());
-        print_memory_range("text:\t\t", &text_range());
-        print_memory_range("rodata:\t", &rodata_range());
-        print_memory_range("data:\t\t", &data_range());
-        print_memory_range("bss:\t\t", &bss_range());
-        print_memory_range("total:\t", &total_kernel_range());
-    }
+    print_memory_range("boottext:\t", &boottext_range());
+    print_memory_range("text:\t\t", &text_range());
+    print_memory_range("rodata:\t", &rodata_range());
+    print_memory_range("data:\t\t", &data_range());
+    print_memory_range("bss:\t\t", &bss_range());
+    print_memory_range("total:\t", &total_kernel_range());
 }
 
 fn print_memory_info() {
@@ -96,7 +94,9 @@ fn print_stacks() {
 
     let interrupt_stack_base = unsafe { interruptstackbase.as_ptr().addr() };
     let interrupt_stack_max = interrupt_stack_base + unsafe { interruptstacksz.as_ptr().addr() };
-    println!("Interrupt stack: {:018x}..{:018x}", interrupt_stack_base, interrupt_stack_max);
+    let range = VirtRange(interrupt_stack_base..interrupt_stack_max);
+    let range_size = range.size();
+    println!("Interrupt stack:\t {range} ({range_size:#x})");
 }
 
 /// dtb_va is the virtual address of the DTB structure.  The physical address is
