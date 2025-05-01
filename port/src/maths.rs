@@ -28,7 +28,7 @@ mod tests {
 
     #[test]
     fn test_round_up2() {
-        assert_eq!(round_up2_usize(0, 16), 16);
+        assert_eq!(round_up2_usize(0, 16), 0);
         assert_eq!(round_up2_usize(6, 16), 16);
         assert_eq!(round_up2_usize(16, 16), 16);
         assert_eq!(round_up2_usize(17, 16), 32);
@@ -39,7 +39,7 @@ mod tests {
     fn test_round_down2() {
         assert_eq!(round_down2_usize(0, 16), 0);
         assert_eq!(round_down2_usize(6, 16), 0);
-        assert_eq!(round_down2_usize(16, 16), 0);
+        assert_eq!(round_down2_usize(16, 16), 16);
         assert_eq!(round_down2_usize(17, 16), 16);
         assert_eq!(round_down2_usize(8193, 4096), 8192);
     }
