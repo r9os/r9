@@ -21,11 +21,7 @@ pub enum Profile {
 
 impl Profile {
     fn from(matches: &clap::ArgMatches) -> Self {
-        if matches.get_flag("release") {
-            Profile::Release
-        } else {
-            Profile::Debug
-        }
+        if matches.get_flag("release") { Profile::Release } else { Profile::Debug }
     }
 
     fn dir(&self) -> &'static str {
@@ -493,7 +489,7 @@ impl QemuStep {
                 cmd.arg("-d");
                 cmd.arg("int");
                 cmd.arg("-kernel");
-                cmd.arg(format!("target/{}/{}/aarch64-qemu.gz", target, dir));
+                cmd.arg(format!("target/{target}/{dir}/aarch64-qemu.gz"));
                 cmd.current_dir(workspace());
                 if self.verbose {
                     println!("Executing {cmd:?}");
@@ -531,7 +527,7 @@ impl QemuStep {
                 }
                 cmd.arg("-d").arg("guest_errors,unimp");
                 cmd.arg("-kernel");
-                cmd.arg(format!("target/{}/{}/riscv64", target, dir));
+                cmd.arg(format!("target/{target}/{dir}/riscv64"));
                 cmd.current_dir(workspace());
                 if self.verbose {
                     println!("Executing {cmd:?}");
@@ -567,7 +563,7 @@ impl QemuStep {
                 //cmd.arg("-device");
                 //cmd.arg("ide-hd,drive=sdahci0,bus=ahci0.0");
                 cmd.arg("-kernel");
-                cmd.arg(format!("target/{}/{}/r9.elf32", target, dir));
+                cmd.arg(format!("target/{target}/{dir}/r9.elf32"));
                 cmd.current_dir(workspace());
                 if self.verbose {
                     println!("Executing {cmd:?}");
