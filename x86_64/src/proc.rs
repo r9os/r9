@@ -18,11 +18,10 @@ impl Label {
     }
 }
 
-#[naked]
+#[unsafe(naked)]
 pub unsafe extern "C" fn swtch(save: &mut Label, next: &mut Label) {
-    unsafe {
-        naked_asm!(
-            r#"
+    naked_asm!(
+        r#"
             movq (%rsp), %rax
             movq %rax, 0(%rdi)
             movq %rsp, 8(%rdi)
@@ -44,7 +43,6 @@ pub unsafe extern "C" fn swtch(save: &mut Label, next: &mut Label) {
             movq %rax, (%rsp)
             xorl %eax, %eax
             ret"#,
-            options(att_syntax)
-        );
-    }
+        options(att_syntax)
+    );
 }

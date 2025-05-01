@@ -5,7 +5,7 @@ use crate::{Command, Profile};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
-    fs::{self, create_dir_all, File},
+    fs::{self, File, create_dir_all},
     io::Write,
     process::exit,
 };
@@ -100,7 +100,7 @@ impl Configuration {
         let config: Configuration = match toml::from_str(&contents) {
             Ok(d) => d,
             Err(e) => {
-                eprintln!("TOML: Unable to load data from `{}`", filename);
+                eprintln!("TOML: Unable to load data from `{filename}`");
                 eprintln!("{e}");
                 exit(1);
             }
@@ -143,7 +143,7 @@ fn apply_platform_config(cmd: &mut Command, rustflags: &mut Vec<String>, config:
 
         if let Some(platform) = &config.platform {
             rustflags.push("--cfg".into());
-            rustflags.push(format!("platform=\"{}\"", platform));
+            rustflags.push(format!("platform=\"{platform}\""));
         }
 
         if let Some(devices) = &config.dev {
@@ -210,8 +210,7 @@ fn apply_link(
 
         // do we have a linker script ?
         if !filename.is_empty() {
-            let mut contents = match fs::read_to_string(format!("{}/{}", workspace_path, filename))
-            {
+            let mut contents = match fs::read_to_string(format!("{workspace_path}/{filename}")) {
                 Ok(c) => c,
                 Err(_) => {
                     eprintln!("Could not read file `{filename}`");
@@ -247,11 +246,11 @@ fn apply_link(
 
             // everything is setup, now create the linker script
             // in the target directory
-            let mut file = File::create(format!("{}/kernel.ld", path)).unwrap();
+            let mut file = File::create(format!("{path}/kernel.ld")).unwrap();
             let _ = file.write_all(contents.as_bytes());
 
             // pass the script path to the rustflags
-            rustflags.push(format!("-Clink-args=-T{}/kernel.ld", path));
+            rustflags.push(format!("-Clink-args=-T{path}/kernel.ld"));
         }
     }
 }
@@ -275,7 +274,7 @@ fn apply_rustflags(cmd: &mut Command, rustflags: &[String]) {
     if !rustflags.is_empty() {
         let flat = rustflags.join(" ");
         cmd.arg("--config");
-        cmd.arg(format!("build.rustflags='{}'", flat));
+        cmd.arg(format!("build.rustflags='{flat}'"));
     }
 }
 
