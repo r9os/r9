@@ -51,7 +51,7 @@ pub fn init(dt: &DeviceTree, is_early_init: bool) {
                 }
             }
             Err(msg) => {
-                println!("can't initialise uart: {:?}", msg);
+                println!("can't initialise uart: {msg:?}");
                 Err("can't initialise uart")
             }
         }
