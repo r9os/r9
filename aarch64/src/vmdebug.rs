@@ -1,4 +1,4 @@
-///! Debug tools for VM code
+//!! Debug tools for VM code
 
 #[cfg(not(test))]
 use port::println;
@@ -45,20 +45,18 @@ impl PteIndices {
     }
 
     fn last_index(&self) -> Option<usize> {
-        if let Some(i) = self.l3 {
-            Some(i)
-        } else if let Some(i) = self.l2 {
-            Some(i)
-        } else if let Some(i) = self.l1 {
-            Some(i)
-        } else if let Some(i) = self.l0 {
-            Some(i)
+        if self.l3.is_some() {
+            self.l3
+        } else if self.l2.is_some() {
+            self.l2
+        } else if self.l1.is_some() {
+            self.l1
         } else {
-            None
+            self.l0
         }
     }
 
-    fn to_va(&self) -> usize {
+    fn as_va(&self) -> usize {
         let mut va = match self.pgtype {
             RootPageTableType::Kernel => 0xffff_0000_0000_0000,
             RootPageTableType::User => 0x0000_0000_0000_0000,
@@ -150,7 +148,7 @@ fn print_pte_page(indent: usize, pte_indices: PteIndices, pte: Entry) {
         "{:indent$}[{:03}] Entry va:{:#018x} -> {:?} (pte:{:#016x})",
         "",
         pte_indices.last_index().unwrap_or(0),
-        pte_indices.to_va(),
+        pte_indices.as_va(),
         pte,
         pte.0,
     );
@@ -199,10 +197,10 @@ mod tests {
         assert_eq!(p, PteIndices::new(RootPageTableType::User, Some(1), Some(2), Some(3), Some(4)));
 
         let p = PteIndices::new(RootPageTableType::Kernel, Some(15), Some(0), Some(400), Some(4));
-        assert_eq!(va_indices(p.to_va()), (15, 0, 400, 4));
+        assert_eq!(va_indices(p.as_va()), (15, 0, 400, 4));
 
         let p = PteIndices::new(RootPageTableType::User, Some(0), Some(10), Some(40), Some(23));
-        assert_eq!(va_indices(p.to_va()), (0, 10, 40, 23));
+        assert_eq!(va_indices(p.as_va()), (0, 10, 40, 23));
 
         let va = 0x0000000000001000;
         assert_eq!(va_indices(va), (0, 0, 0, 1));

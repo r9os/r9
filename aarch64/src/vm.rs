@@ -359,11 +359,9 @@ impl Table {
             let recursive_page_addr = recursive_table_addr(pgtype, va, level.next().unwrap());
             let page = unsafe { &mut *(recursive_page_addr as *mut PhysPage4K) };
             page.clear();
-        } else {
-            if !entry.is_table(level) {
-                println!("error:vm:next_mut:entry is not a valid table entry:{entry:?} {level:?}");
-                return Err(PageTableError::EntryIsNotTable);
-            }
+        } else if !entry.is_table(level) {
+            println!("error:vm:next_mut:entry is not a valid table entry:{entry:?} {level:?}");
+            return Err(PageTableError::EntryIsNotTable);
         }
 
         // Return the address of the next table as a recursive address
@@ -517,7 +515,7 @@ pub fn next_free_device_page4k() -> VaMapping {
         .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
             Some(current + PageSize::Page4K.size())
         })
-        .map(|va| VaMapping::Addr(va))
+        .map(VaMapping::Addr)
         .expect("next_free_device_page4k: unable to return new va")
 }
 

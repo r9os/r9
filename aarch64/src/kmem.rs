@@ -103,7 +103,7 @@ pub const fn physaddr_as_ptr_mut_offset_from_kzero<T>(pa: PhysAddr) -> *mut T {
 /// that the code is mapped offset to KZERO, so should be used with extreme care.
 /// TODO: Remove this altogether, otherwise it'll get used when it shouldn't.
 fn from_virt_to_physaddr(va: usize) -> PhysAddr {
-    debug_assert!(va >= KZERO, "from_virt_to_physaddr: va {} must be >= KZERO ({})", va, KZERO);
+    debug_assert!(va >= KZERO, "from_virt_to_physaddr: va {va} must be >= KZERO ({KZERO})");
     PhysAddr::new((va - KZERO) as u64)
 }
 
