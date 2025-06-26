@@ -138,9 +138,9 @@ impl MiniUart {
         // For now we're making assumptions about the clock frequency
         // TODO Get the clock freq via the mailbox, and update if it changes.
         // let arm_clock_rate = 500000000.0;
-        // let baud_rate_reg = arm_clock_rate / (8.0 * 115200.0) + 1.0;
+        // let baud_rate_reg = arm_clock_rate / (8.0 * 115200.0) - 1.0;
         //write_reg(self.miniuart_reg, AUX_MU_BAUD, baud_rate_reg as u32);
-        write_reg(&self.miniuart_virtrange, AUX_MU_BAUD, 270);
+        write_reg(&self.miniuart_virtrange, AUX_MU_BAUD, 545);
 
         // Finally enable transmit
         write_reg(&self.miniuart_virtrange, AUX_MU_CNTL, 3);

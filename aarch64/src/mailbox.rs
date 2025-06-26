@@ -1,4 +1,6 @@
-use crate::deviceutil::map_device_register;
+use core::ptr::NonNull;
+
+use crate::deviceutil::{self, map_device_register};
 use crate::io::{read_reg, write_reg};
 use crate::vm;
 use port::Result;
@@ -37,18 +39,27 @@ pub fn init(dt: &DeviceTree) {
 /// https://github.com/raspberrypi/firmware/wiki/Mailbox-property-interface
 struct Mailbox {
     pub mbox_virtrange: VirtRange,
+    req_buffer_va: VirtRange,
+    req_buffer_pa: PhysRange,
 }
 
 impl Mailbox {
     fn new(dt: &DeviceTree) -> Result<Self> {
+        // Allocate a page of device memory for the mailbox request/response buffer
+        // TODO Split this into multiple buffers to allow parallel requests.
+        let (req_buffer_va, req_buffer_pa) =
+            deviceutil::alloc_device_page("mailboxbuf", vm::PageSize::Page4K)?;
+
         let mbox_physrange = Self::find_mbox_physrange(dt)?;
-        match map_device_register("mailbox", mbox_physrange, vm::PageSize::Page4K) {
-            Ok(mbox_virtrange) => Ok(Mailbox { mbox_virtrange }),
+        let mbox = match map_device_register("mailbox", mbox_physrange, vm::PageSize::Page4K) {
+            Ok(mbox_virtrange) => Ok(Mailbox { mbox_virtrange, req_buffer_va, req_buffer_pa }),
             Err(msg) => {
                 println!("can't map mailbox {:?}", msg);
                 Err("can't create mailbox")
             }
-        }
+        }?;
+
+        Ok(mbox)
     }
 
     /// Get the physical range required for this device
@@ -61,7 +72,7 @@ impl Mailbox {
             .ok_or("can't find mbox")
     }
 
-    fn request<T, U>(&self, req: &mut Message<T, U>)
+    fn request<T, U>(&self)
     where
         T: Copy,
         U: Copy,
@@ -71,12 +82,12 @@ impl Mailbox {
 
         // Write the request address combined with the channel to the write register
         let channel = ChannelId::ArmToVc as u32;
-        let uart_mbox_u32 = req as *const _ as u32;
+        let uart_mbox_u32 = self.req_buffer_pa.start().addr() as u32;
         let r = (uart_mbox_u32 & !0xF) | channel;
         write_reg(&self.mbox_virtrange, MBOX_WRITE, r);
 
         // Wait for response
-        // FIXME: two infinite loops - can go awry
+        // FIXME: two infinite loops - could go awry
         loop {
             while (read_reg(&self.mbox_virtrange, MBOX_STATUS) & MBOX_EMPTY) != 0 {}
             let response = read_reg(&self.mbox_virtrange, MBOX_READ);
@@ -133,14 +144,22 @@ where
     U: Copy,
 {
     let size = size_of::<Message<T, U>>() as u32;
-    let req = Request::<Tag<T>> { size, code, tags: *tags };
-    let mut msg = MessageWithTags { request: req };
     let node = LockNode::new();
     MAILBOX
         .lock(&node)
         .as_mut()
         .map(|mb| {
-            mb.request(&mut msg);
+            let msg = unsafe {
+                let page_va_ptr = mb.req_buffer_va.start() as u64 as *mut MessageWithTags<T, U>;
+                core::intrinsics::volatile_set_memory(page_va_ptr, 0, 1);
+                let msg = NonNull::new_unchecked(page_va_ptr).as_mut();
+                msg.request.size = size;
+                msg.request.code = code;
+                msg.request.tags = *tags;
+                msg
+            };
+
+            mb.request::<T, U>();
             unsafe { msg.response.tags.body }
         })
         .expect("mailbox not initialised")
