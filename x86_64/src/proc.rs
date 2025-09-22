@@ -1,22 +1,5 @@
+pub use crate::dat::Label;
 use core::arch::naked_asm;
-
-#[repr(C)]
-pub struct Label {
-    pub pc: u64,
-    pub sp: u64,
-    pub fp: u64,
-    rbx: u64,
-    r12: u64,
-    r13: u64,
-    r14: u64,
-    r15: u64,
-}
-
-impl Label {
-    pub const fn new() -> Label {
-        Label { pc: 0, sp: 0, fp: 0, rbx: 0, r12: 0, r13: 0, r14: 0, r15: 0 }
-    }
-}
 
 #[unsafe(naked)]
 pub unsafe extern "C" fn swtch(save: &mut Label, next: &mut Label) {

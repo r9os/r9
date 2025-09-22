@@ -6,5 +6,4 @@ buildflags = [
 
 [link]
 script = 'x86_64/lib/kernel.ld'
-load-address = '0xffff800000100000'
-
+load-address = '0xffffffff80200000'
