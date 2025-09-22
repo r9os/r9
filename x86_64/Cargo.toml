@@ -10,3 +10,7 @@ default-target = "x86_64-unknown-none"
 bitstruct = "0.1"
 x86 = "0.52"
 port = { path = "../port" }
+seq-macro = "0.3.6"
+zerocopy = { version = "0.8.27", features = ["derive"] }
+bit_field = "0.10.3"
+static_assertions = "1.1.0"

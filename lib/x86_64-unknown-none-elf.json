@@ -1,22 +1,22 @@
 {
-  "llvm-target": "x86_64-unknown-none-elf",
-  "data-layout": "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128",
-  "linker-flavor": "ld.lld",
-  "linker": "rust-lld",
-  "target-endian": "little",
-  "target-pointer-width": "64",
-  "target-c-int-width": "32",
-  "arch": "x86_64",
-  "os": "none",
-  "executables": true,
-  "relocation-model": "pie",
-  "code-model": "medium",
-  "disable-redzone": true,
-  "features": "-mmx,-sse,+soft-float",
-  "panic-strategy": "abort",
-  "frame-pointer": "always",
-  "pre-link-args": {
-    "ld.lld": ["-nostdlib"]
-  },
-  "rustc-abi": "x86-softfloat"
+    "llvm-target": "x86_64-unknown-none-elf",
+    "data-layout": "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128",
+    "linker-flavor": "ld.lld",
+    "linker": "rust-lld",
+    "target-endian": "little",
+    "target-pointer-width": 64,
+    "target-c-int-width": 32,
+    "arch": "x86_64",
+    "os": "none",
+    "executables": true,
+    "relocation-model": "static",
+    "code-model": "kernel",
+    "disable-redzone": true,
+    "features": "-mmx,-sse,+soft-float",
+    "panic-strategy": "abort",
+    "frame-pointer": "always",
+    "pre-link-args": {
+        "ld.lld": ["-nostdlib"]
+    },
+    "rustc-abi": "x86-softfloat"
 }

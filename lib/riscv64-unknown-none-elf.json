@@ -6,7 +6,6 @@
 	"eh-frame-header": false,
 	"emit-debug-gdb-scripts": false,
 	"features": "+m,+a,+f,+d,+c",
-	"is-builtin": false,
 	"linker": "rust-lld",
 	"linker-flavor": "ld.lld",
 	"llvm-abiname": "lp64d",
@@ -14,7 +13,7 @@
 	"max-atomic-width": 64,
 	"panic-strategy": "abort",
 	"relocation-model": "pie",
-	"target-pointer-width": "64",
+	"target-pointer-width": 64,
 	"pre-link-args": {
 		"ld.lld": [
 			"-nostdlib"
