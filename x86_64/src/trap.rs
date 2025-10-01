@@ -6,6 +6,7 @@ use core::arch::naked_asm;
 
 pub const DEBUG_TRAPNO: u8 = 1;
 pub const NMI_TRAPNO: u8 = 2;
+pub const BREAKPOINT_TRAPNO: u8 = 3;
 pub const DOUBLE_FAULT_TRAPNO: u8 = 8;
 
 type Thunk = unsafe extern "C" fn();
@@ -222,6 +223,7 @@ pub fn splx(x: IntrStatus) -> IntrStatus {
 }
 
 extern "C" fn trap(vector: u8, trap_frame: &mut Ureg) -> u32 {
+    unsafe { core::arch::asm!("cli;hlt;") };
     crate::println!("trap {vector}");
     crate::println!("frame: {trap_frame:#x?}");
     unsafe { core::arch::asm!("cli;hlt;") };

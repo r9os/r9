@@ -39,11 +39,12 @@
 .set KCPUZERO,			0xffffff0000000000
 .set KMACH,			(1*MiB)
 .set KTOFF,			(2*MiB)
+.set KLOSTK,			0x8000
 
-.set MACHSTKSZ,			(16*PGSZ)
-.set MACHSTKOFF,		(16*PGSZ)
-.set MACHGDTSZ,			(16*PGSZ)
-.set MACHGDTOFF,		(32*PGSZ)
+.set MACHSTKSZ,			(64*KiB)
+.set MACHSTKOFF,		(64*KiB)
+.set MACHGDTSZ,			(64*KiB)
+.set MACHGDTOFF,		(192*KiB)
 
 .set Cr0PE,			(1<<0)		// Protected Mode Enable
 .set Cr0MP,			(1<<1)		// Monitor Coprocessor
@@ -56,6 +57,7 @@
 .set Cr4PSE,			(1<<4)		// Page-Size Extensions
 .set Cr4PAE,			(1<<5)		// Physical Address Extension
 .set Cr4PGE,			(1<<7)		// Page-Global Enable
+.set Cr4FSGSBASE,		(1<<16)		// (RD|WR)(FS|GS)BASE Extension
 
 .set IA32_EFER,			0xc0000080	// Extended Feature Enable
 
@@ -156,7 +158,7 @@ start:
 	// off the page size extension; it is always eanbled in PAE mode.
 	movl	%cr4, %eax
 	andl	$~Cr4PSE, %eax
-	orl	$(Cr4PGE|Cr4PAE), %eax
+	orl	$(Cr4PGE|Cr4PAE|Cr4FSGSBASE), %eax
 	movl	%eax, %cr4
 
 	// Set up the Extended Feature Enable (EFER) MSR, enabling
@@ -203,19 +205,26 @@ start:
 	movw	%ax, %gs
 
 	// We can now use linked addresses for the stack and code.
-	// We'll jump into the kernel from here.
-	movabsq	$(KCPUZERO+KMACH), %rdi
-	leaq	MACHSTKOFF+MACHSTKSZ(%rdi), %rsp
+	// Jump to the code that initialized ccNUMA node 0 and the
+	// cpu0 Mach, returning to warp64, which removes the
+	// identity map, sets the SP to the scheduler stack, and
+	// jumps
+	leaq	KMACH, %rdi
+	leaq	KLOSTK, %rsp
 	movabsq	$warp64, %rax
+	pushq	%rax
+	movabsq	$init0, %rax
 	pushq	%rax
 	ret
 
 warp64:
+	// Now load the stack pointer with our Mach stack.
+	movabsq	$(KCPUZERO+KMACH), %rdi
+	leaq	MACHSTKOFF+MACHSTKSZ(%rdi), %rsp
 	// At this point, we are fully in the kernel virtual
 	// address space and can discard the identity mapping.
 	// To do so, we load the early PML4 that does not have
 	// that entry.
-	movq	$(earlypml4 - KZERO), %rax
 	movq	%rax, %cr3			// Also flushes TLB.
 
 	// A pointer to the Mach is already in %rdi, and is the
@@ -369,7 +378,9 @@ b1982:
 	// Enable and activate Long Mode.
 	movl	%cr4, %eax
 	andl	$~Cr4PSE, %eax		// PSE always true in long mode
-	orl	$(Cr4PGE|Cr4PAE), %eax	// Page Global, Phys. Address Ext
+	// Enable page global, physical address extension, and FS/GS base
+	// load/store instruction support.
+	orl	$(Cr4PGE|Cr4PAE|Cr4FSGSBASE), %eax
 	movl	%eax, %cr4
 
 	movl	$IA32_EFER, %ecx	// Extended Feature Enable
@@ -386,6 +397,19 @@ b1982:
 
 .code64
 1:
+	movabsq	$gdtdescv, %rax
+	lgdt	(%rax)
+	pushq	$GdtCODE64
+	pushq	$(1f-KZERO)
+	lretq
+1:
+	xorl	%eax, %eax
+	movw	%ax, %ds
+	movw	%ax, %es
+	movw	%ax, %fs
+	movw	%ax, %gs
+	movw	%ax, %ss
+
 	leaq	APMACH, %rdi
 	movq	%rdi, %rsp
 	movabsq	$apwarp64, %rax
@@ -394,20 +418,6 @@ b1982:
 	ud2
 
 apwarp64:
-	movabsq	$gdtdescv, %rax
-	lgdt	(%rax)
-	pushq	$GdtCODE64
-	pushq	$(1f-KZERO)
-	lretq
-1:
-
-	xorl	%eax, %eax
-	movw	%ax, %ds
-	movw	%ax, %es
-	movw	%ax, %fs
-	movw	%ax, %gs
-	movw	%ax, %ss
-
 	// Move to the real PML4 from our Mach.
 	movq	(%rdi), %rax
 	movq	%rax, %cr3
@@ -419,7 +429,7 @@ apwarp64:
 
 	pushq	$0
 	xorl	%ebp, %ebp
-	movq	8(%rdi), %rax			// m->scratch
+	movq	128*KiB+8(%rdi), %rax			// m->scratch
 	pushq	%rax
 	pushq	$2				// Clear flags
 	popfq
@@ -432,13 +442,8 @@ e1978:
 bootpml4:
 	.quad	bootidentitypt3 - KZERO + (PteRW | PteP)
 	.space	4096 - 3*8
-	.quad	earlymachpt3 - KZERO + (PteRW | PteP)
-	.quad	earlykernpt3 - KZERO + (PteRW | PteP)
-
-earlypml4:
-	.space 4096 - 2*8
-	.quad	earlymachpt3 - KZERO + (PteRW | PteP)
-	.quad	earlykernpt3 - KZERO + (PteRW | PteP)
+	.quad	bootmachpt3 - KZERO + (PteRW | PteP)
+	.quad	bootkernpt3 - KZERO + (PteRW | PteP)
 
 bootidentitypt3:
 	.quad	(0<<30) + (PtePS | PteRW | PteP)
@@ -447,11 +452,15 @@ bootidentitypt3:
 	.quad	(3<<30) + (PtePS | PteRW | PteP)
 	.space	4096 - 4*8
 
-earlymachpt3:
+bootmachpt3:
+	// The CPU part
 	.quad	(0<<30) + (PtePS | PteRW | PteP)
-	.space	4096 - 1*8
+	.space	4096/2 - 1*8
+	// The node part
+	.quad	(0<<30) + (PtePS | PteRW | PteP)
+	.space	4096/2 - 1*8
 
-earlykernpt3:
+bootkernpt3:
 	.space	4096 - 2*8
 	.quad	(0<<30) + (PtePS | PteRW | PteP)
 	.quad	0

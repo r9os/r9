@@ -10,6 +10,7 @@ mod allocator;
 mod cpu;
 mod dat;
 mod devcons;
+mod node0;
 mod pio;
 mod proc;
 mod syscall;

@@ -12,7 +12,6 @@ SECTIONS {
 	 * start of the kernel for critical structures.
 	 */
 	. = ${LOAD-ADDRESS};
-
 	PROVIDE(text = .);
 	.text : AT (ADDR(.text) - KZERO) {
 		*(.text.boot)
