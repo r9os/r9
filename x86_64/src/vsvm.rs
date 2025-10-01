@@ -6,16 +6,16 @@
 //! this goo.
 
 use crate::cpu;
-use crate::dat;
+use crate::dat::{Mach, MachMode, Page, Stack};
 use crate::trap;
+use crate::trap::BREAKPOINT_TRAPNO;
 use crate::trap::{DEBUG_TRAPNO, DOUBLE_FAULT_TRAPNO, NMI_TRAPNO};
 
 use bit_field::BitField;
 use zerocopy::FromZeros;
 
 pub mod seg {
-    use super::{Gdt, IstIndex, Tss, trap};
-    use crate::dat::MachMode;
+    use super::{Gdt, IstIndex, MachMode, Tss, trap};
 
     use bit_field::BitField;
     use bitstruct::bitstruct;
@@ -102,7 +102,7 @@ pub mod seg {
             mbz2: u8 = 37..40;
             fixed_type: u8 = 40..44;
             mbz3: bool = 44;
-            cpl: MachMode = 45..47;
+            dpl: MachMode = 45..47;
             pub present: bool = 47;
             pub offset16: u16 = 48..64;
             pub offset32: u32 = 64..96;
@@ -116,7 +116,7 @@ pub mod seg {
             IntrGateDescr(TYPE_INTERRUPT_GATE)
         }
 
-        pub fn new(thunk: &trap::Stub, stack_index: IstIndex) -> IntrGateDescr {
+        pub fn new(thunk: &trap::Stub, dpl: MachMode, stack_index: IstIndex) -> IntrGateDescr {
             let ptr: *const trap::Stub = thunk;
             let va = ptr.addr();
             IntrGateDescr::empty()
@@ -126,7 +126,7 @@ pub mod seg {
                 .with_stack_table_index(stack_index as u8)
                 .with_segment_selector(Gdt::ktextsel())
                 .with_present(true)
-                .with_cpl(MachMode::Kernel)
+                .with_dpl(dpl)
         }
     }
 
@@ -161,18 +161,19 @@ pub mod seg {
     }
 
     impl TaskStateDescr {
-        pub fn empty() -> Self {
-            const TYPE_TASK_AVAILABLE: u128 = 0b1001 << (8 + 32);
-            Self(TYPE_TASK_AVAILABLE)
+        pub const fn empty() -> Self {
+            Self(0)
         }
 
-        pub(super) fn new(tss: &Tss) -> Self {
-            let ptr: *const Tss = tss;
+        pub(super) fn new(tss: *mut Tss) -> Self {
+            let ptr = tss.cast_const();
             let va = ptr.addr() as u64;
             Self::empty()
                 .with_limit0(core::mem::size_of::<Tss>() as u16 - 1)
                 .with_base0(va.get_bits(0..16) as u16)
                 .with_base16(va.get_bits(16..24) as u8)
+                .with_mbo0(true)
+                .with_mbo1(true)
                 .with_cpl(MachMode::Kernel)
                 .with_present(true)
                 .with_avl(true)
@@ -183,9 +184,9 @@ pub mod seg {
     }
 }
 
-#[derive(FromZeros)]
-#[repr(C, align(65536))]
-pub struct Gdt {
+#[derive(FromZeros, Debug)]
+#[repr(C)]
+struct GdtData {
     null: seg::Descr,
     ktext: seg::Descr,
     kdata: seg::Descr,
@@ -195,25 +196,41 @@ pub struct Gdt {
     task: seg::TaskStateDescr,
 }
 
-impl Gdt {
-    pub const fn ktextsel() -> u16 {
-        core::mem::offset_of!(Gdt, ktext) as u16
-    }
-    pub const fn utextsel() -> u16 {
-        core::mem::offset_of!(Gdt, utext) as u16
-    }
-    pub const fn tasksel() -> u16 {
-        core::mem::offset_of!(Gdt, task) as u16
+impl GdtData {
+    fn init_in(page: &mut Page, tss: *mut Tss) {
+        let ptr = page.as_mut_ptr() as *mut Self;
+        let gdt = unsafe { &mut *ptr };
+        gdt.init(tss);
     }
 
-    pub fn init(&mut self, tss: &Tss) {
-        self.null = seg::Descr::empty();
+    pub fn init(&mut self, tss: *mut Tss) {
+        self.null = seg::Descr::null();
         self.ktext = seg::Descr::ktext64();
         self.kdata = seg::Descr::kdata64();
         self.udata = seg::Descr::udata64();
         self.utext = seg::Descr::utext64();
         self.unused = seg::Descr::empty();
         self.task = seg::TaskStateDescr::new(tss);
+    }
+}
+
+#[derive(FromZeros)]
+#[repr(C, align(65536))]
+pub struct Gdt(GdtData);
+
+impl Gdt {
+    pub fn init_in(page: &mut Page, tss: *mut Tss) {
+        GdtData::init_in(page, tss);
+    }
+
+    pub const fn ktextsel() -> u16 {
+        core::mem::offset_of!(GdtData, ktext) as u16
+    }
+    pub const fn utextsel() -> u16 {
+        core::mem::offset_of!(GdtData, utext) as u16
+    }
+    pub const fn tasksel() -> u16 {
+        core::mem::offset_of!(GdtData, task) as u16
     }
 
     /// # Safety
@@ -244,7 +261,7 @@ impl Gdt {
     // explicitly OR a user RPL into the STAR bits.
     // This is idempotent for CS.
     pub fn star() -> u64 {
-        const RPL_USER: u64 = dat::MachMode::User as u64;
+        const RPL_USER: u64 = MachMode::User as u64;
         const UTEXTSEL: u64 = Gdt::utextsel() as u64;
         const KTEXTSEL: u64 = Gdt::ktextsel() as u64;
         ((UTEXTSEL - 16) | RPL_USER) << 48 | KTEXTSEL << 32
@@ -268,7 +285,8 @@ impl IstIndex {
         match trapno {
             NMI_TRAPNO => IstIndex::Ist1,
             DEBUG_TRAPNO => IstIndex::Ist2,
-            DOUBLE_FAULT_TRAPNO => IstIndex::Ist3,
+            BREAKPOINT_TRAPNO => IstIndex::Ist3,
+            DOUBLE_FAULT_TRAPNO => IstIndex::Ist4,
             _ => IstIndex::Rsp0,
         }
     }
@@ -296,16 +314,16 @@ pub struct Tss {
 }
 
 impl Tss {
-    pub fn init(&mut self, stacks: &mut [(u8, &mut dyn dat::Stack)]) {
+    pub fn init(&mut self, stacks: &mut [(u8, &mut dyn Stack)]) {
         stacks.iter_mut().for_each(|(trapno, stack)| self.set_stack(*trapno, *stack));
         self.iomb = core::mem::size_of::<Tss>() as u16;
     }
 
-    pub fn set_rsp0(&mut self, stack: &mut dyn dat::Stack) {
+    pub fn set_rsp0(&mut self, stack: &mut dyn Stack) {
         self.set_stack(0, stack);
     }
 
-    fn set_stack(&mut self, trapno: u8, stack: &mut dyn dat::Stack) {
+    fn set_stack(&mut self, trapno: u8, stack: &mut dyn Stack) {
         let index = IstIndex::from_trap(trapno);
         let va = stack.top_mut().addr();
         let lower = va.get_bits(0..32) as u32;
@@ -338,11 +356,16 @@ impl Tss {
 pub struct Idt([seg::IntrGateDescr; 256]);
 
 impl Idt {
+    pub const fn empty() -> Self {
+        Idt([seg::IntrGateDescr::empty(); 256])
+    }
+
     pub fn init(&mut self, stubs: &[trap::Stub; 256]) {
         for (k, thunk) in stubs.iter().enumerate() {
             let trapno = k as u8;
             let index = IstIndex::from_trap(trapno);
-            self.0[k] = seg::IntrGateDescr::new(thunk, index);
+            let dpl = if trapno == BREAKPOINT_TRAPNO { MachMode::User } else { MachMode::Kernel };
+            self.0[k] = seg::IntrGateDescr::new(thunk, dpl, index);
         }
     }
 
@@ -356,11 +379,13 @@ impl Idt {
     }
 }
 
-pub unsafe fn init(mach: &mut dat::Mach) {
+pub unsafe fn init(mach: &mut Mach) {
     const MSR_KERNEL_GS_BASE: u32 = 0xc0000102;
     unsafe {
         mach.init();
-        cpu::wrgsbase(mach as *mut dat::Mach as usize as u64);
+        let ptr = mach as *mut Mach;
+        let me = ptr.addr() + 0x002_0000;
+        cpu::wrgsbase(me as u64);
         cpu::wrmsr(MSR_KERNEL_GS_BASE, 0);
     }
 }

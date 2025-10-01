@@ -7,6 +7,21 @@ use zerocopy::FromZeros;
 pub const UREG_TRAPNO_OFFSET: usize = 19 * core::mem::size_of::<u64>();
 pub const UREG_CS_OFFSET: usize = 22 * core::mem::size_of::<u64>();
 
+/// A Host Physical Address (HPA).
+///
+/// An HPA represents a physical address in the host physical
+/// address space (as distinct from a device or guest physical
+/// address space).
+#[derive(Clone, Copy, Debug, FromZeros)]
+#[repr(transparent)]
+pub struct HPA(pub u64);
+
+impl HPA {
+    pub fn from_phys(pa: u64) -> HPA {
+        HPA(pa)
+    }
+}
+
 /// The user register and trap frame structure.
 ///
 /// This stores both user state during system calls, and
@@ -89,11 +104,36 @@ impl Default for Label {
 
 /// The machine structure, which describes a CPU.
 ///
+/// The small stacks, for specific exceptions, come first and
+/// occupy the first 64KiB of the Mach.  These have guard pages
+/// immediately _after_ their data areas, which serve as guards
+/// for the subsequent data.  Since the Mach is mapped in a
+/// per-CPU portion of virtual address space that is offset from
+/// a 2MiB boundary, we know that the first stack is de facto
+/// guarded.
+///
+/// The main kstack for the scheduler comes next, and occupies
+/// the next 64KiB.  It is guarded by the NMI stack's guard page.
+///
+/// Thus, stacks and their guards take up the first 128KiB of
+/// virtual space in the Mach.
+///
+/// Next, we have the smaller Mach data itself; this includes the
+/// space required for the structures used in the pseudo-recursive
+/// page table implementation.
+///
 /// Warning: the layout of this structure is known to assembly
 /// language.
 #[derive(FromZeros)]
 #[repr(C, align(65536))]
 pub struct Mach {
+    pub debug_stack: ExStack, // Stack for debug exceptions
+    pub bp_stack: ExStack,    // Stack for breakpoint exceptions
+    pub df_stack: ExStack,    // Stack for double faults
+    pub nmi_stack: ExStack,   // Stack for NMIs
+    pub zero: Page,           // Mapped to (per-node) read-only zeroed page
+    pub stack: KStack,        // Kernel stack for scheduler
+
     me: *mut Mach,            // %gs:0 is a `*mut Mach` pointing to this `Mach`.
     scratch: usize,           // A scratch word used on entry to kernel
     splpc: usize,             // PC of last caller to ` k`.  Cleared by `spllo`.
@@ -114,24 +154,22 @@ pub struct Mach {
 
     sched: Label,
 
-    // Architecturally defined.
-    pub tss: Tss,
+    // All preceding data after the stack fits within a single 4KiB page.
+    // Paging structures that follow are sized in page multiples and aligned.
+    pml4: PTable,  // PML4 root page table for this Mach
+    pml3: PTable,  // PML3 for rec 512GiB (root of all subtrees)
+    pml2: PTable,  // PML2 for rec 1GiB
+    pml1: PTable,  // PML1 for rec 2MiB (PML4 and all PML3s)
+    mpml3: PTable, // PML3 for mapping region
+    mpml2: PTable, // PML2 for mapping region
+    mpml1: PTable, // PML1 for mapping region
 
-    // All preceding data fits within a single 4KiB page.  Structures
-    // that follow are sized in page multiples and aligned.
-    pml4: Page,               // PML4 root page table for this Mach
-    pml3: Page,               // The PML3 that maps the kernel for this mach
-    pml2: Page,               // PML2 for low 1GiB
-    pml1: Page,               // PML1 for low 2MiB
-    pub idt: Idt,             // Interrupt descriptor table
-    zero: Page,               // Read-only, zeroed page
-    pub df_stack: ExStack,    // Stack for double faults
-    pub debug_stack: ExStack, // Stack for debug exceptions
-    pub nmi_stack: ExStack,   // Stack for NMIs
-    pub stack: KStack,        // Kernel stack for scheduler
-    pub gdt: Gdt,             // Gdt is aligned to 64KiB.
+    // Architecturally defined data.
+    pub tss: Tss, // Truly per-CPU
+    idt: Idt,     // Mapped to per-node IDT
+    gdt: Gdt,     // Mapped to per-CPU GDT; padded to 64k with zeros
 }
-static_assertions::const_assert_eq!(core::mem::offset_of!(Mach, pml4), 4096);
+static_assertions::const_assert_eq!(core::mem::offset_of!(Mach, pml4), 65536 * 2 + 4096);
 static_assertions::const_assert_eq!(core::mem::offset_of!(Mach, stack), 65536);
 
 impl Mach {
@@ -142,10 +180,9 @@ impl Mach {
             (0, &mut self.stack),
             (trap::NMI_TRAPNO, &mut self.nmi_stack),
             (trap::DEBUG_TRAPNO, &mut self.debug_stack),
+            (trap::BREAKPOINT_TRAPNO, &mut self.bp_stack),
             (trap::DOUBLE_FAULT_TRAPNO, &mut self.df_stack),
         ]);
-        self.gdt.init(&self.tss);
-        self.idt.init(trap::stubs());
         unsafe {
             self.gdt.load();
             self.idt.load();
@@ -221,6 +258,16 @@ impl Flags {
 
     pub fn bits(self) -> u64 {
         self.0
+    }
+}
+
+#[derive(FromZeros)]
+#[repr(C, align(4096))]
+pub struct PTable([u64; 512]);
+
+impl PTable {
+    pub fn array_mut(&mut self) -> &mut [u64; 512] {
+        &mut self.0
     }
 }
 

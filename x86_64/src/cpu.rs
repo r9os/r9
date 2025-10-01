@@ -54,8 +54,8 @@ pub(crate) unsafe fn ltr(selector: u16) {
 }
 
 /// Loads the "Global Table Descriptor Register" (`GDTR`) with
-/// the base address and inclusive limit inclusive of a "Global
-/// Descriptor Table" (GDT).
+/// the base address and inclusive limit of a "Global Descriptor
+/// Table" (GDT).
 ///
 /// # Safety
 /// The referred GDT must be architecturally valid.
@@ -139,7 +139,8 @@ pub(crate) unsafe fn wrmsr(msr: u32, value: u64) {
 ///
 /// # Safety
 /// The caller must ensure that the given value makes sense as
-/// a %gs segment base value.
+/// a %gs segment base value.  Note that we assume we can use
+/// the `WRGSBASE` instruction.
 pub(crate) unsafe fn wrgsbase(value: u64) {
     unsafe {
         asm!("wrgsbase {}", in(reg) value, options(att_syntax));

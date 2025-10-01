@@ -540,7 +540,8 @@ impl QemuStep {
             Arch::X86_64 => {
                 let mut cmd = Command::new(qemu_system);
                 cmd.arg("-nographic");
-                //cmd.arg("-curses");
+                // cmd.arg("-display");
+                // cmd.arg("curses");
                 if self.kvm {
                     cmd.arg("-accel").arg("kvm");
                     cmd.arg("-cpu").arg("host,pdpe1gb,xsaveopt,fsgsbase,apic,msr");
