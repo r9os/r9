@@ -99,3 +99,11 @@ pub struct Walkqid {
 }
 
 pub struct Proc {}
+
+pub trait MMU {
+    fn put();
+    fn flush();
+    fn flushva(ptr: *const ());
+    fn switch(proc: &Proc);
+    fn release(proc: &Proc);
+}
