@@ -8,6 +8,7 @@
 /// 2. `free_unused_ranges` to mark available ranges as the inverse of the
 ///    physical memory map within the bounds of the available memory.
 use crate::kmem;
+use crate::pagealloc;
 use crate::vm::Entry;
 use crate::vm::RootPageTable;
 use crate::vm::RootPageTableType;
@@ -97,6 +98,7 @@ pub fn allocate_virtpage(
     let page_pa = allocate_physpage()?;
     let range = PhysRange::with_pa_len(page_pa, PAGE_SIZE_4K);
     if let Ok(page_va) = page_table.map_phys_range(
+        pagealloc::allocate_physpage,
         debug_name,
         &range,
         va,

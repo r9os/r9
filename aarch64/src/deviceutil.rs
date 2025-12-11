@@ -13,6 +13,7 @@ pub fn map_device_register(
     let page_physrange = physrange.round(page_size.size());
 
     if let Ok(vr) = vm::kernel_pagetable().map_phys_range(
+        pagealloc::allocate_physpage,
         id,
         &page_physrange,
         vm::next_free_device_page4k(),
@@ -37,6 +38,7 @@ pub fn alloc_device_page(
     let page_physrange = PhysRange::with_pa_len(page_pa, page_size.size());
 
     if let Ok(vr) = vm::kernel_pagetable().map_phys_range(
+        pagealloc::allocate_physpage,
         id,
         &page_physrange,
         vm::next_free_device_page4k(),

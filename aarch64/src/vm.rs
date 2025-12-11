@@ -332,6 +332,7 @@ impl Table {
     /// Return the next table in the walk.  If it doesn't exist, create it.
     fn next_mut(
         &mut self,
+        alloc_page: fn() -> Result<PhysAddr, PageAllocError>,
         pgtype: RootPageTableType,
         level: Level,
         va: usize,
@@ -341,8 +342,7 @@ impl Table {
         let mut entry = self.entries[index];
         if !entry.valid() {
             // Create a new page table and write the entry into the parent table
-            let page_pa = pagealloc::allocate_physpage();
-            //let table = Self::alloc_pagetable();
+            let page_pa = alloc_page();
             let page_pa = match page_pa {
                 Ok(p) => p,
                 Err(err) => {
@@ -403,6 +403,7 @@ impl RootPageTable {
     /// root_page_table should be a direct va - not a recursive va.
     fn map_to(
         &mut self,
+        alloc_page: fn() -> Result<PhysAddr, PageAllocError>,
         entry: Entry,
         va: usize,
         page_size: PageSize,
@@ -427,16 +428,16 @@ impl RootPageTable {
 
         let dest_entry = match page_size {
             PageSize::Page4K => self
-                .next_mut(pgtype, Level::Level0, va)
-                .and_then(|t1| t1.next_mut(pgtype, Level::Level1, va))
-                .and_then(|t2| t2.next_mut(pgtype, Level::Level2, va))
+                .next_mut(alloc_page, pgtype, Level::Level0, va)
+                .and_then(|t1| t1.next_mut(alloc_page, pgtype, Level::Level1, va))
+                .and_then(|t2| t2.next_mut(alloc_page, pgtype, Level::Level2, va))
                 .and_then(|t3| t3.entry_mut(Level::Level3, va)),
             PageSize::Page2M => self
-                .next_mut(pgtype, Level::Level0, va)
-                .and_then(|t1| t1.next_mut(pgtype, Level::Level1, va))
+                .next_mut(alloc_page, pgtype, Level::Level0, va)
+                .and_then(|t1| t1.next_mut(alloc_page, pgtype, Level::Level1, va))
                 .and_then(|t2| t2.entry_mut(Level::Level2, va)),
             PageSize::Page1G => self
-                .next_mut(pgtype, Level::Level0, va)
+                .next_mut(alloc_page, pgtype, Level::Level0, va)
                 .and_then(|t1| t1.entry_mut(Level::Level1, va)),
         };
         let dest_entry = match dest_entry {
@@ -473,6 +474,7 @@ impl RootPageTable {
     /// we should fall back to the smaller page sizes if the requested size fails.
     pub fn map_phys_range(
         &mut self,
+        alloc_page: fn() -> Result<PhysAddr, PageAllocError>,
         debug_name: &str,
         range: &PhysRange,
         va_mapping: VaMapping,
@@ -502,7 +504,14 @@ impl RootPageTable {
                 currva += page_size.size();
             }
             endva = currva + page_size.size();
-            self.map_to(entry.with_phys_addr(pa), currva, page_size, root_page_table, pgtype)?;
+            self.map_to(
+                alloc_page,
+                entry.with_phys_addr(pa),
+                currva,
+                page_size,
+                root_page_table,
+                pgtype,
+            )?;
         }
         startva.map(|startva| VirtRange(startva..endva)).ok_or(PageTableError::PhysRangeIsZero)
     }
@@ -571,6 +580,7 @@ pub unsafe fn init_kernel_page_tables(dt: &DeviceTree, dtb_physrange: PhysRange)
     for (name, range, flags, page_size) in custom_map.iter() {
         let mapped_virtrange = kernel_pagetable()
             .map_phys_range(
+                pagealloc::allocate_physpage,
                 name,
                 range,
                 VaMapping::Offset(KZERO),
