@@ -1,4 +1,5 @@
 use crate::config::Configuration;
+use clap::{Parser, Subcommand, ValueEnum};
 use config::{apply_to_build_step, apply_to_clippy_step, apply_to_qemu_step};
 use std::{
     env, fmt,
@@ -119,7 +120,233 @@ impl RustupState {
     }
 }
 
+#[derive(Debug, Subcommand)]
+enum XCommand {
+    /// Build r9
+    #[clap(verbatim_doc_comment)]
+    Build {
+        /// Build release version
+        #[arg(short, long, conflicts_with = "debug")]
+        release: bool,
+        /// Build debug version
+        #[arg(short, long, conflicts_with = "release")]
+        debug: bool,
+        /// Print commands being executed
+        #[arg(short, long)]
+        verbose: bool,
+        /// Target architecture
+        #[arg(short, long)]
+        arch: Arch,
+        /// Configuration file to use, CONFIG in <ARCH>/lib/config_<CONFIG>.toml
+        #[arg(short, long, default_value = "default")]
+        config: String,
+    },
+
+    /// Expand r9 macros
+    #[clap(verbatim_doc_comment)]
+    Expand {
+        /// Build release version
+        #[arg(short, long, conflicts_with = "debug")]
+        release: bool,
+        /// Build debug version
+        #[arg(short, long, conflicts_with = "release")]
+        debug: bool,
+        /// Print commands being executed
+        #[arg(short, long)]
+        verbose: bool,
+        /// Target architecture
+        #[arg(short, long)]
+        arch: Arch,
+        /// Configuration file to use, CONFIG in <ARCH>/lib/config_<CONFIG>.toml
+        #[arg(short, long, default_value = "default")]
+        config: String,
+    },
+
+    /// Emit r9 assembler
+    #[clap(verbatim_doc_comment)]
+    Kasm {
+        /// Build release version
+        #[arg(short, long, conflicts_with = "debug")]
+        release: bool,
+        /// Build debug version
+        #[arg(short, long, conflicts_with = "release")]
+        debug: bool,
+        /// Print commands being executed
+        #[arg(short, long)]
+        verbose: bool,
+        /// Target architecture
+        #[arg(short, long)]
+        arch: Arch,
+        /// Configuration file to use, CONFIG in <ARCH>/lib/config_<CONFIG>.toml
+        #[arg(short, long, default_value = "default")]
+        config: String,
+    },
+
+    /// Build a multibootable r9 image
+    #[clap(verbatim_doc_comment)]
+    Dist {
+        /// Build release version
+        #[arg(short, long, conflicts_with = "debug")]
+        release: bool,
+        /// Build debug version
+        #[arg(short, long, conflicts_with = "release")]
+        debug: bool,
+        /// Print commands being executed
+        #[arg(short, long)]
+        verbose: bool,
+        /// Target architecture
+        #[arg(short, long)]
+        arch: Arch,
+        /// Configuration file to use, CONFIG in <ARCH>/lib/config_<CONFIG>.toml
+        #[arg(short, long, default_value = "default")]
+        config: String,
+    },
+
+    /// Run unit tests
+    #[clap(verbatim_doc_comment)]
+    Test {
+        /// Build release version
+        #[arg(short, long, conflicts_with = "debug")]
+        release: bool,
+        /// Build debug version
+        #[arg(short, long, conflicts_with = "release")]
+        debug: bool,
+        /// Print commands being executed
+        #[arg(short, long)]
+        verbose: bool,
+        /// Output messages as JSON
+        #[arg(short, long)]
+        json: bool,
+    },
+
+    /// Run clippy
+    #[clap(verbatim_doc_comment)]
+    Clippy {
+        /// Build release version
+        #[arg(short, long, conflicts_with = "debug")]
+        release: bool,
+        /// Build debug version
+        #[arg(short, long, conflicts_with = "release")]
+        debug: bool,
+        /// Print commands being executed
+        #[arg(short, long)]
+        verbose: bool,
+        /// Target architecture
+        #[arg(short, long)]
+        arch: Arch,
+        /// Configuration file to use, CONFIG in <ARCH>/lib/config_<CONFIG>.toml
+        #[arg(short, long, default_value = "default")]
+        config: String,
+    },
+
+    /// Run check
+    #[clap(verbatim_doc_comment)]
+    Check {
+        /// Print commands being executed
+        #[arg(short, long)]
+        verbose: bool,
+        /// Output messages as JSON
+        #[arg(short, long)]
+        json: bool,
+    },
+
+    /// Run r9 under QEMU
+    #[clap(verbatim_doc_comment)]
+    Qemu {
+        /// Build release version
+        #[arg(short, long, conflicts_with = "debug")]
+        release: bool,
+        /// Build debug version
+        #[arg(short, long, conflicts_with = "release")]
+        debug: bool,
+        /// Print commands being executed
+        #[arg(short, long)]
+        verbose: bool,
+        /// Target architecture
+        #[arg(short, long)]
+        arch: Arch,
+        /// Configuration file to use, CONFIG in <ARCH>/lib/config_<CONFIG>.toml
+        #[arg(short, long, default_value = "default")]
+        config: String,
+        /// Wait for gdb connection on start
+        #[arg(short, long)]
+        gdb: bool,
+        /// Run with KVM
+        #[arg(short, long)]
+        kvm: bool,
+        /// Dump the DTB from QEMU to a file
+        #[arg(long, value_name = "path/to/foo.dtb")]
+        dump_dtb: Option<String>,
+    },
+
+    /// Cargo clean
+    #[clap(verbatim_doc_comment)]
+    Clean,
+}
+
+/// r9 build system
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = "Build support for the r9 operating system")]
+struct Cli {
+    /// Command to run
+    #[command(subcommand)]
+    cmd: XCommand,
+}
+
 fn main() {
+    let cmd = Cli::parse().cmd;
+    match cmd {
+        XCommand::Build { debug, release, verbose, arch, config } => {
+            println!("{arch:?} {debug}/{release}");
+        }
+        XCommand::Expand { debug, release, verbose, arch, config } => {
+            println!("{arch:?} {debug}/{release}");
+        }
+        XCommand::Kasm { debug, release, verbose, arch, config } => {
+            println!("{arch:?} {debug}/{release}");
+        }
+        XCommand::Dist { debug, release, verbose, arch, config } => {
+            println!("{arch:?} {debug}/{release}");
+        }
+        XCommand::Test { debug, release, verbose, json } => {
+            println!("{json:?} {debug}/{release}");
+        }
+        XCommand::Clippy { debug, release, verbose, arch, config } => {
+            println!("{arch:?} {debug}/{release}");
+        }
+        XCommand::Check { verbose, json } => {
+            println!("{json:?} {verbose}");
+        }
+        XCommand::Qemu { debug, release, verbose, arch, config, gdb, kvm, dump_dtb } => {
+            println!("{arch:?} {config} {debug}/{release}/{verbose}");
+            println!("{gdb} {dump_dtb:?}");
+            let cfg = Configuration::load(format!(
+                "{}/{}/lib/config_{}.toml",
+                workspace().display(),
+                arch.to_string().to_lowercase(),
+                config
+            ));
+            let profile = if release { Profile::Release } else { Profile::Debug };
+            let dump_dtb = dump_dtb.unwrap_or("".to_string());
+            let s1 = BuildStep { arch, config: cfg, verbose, profile };
+            let s2 = DistStep { arch, verbose, profile };
+            let cfg = Configuration::load(format!(
+                "{}/{}/lib/config_{}.toml",
+                workspace().display(),
+                arch.to_string().to_lowercase(),
+                config
+            ));
+            let s3 =
+                QemuStep { arch, config: cfg, verbose, profile, kvm, dump_dtb, wait_for_gdb: gdb };
+            s1.run().and_then(|_| s2.run()).and_then(|_| s3.run()).unwrap();
+            return;
+        }
+        XCommand::Clean => {
+            println!("clean");
+        }
+    }
+
+    /*
     let matches = clap::Command::new("xtask")
         .version("0.1.0")
         .author("The r9 Authors")
@@ -232,6 +459,7 @@ fn main() {
         eprintln!("{e}");
         process::exit(1);
     }
+    */
 }
 
 fn env_or(var: &str, default: &str) -> String {
