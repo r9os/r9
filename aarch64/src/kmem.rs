@@ -70,27 +70,27 @@ fn eearly_pagetables_addr() -> usize {
 }
 
 pub fn boottext_range() -> PhysRange {
-    PhysRange(from_virt_to_physaddr(base_addr())..from_virt_to_physaddr(eboottext_addr()))
+    PhysRange::new(from_virt_to_physaddr(base_addr()), from_virt_to_physaddr(eboottext_addr()))
 }
 
 pub fn text_range() -> PhysRange {
-    PhysRange(from_virt_to_physaddr(text_addr())..from_virt_to_physaddr(etext_addr()))
+    PhysRange::new(from_virt_to_physaddr(text_addr()), from_virt_to_physaddr(etext_addr()))
 }
 
 pub fn rodata_range() -> PhysRange {
-    PhysRange(from_virt_to_physaddr(rodata_addr())..from_virt_to_physaddr(erodata_addr()))
+    PhysRange::new(from_virt_to_physaddr(rodata_addr()), from_virt_to_physaddr(erodata_addr()))
 }
 
 pub fn data_range() -> PhysRange {
-    PhysRange(from_virt_to_physaddr(data_addr())..from_virt_to_physaddr(edata_addr()))
+    PhysRange::new(from_virt_to_physaddr(data_addr()), from_virt_to_physaddr(edata_addr()))
 }
 
 pub fn bss_range() -> PhysRange {
-    PhysRange(from_virt_to_physaddr(bss_addr())..from_virt_to_physaddr(ebss_addr()))
+    PhysRange::new(from_virt_to_physaddr(bss_addr()), from_virt_to_physaddr(ebss_addr()))
 }
 
 pub fn total_kernel_range() -> PhysRange {
-    PhysRange(from_virt_to_physaddr(base_addr())..from_virt_to_physaddr(end_addr()))
+    PhysRange::new(from_virt_to_physaddr(base_addr()), from_virt_to_physaddr(end_addr()))
 }
 
 /// Transform the physical address to a virtual address, under the assumption that

@@ -105,18 +105,18 @@ impl<const NUM_BITMAPS: usize, const BITMAP_SIZE_BYTES: usize>
     ) -> Result<(), PageAllocError> {
         let mut next_start = available_mem.start();
         for range in used_ranges {
-            if next_start < range.0.start {
-                self.mark_free(&PhysRange::new(next_start, range.0.start))?;
+            if next_start < range.start {
+                self.mark_free(&PhysRange::new(next_start, range.start))?;
             }
-            if next_start < range.0.end {
-                next_start = range.0.end;
+            if next_start < range.end {
+                next_start = range.end;
             }
         }
         if next_start < available_mem.end() {
             self.mark_free(&PhysRange::new(next_start, available_mem.end()))?;
         }
 
-        self.end = available_mem.0.end;
+        self.end = available_mem.end;
 
         // Mark everything past the end point as allocated
         let end_range = PhysRange::new(self.end, PhysAddr::new(self.max_bytes() as u64));
@@ -217,7 +217,7 @@ impl<const NUM_BITMAPS: usize, const BITMAP_SIZE_BYTES: usize>
         mark_allocated: bool,
         check_end: bool,
     ) -> Result<(), PageAllocError> {
-        if check_end && range.0.end > self.end {
+        if check_end && range.end > self.end {
             return Err(PageAllocError::OutOfBounds);
         }
 

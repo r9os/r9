@@ -513,7 +513,7 @@ impl RootPageTable {
                 pgtype,
             )?;
         }
-        startva.map(|startva| VirtRange(startva..endva)).ok_or(PageTableError::PhysRangeIsZero)
+        startva.map(|startva| VirtRange::new(startva, endva)).ok_or(PageTableError::PhysRangeIsZero)
     }
 }
 

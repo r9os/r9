@@ -94,7 +94,7 @@ fn print_stacks() {
 
     let interrupt_stack_base = unsafe { interruptstackbase.as_ptr().addr() };
     let interrupt_stack_max = interrupt_stack_base + unsafe { interruptstacksz.as_ptr().addr() };
-    let range = VirtRange(interrupt_stack_base..interrupt_stack_max);
+    let range = VirtRange::new(interrupt_stack_base, interrupt_stack_max);
     let range_size = range.size();
     println!("Interrupt stack:\t {range} ({range_size:#x})");
 }
