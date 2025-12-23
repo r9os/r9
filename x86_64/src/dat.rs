@@ -4,6 +4,10 @@ use bitstruct::bitstruct;
 use port::dat as portdat;
 use zerocopy::FromZeros;
 
+pub const KCPUZERO: usize = 0xffff_ff00_0000_0000;
+pub const KMACH: usize = KCPUZERO + 0x0010_0000;
+pub const KMACHTSS: usize = KMACH + core::mem::offset_of!(Mach, tss);
+
 pub const UREG_TRAPNO_OFFSET: usize = 19 * core::mem::size_of::<u64>();
 pub const UREG_CS_OFFSET: usize = 22 * core::mem::size_of::<u64>();
 
@@ -77,7 +81,78 @@ pub struct Ureg {
     ss: u64,
 }
 
-#[derive(Clone, Debug, FromZeros)]
+/// A structured representation of a trap, as derived
+/// from a trap number.
+#[derive(Clone, Copy, Debug)]
+#[repr(u8)]
+pub enum Trap {
+    DE,
+    DB,
+    NMI,
+    BP,
+    OF,
+    BR,
+    UD,
+    NM,
+    DF,
+    CoSegOvr,
+    TS,
+    NP,
+    SS,
+    GP,
+    PF,
+    Res15,
+    MF,
+    AC,
+    MC,
+    XM,
+    VE,
+    CP,
+    #[allow(unused)]
+    Reserved(u8),
+    #[allow(unused)] // XXX: remove soon.
+    Intr(u8),
+}
+
+impl From<u8> for Trap {
+    fn from(trapno: u8) -> Trap {
+        match trapno {
+            0 => Trap::DE,
+            1 => Trap::DB,
+            2 => Trap::NMI,
+            3 => Trap::BP,
+            4 => Trap::OF,
+            5 => Trap::BR,
+            6 => Trap::UD,
+            7 => Trap::NM,
+            8 => Trap::DF,
+            9 => Trap::CoSegOvr,
+            10 => Trap::TS,
+            11 => Trap::NP,
+            12 => Trap::SS,
+            13 => Trap::GP,
+            14 => Trap::PF,
+            15 => Trap::Res15,
+            16 => Trap::MF,
+            17 => Trap::AC,
+            18 => Trap::MC,
+            19 => Trap::XM,
+            20 => Trap::VE,
+            21 => Trap::CP,
+            22..=31 => Trap::Reserved(trapno),
+            _ => Trap::Intr(trapno),
+        }
+    }
+}
+
+/// A label is a place where we can `swtch` to.
+///
+/// This is essentially a structured representation
+/// of the ABI-defined callee-saved general purpose
+/// registers.
+///
+/// Floating-point state is maintained separately.
+#[derive(Clone, Debug, Default, FromZeros)]
 #[repr(C)]
 pub struct Label {
     pub pc: u64,
@@ -93,12 +168,6 @@ pub struct Label {
 impl Label {
     pub const fn new() -> Label {
         Label { pc: 0, sp: 0, fp: 0, rbx: 0, r12: 0, r13: 0, r14: 0, r15: 0 }
-    }
-}
-
-impl Default for Label {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -308,8 +377,8 @@ pub trait Stack {
 }
 
 /// A small stack that we can use for exception handlers
-/// that require their own stack (NMI, Debug, and Double
-/// Fault).
+/// that require their own stack (NMI, Breakpoint, Debug,
+/// and Double Fault).
 #[derive(FromZeros)]
 #[repr(C, align(8192))]
 pub struct ExStack(Page);

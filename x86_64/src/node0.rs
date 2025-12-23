@@ -1,6 +1,6 @@
 //! Initialization for ccNUMA node 0 and CPU 0 Mach
 //!
-//! Setup of the initial address space for node 0 and the Mach
+//! Setting up the initial address space for node 0 and the Mach
 //! for CPU 0 is tedious.  Plan 9 does this in assembly code,
 //! but we prefer to do it in Rust.
 //!
@@ -18,7 +18,7 @@
 //! expected address range, but memory is still addressible at
 //! physical addresses via the identity mapping, and we can
 //! call this code to construct the address space for node 0 and
-//! Mach 0, and remap the kernel, before we jump into `main`.
+//! Mach 0 and remap the kernel, before we jump into `main`.
 //!
 //! The argument is a raw pointer to an array of "low memory"
 //! page frames, which we understand cover the second megabyte
@@ -36,7 +36,8 @@
 //! The return value is the physical address of the newly
 //! initialized PML4.
 
-use crate::dat::{Gdt, HPA, Idt, Mach, PTable, Page, Tss};
+use crate::dat::KMACHTSS;
+use crate::dat::{Gdt, HPA, Idt, PTable, Page, Tss};
 use crate::trap;
 
 const X: u64 = 0 << 63;
@@ -124,9 +125,6 @@ pub unsafe extern "C" fn init0(lomem: *mut Page) -> HPA {
     let mpml2 = unsafe { &mut *lomem.add(38).cast::<PTable>() };
     let mpml1 = unsafe { &mut *lomem.add(39).cast::<PTable>() };
 
-    const KCPUZERO: usize = 0xffff_ff00_0000_0000;
-    const KMACH: usize = KCPUZERO + 0x0100_0000;
-    const KMACHTSS: usize = KMACH + core::mem::offset_of!(Mach, tss);
     idt.init(trap::stubs());
     Gdt::init_in(gdt_page, KMACHTSS as *mut Tss);
     let mut phys = [HPA::from_phys(0); 29];
@@ -162,7 +160,7 @@ pub unsafe extern "C" fn init0(lomem: *mut Page) -> HPA {
     kpml2.array_mut()[1] = X | 0x0020_0000 | L | RO | P;
     kpml2.array_mut()[2] = NX | 0x0040_0000 | L | RO | P;
     kpml2.array_mut()[3] = NX | 0x0060_0000 | L | RW | P;
-    kpml1.array_mut()[0] = NX | 0x0000_0000 | RW | P;
+    kpml1.array_mut()[0] = NX /*| 0x0000_0000*/ | RW | P;
     kpml1.array_mut()[7] = NX | 0x0007_0000 | RW | P;
     for k in 32..64 {
         kpml1.array_mut()[k] = NX | (k as u64 * 4096) | RW | P;
@@ -177,7 +175,7 @@ pub unsafe extern "C" fn init0(lomem: *mut Page) -> HPA {
 
     // These assignments set up the empty page tables that
     // cover the "Mapping Region", which is what Hypatia calls
-    // the "Linkage Segment").
+    // the "Linkage Segment".
     pml4.array_mut()[509] = NX | ptr2hpa(mpml3).0 | RW | P;
     mpml3.array_mut()[511] = NX | ptr2hpa(mpml2).0 | RW | P;
     mpml2.array_mut()[511] = NX | ptr2hpa(mpml1).0 | RW | P;

@@ -7,6 +7,8 @@ use crate::dat::{Flags, Gdt, Idt};
 use bit_field::BitField;
 use core::arch::asm;
 
+pub const MSR_KERNEL_GS_BASE: u32 = 0xc0000102;
+
 /// Retrieves a copy of the `RFLAGS` registers.
 pub(crate) fn flags() -> Flags {
     const MB1: u64 = 0b10;

@@ -5,7 +5,7 @@
 //! but that's already busy enough without polluting it with
 //! this goo.
 
-use crate::cpu;
+use crate::cpu::{self, MSR_KERNEL_GS_BASE};
 use crate::dat::{Mach, MachMode, Page, Stack};
 use crate::trap;
 use crate::trap::BREAKPOINT_TRAPNO;
@@ -300,6 +300,7 @@ pub struct Tss {
     _rsp1: [u32; 2],
     _rsp2: [u32; 2],
     _res1: u32,
+    _res2: u32,
     ist1: [u32; 2],
     ist2: [u32; 2],
     ist3: [u32; 2],
@@ -380,7 +381,6 @@ impl Idt {
 }
 
 pub unsafe fn init(mach: &mut Mach) {
-    const MSR_KERNEL_GS_BASE: u32 = 0xc0000102;
     unsafe {
         mach.init();
         let ptr = mach as *mut Mach;

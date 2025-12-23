@@ -208,7 +208,7 @@ start:
 	// Jump to the code that initialized ccNUMA node 0 and the
 	// cpu0 Mach, returning to warp64, which removes the
 	// identity map, sets the SP to the scheduler stack, and
-	// jumps
+	// jumps into `main` in Rust.
 	leaq	KMACH, %rdi
 	leaq	KLOSTK, %rsp
 	movabsq	$warp64, %rax
@@ -220,6 +220,7 @@ start:
 warp64:
 	// Now load the stack pointer with our Mach stack.
 	movabsq	$(KCPUZERO+KMACH), %rdi
+	wrgsbase %rdi
 	leaq	MACHSTKOFF+MACHSTKSZ(%rdi), %rsp
 	// At this point, we are fully in the kernel virtual
 	// address space and can discard the identity mapping.

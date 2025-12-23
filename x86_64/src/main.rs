@@ -60,6 +60,7 @@ pub extern "C" fn main(mach: &mut dat::Mach, _mbdata: u64) {
     }
     println!("came out the other side of a context switch");
     trap::splx(x);
+    unsafe { core::arch::asm!("int3") };
     loop {
         trap::spllo();
     }
