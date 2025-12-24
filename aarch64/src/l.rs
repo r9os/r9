@@ -13,16 +13,12 @@ const AUX_MU_IER: u32 = AUX_MU + 0x04;
 const AUX_MU_IIR: u32 = AUX_MU + 0x08;
 const AUX_MU_LCR: u32 = AUX_MU + 0x0c;
 const AUX_MU_MCR: u32 = AUX_MU + 0x10;
+const AUX_MU_LSR: u32 = AUX_MU + 0x14;
 const AUX_MU_CNTL: u32 = AUX_MU + 0x20;
 const AUX_MU_BAUD: u32 = AUX_MU + 0x28;
 
-// AUX_MU_MCR			= AUX_MU + 0x10
-const AUX_MU_LSR: u32 = AUX_MU + 0x14;
-
-const GPIO: u32 = MMIO_BASE + 0x00200000; // Offset from MMIO base
+const GPIO: u32 = MMIO_BASE + 0x00200000;
 const GPFSEL1: u32 = GPIO + 0x04;
-// GPPUD				= GPIO + 0x94
-// GPPUDCLK0			= GPIO + 0x98
 const GPIO_PUP_PDN_CNTRL_REG0: u32 = GPIO + 0xe4;
 
 // Set up a very early uart - the miniuart.  The full driver is in
@@ -34,6 +30,7 @@ pub extern "C" fn init_early_uart_rpi4() {
     const UART_BAUDRATE: u32 = 115200;
     const UART_BAUDRATE_REG: u32 = (UART_CLOCK / (UART_BAUDRATE * 8)) - 1;
 
+    // Initialise the miniuart
     unsafe {
         write_or_volatile(AUX_ENABLES as *mut u32, 1);
         write_volatile(AUX_MU_CNTL as *mut u32, 0);
@@ -44,6 +41,7 @@ pub extern "C" fn init_early_uart_rpi4() {
         write_volatile(AUX_MU_BAUD as *mut u32, UART_BAUDRATE_REG);
     }
 
+    // Initialise GPIO pins for minuart
     unsafe {
         // Set up GPIO pin 14 pull up/down state
         // Mask all but bits 28:29
@@ -70,6 +68,7 @@ pub extern "C" fn init_early_uart_rpi4() {
         write_volatile(GPFSEL1 as *mut u32, gpfsel1_val);
     }
 
+    // Enable miniuart
     unsafe {
         write_volatile(AUX_MU_CNTL as *mut u32, 3);
     }
