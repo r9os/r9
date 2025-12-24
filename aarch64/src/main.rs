@@ -12,6 +12,7 @@ mod devcons;
 mod deviceutil;
 mod io;
 mod kmem;
+mod l;
 mod mailbox;
 mod pagealloc;
 mod param;

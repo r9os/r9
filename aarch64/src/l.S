@@ -1,4 +1,4 @@
-// Aarch64 entry (Raspberry Pi 3, 4 focussed)
+// Aarch64 entry (Raspberry Pi 4 focused)
 
 STACKSZ = 4096*4
 
@@ -78,38 +78,8 @@ MiB				= (1<<20)
 GiB				= (1<<30)
 
 // Constants for early uart setup
-MMIO_BASE_RPI3			= 0x3f000000
 MMIO_BASE_RPI4			= 0xfe000000
-
 GPIO				= 0x00200000	// Offset from MMIO base
-GPFSEL1				= GPIO + 0x04
-GPPUD				= GPIO + 0x94
-GPPUDCLK0			= GPIO + 0x98
-GPIO_PUP_PDN_CNTRL_REG0		= GPIO + 0xe4
-
-GPFSEL1_FSEL14_MASK		= 0xffff8fff	// Mask all but bits 12:14 (pin 14)
-GPFSEL1_FSEL14_ALT5		= 0x00002000	// Pin 14, ALT5
-GPFSEL1_FSEL15_MASK		= 0xfffc7fff	// Mask all but bits 15:17 (pin 15)
-GPFSEL1_FSEL15_ALT5		= 0x00010000	// Pin 15, ALT5
-GPIO_PUP_PDN_CNTRL_REG0_MASK_14	= 0xcfffffff	// Mask all but bits 28:29
-GPIO_PUP_PDN_CNTRL_REG0_MASK_15	= 0x3fffffff	// Mask all but bits 30:31
-GPPUD_ENABLE_14_15		= 0x0000c000	// Enable pins 14, 15
-
-AUX				= 0x00215000	// Offset from MMIO base
-AUX_ENABLES			= AUX + 0x04
-AUX_MU				= AUX + 0x40
-AUX_MU_IER			= AUX_MU + 0x04
-AUX_MU_IIR			= AUX_MU + 0x08
-AUX_MU_LCR			= AUX_MU + 0x0c
-AUX_MU_MCR			= AUX_MU + 0x10
-AUX_MU_LSR			= AUX_MU + 0x14
-AUX_MU_CNTL			= AUX_MU + 0x20
-AUX_MU_BAUD			= AUX_MU + 0x28
-
-// Calculate the baudrate to be inserted into AUX_MU_BAUD
-UART_CLOCK			= 500000000
-UART_BAUDRATE			= 115200
-UART_BAUDRATE_REG		= ((UART_CLOCK/(UART_BAUDRATE*8))-1)
 
 // Exception vector IDs
 SYNC_INVALID_EL1t		= 0
@@ -132,59 +102,6 @@ IRQ_INVALID_EL0_32		= 13
 FIQ_INVALID_EL0_32		= 14
 ERROR_INVALID_EL0_32		= 15
 
-// Simple spin macro
-//  reg: Scratch register
-//  numcycles: Number of cycles to spin
-.macro spin reg, numcycles
-	mov	\reg, \numcycles
-1:	isb
-	subs	\reg, \reg, #1
-	cbnz	\reg, 1b
-.endm
-
-// Write a character to the miniuart
-// Overwrites x0, x1, x2
-// Assumes MMIO base is in x26
-.macro putc aux_mu, aux_mu_lsr, chr
-	movz	x1, #:abs_g0_nc:\aux_mu
-	movk	x1, #:abs_g1:\aux_mu
-	add	x0, x1, x26
-	movz	x1, #:abs_g0_nc:\aux_mu_lsr
-	movk	x1, #:abs_g1:\aux_mu_lsr
-	add	x1, x1, x26
-	// Wait for miniuart to become ready to transmit, then write a byte
-1\@:	ldr	w2, [x1]
-	tbz	w2, #5, 1\@b
-	mov	w2, \chr
-	str	w2, [x0]
-.endm
-
-// Write newline to the miniuart
-// Overwrites x0, x1, x2
-// Assumes MMIO base is in x26
-.macro putnewline aux_mu, aux_mu_lsr
-	putc	\aux_mu, \aux_mu_lsr, '\r'
-	putc	\aux_mu, \aux_mu_lsr, '\n'
-.endm
-
-// Define the macro to write a u64 in hex value using putc
-// Overwrites x0, x1, x2, x3, x4
-// Assumes MMIO base is in x26
-.macro putu64 aux_mu, aux_mu_lsr, Xval
-	mov	x3, #60			// Amount to shift by
-1\@:	lsr	x4, \Xval, x3
-	and	x4, x4, #0xf		// Mask off digit
-	cmp	x4, #10
-	bge	3\@f
-	add	x4, x4, #'0'		// 0-9
-	b	4\@f
-3\@:	sub	x4, x4, #10		// a-f
-	add	x4, x4, #'a'
-4\@:	putc	\aux_mu, \aux_mu_lsr, w4
-	subs	x3, x3, #4
-	bpl	1\@b
-.endm
-
 .section .boottext, "awx"
 .globl start
 start:
@@ -193,7 +110,6 @@ start:
 	// used again.  There's also a couple that are best avoided out of
 	// principle.
 
-	// x26: MMIO base (to be set later)
 	// x27: DTB address
 	// x28: Entrypoint address
 	// x29: Frame pointer
@@ -251,239 +167,26 @@ el2:	// Now in EL2, so prepare jump to EL1
 
 el1:	// In EL1
 
-	// Set up a very early uart - the miniuart.  The full driver is in
-	// uartmini.rs.  This code is just enough to help debug the early stage.
-	// Unfortunately raspberry pi 3 and 4 have differences in miniuart init.
+	// Set up the initial stack using the physical address
+	ldr	x0, =stack
+	ldr	x2, =(KZERO)
+	sub	x0, x0, x2
+	add	x0, x0, #STACKSZ
+	mov	sp, x0
 
-	// We can get the board ID from the midr_el1 register (PartNum [15:4]),
-	// and use that to work out the appropriate MMIO base.
-	mrs	x0, midr_el1
-	lsr	x0, x0, #4
-	and	x0, x0, #0xfff
-	cmp	x0, #0xd03	// Check for rpi3
-	bne	.rpi4uart
+	// Clear BSS using physical addresses
+	ldr	x0, =bss		// Start address
+	sub	x0, x0, x2
+	ldr	x1, =end		// End of bss
+	sub	x1, x1, x2
+1:	str	xzr, [x0], #8
+	cmp	x0, x1
+	b.ne	1b
 
-	// We must be on a raspberry pi 3, which has a different MMIO base, and
-	// a different method for configuring the miniuart...
-	mov	x26, MMIO_BASE_RPI3
+	bl	init_early_uart_rpi4
 
-	// x0 AUX_ENABLES
-	movz	x1, #:abs_g0_nc:AUX_ENABLES
-	movk	x1, #:abs_g1:AUX_ENABLES
-	add	x0, x1, x26
-	ldr	w1, [x0]
-	orr	w1, w1, #1
-	str	w1, [x0]
-
-	// x0 AUX_MU_CNTL
-	movz	x1, #:abs_g0_nc:AUX_MU_CNTL
-	movk	x1, #:abs_g1:AUX_MU_CNTL
-	add	x0, x1, x26
-	str	wzr, [x0]
-
-	// x0 AUX_MU_LCR
-	movz	x1, #:abs_g0_nc:AUX_MU_LCR
-	movk	x1, #:abs_g1:AUX_MU_LCR
-	add	x0, x1, x26
-	mov	w1, #3
-	str	w1, [x0]
-
-	// x0 AUX_MU_MCR
-	movz	x1, #:abs_g0_nc:AUX_MU_MCR
-	movk	x1, #:abs_g1:AUX_MU_MCR
-	add	x0, x1, x26
-	str	wzr, [x0]
-
-	// x0 AUX_MU_IER
-	movz	x1, #:abs_g0_nc:AUX_MU_IER
-	movk	x1, #:abs_g1:AUX_MU_IER
-	add	x0, x1, x26
-	str	wzr, [x0]
-
-	// x0 AUX_MU_IIR
-	movz	x1, #:abs_g0_nc:AUX_MU_IIR
-	movk	x1, #:abs_g1:AUX_MU_IIR
-	add	x0, x1, x26
-	mov	w1, #0xc6
-	str	w1, [x0]
-
-	// x0 AUX_MU_BAUD
-	movz	x1, #:abs_g0_nc:AUX_MU_BAUD
-	movk	x1, #:abs_g1:AUX_MU_BAUD
-	add	x0, x1, x26
-	mov	w1, UART_BAUDRATE_REG
-	str	w1, [x0]
-
-	// Set GPIO pins 14 to be used for ALT5 - UART1 (miniuart)
-	// x0 GPFSEL1
-	movz	x1, #:abs_g0_nc:GPFSEL1
-	movk	x1, #:abs_g1:GPFSEL1
-	add	x0, x1, x26
-	ldr	w1, [x0]
-	movz	w2, #:abs_g0_nc:GPFSEL1_FSEL14_MASK
-	movk	w2, #:abs_g1:GPFSEL1_FSEL14_MASK
-	and	w1, w1, w2
-	movz	w2, #:abs_g0_nc:GPFSEL1_FSEL14_ALT5
-	movk	w2, #:abs_g1:GPFSEL1_FSEL14_ALT5
-	orr	w1, w1, w2
-	str	w1, [x0]
-
-	// Set GPIO pins 15 to be used for ALT5 - UART1 (miniuart)
-	// x0 GPFSEL1
-	movz	x1, #:abs_g0_nc:GPFSEL1
-	movk	x1, #:abs_g1:GPFSEL1
-	add	x0, x1, x26
-	ldr	w1, [x0]
-	movz	w2, #:abs_g0_nc:GPFSEL1_FSEL15_MASK
-	movk	w2, #:abs_g1:GPFSEL1_FSEL15_MASK
-	and	w1, w1, w2
-	movz	w2, #:abs_g0_nc:GPFSEL1_FSEL15_ALT5
-	movk	w2, #:abs_g1:GPFSEL1_FSEL15_ALT5
-	orr	w1, w1, w2
-	str	w1, [x0]
-
-	// Set up GPIO pull up/down state
-	// x0 GPPUD
-	movz	x1, #:abs_g0_nc:GPPUD
-	movk	x1, #:abs_g1:GPPUD
-	add	x0, x1, x26
-	str	wzr, [x0]
-
-	spin	x3, #150
-
-	// x0 GPPUDCLK0
-	movz	x1, #:abs_g0_nc:GPPUDCLK0
-	movk	x1, #:abs_g1:GPPUDCLK0
-	add	x0, x1, x26
-	ldr	w1, =GPPUD_ENABLE_14_15
-	str	w1, [x0]
-
-	spin	x3, #150
-
-	// Write 0 to GPPUDCLK0
-	str	wzr, [x1]
-
-	// x0 AUX_MU_CNTL
-	movz	x1, #:abs_g0_nc:AUX_MU_CNTL
-	movk	x1, #:abs_g1:AUX_MU_CNTL
-	add	x0, x1, x26
-	mov	w1, #3
-	str	w1, [x0]
-
-	b	.uartinitdone
-
-.rpi4uart:
-	// We're on a raspberry pi 4, or assume future boards have the same uart
-	mov	x26, MMIO_BASE_RPI4
-
-	// x0 AUX_ENABLES
-	movz	x1, #:abs_g0_nc:AUX_ENABLES
-	movk	x1, #:abs_g1:AUX_ENABLES
-	add	x0, x1, x26
-	ldr	w1, [x0]
-	orr	w1, w1, #1
-	str	w1, [x0]
-
-	// x0 AUX_MU_CNTL
-	movz	x1, #:abs_g0_nc:AUX_MU_CNTL
-	movk	x1, #:abs_g1:AUX_MU_CNTL
-	add	x0, x1, x26
-	str	wzr, [x0]
-
-	// x0 AUX_MU_LCR
-	movz	x1, #:abs_g0_nc:AUX_MU_LCR
-	movk	x1, #:abs_g1:AUX_MU_LCR
-	add	x0, x1, x26
-	mov	w1, #3
-	str	w1, [x0]
-
-	// x0 AUX_MU_MCR
-	movz	x1, #:abs_g0_nc:AUX_MU_MCR
-	movk	x1, #:abs_g1:AUX_MU_MCR
-	add	x0, x1, x26
-	str	wzr, [x0]
-
-	// x0 AUX_MU_IER
-	movz	x1, #:abs_g0_nc:AUX_MU_IER
-	movk	x1, #:abs_g1:AUX_MU_IER
-	add	x0, x1, x26
-	str	wzr, [x0]
-
-	// x0 AUX_MU_IIR
-	movz	x1, #:abs_g0_nc:AUX_MU_IIR
-	movk	x1, #:abs_g1:AUX_MU_IIR
-	add	x0, x1, x26
-	mov	w1, #0xc6
-	str	w1, [x0]
-
-	// x0 AUX_MU_BAUD
-	movz	x1, #:abs_g0_nc:AUX_MU_BAUD
-	movk	x1, #:abs_g1:AUX_MU_BAUD
-	add	x0, x1, x26
-	mov	w1, UART_BAUDRATE_REG
-	str	w1, [x0]
-
-	// Set up GPIO pin 14 pull up/down state
-	// x0 GPIO_PUP_PDN_CNTRL_REG0
-	movz	x1, #:abs_g0_nc:GPIO_PUP_PDN_CNTRL_REG0
-	movk	x1, #:abs_g1:GPIO_PUP_PDN_CNTRL_REG0
-	add	x0, x1, x26
-	ldr	w1, [x0]
-	movz	w2, #:abs_g0_nc:GPIO_PUP_PDN_CNTRL_REG0_MASK_14
-	movk	w2, #:abs_g1:GPIO_PUP_PDN_CNTRL_REG0_MASK_14
-	and	w1, w1, w2
-	// Pull none (0) - just use mask
-	str	w1, [x0]
-
-	// Set GPIO pins 14 to be used for ALT5 - UART1 (miniuart)
-	// x0 GPFSEL1
-	movz	x1, #:abs_g0_nc:GPFSEL1
-	movk	x1, #:abs_g1:GPFSEL1
-	add	x0, x1, x26
-	ldr	w1, [x0]
-	movz	w2, #:abs_g0_nc:GPFSEL1_FSEL14_MASK
-	movk	w2, #:abs_g1:GPFSEL1_FSEL14_MASK
-	and	w1, w1, w2
-	movz	w2, #:abs_g0_nc:GPFSEL1_FSEL14_ALT5
-	movk	w2, #:abs_g1:GPFSEL1_FSEL14_ALT5
-	orr	w1, w1, w2
-	str	w1, [x0]
-
-	// Set up GPIO pin 15 pull up/down state
-	// x0 GPIO_PUP_PDN_CNTRL_REG0
-	movz	x1, #:abs_g0_nc:GPIO_PUP_PDN_CNTRL_REG0
-	movk	x1, #:abs_g1:GPIO_PUP_PDN_CNTRL_REG0
-	add	x0, x1, x26
-	ldr	w1, [x0]
-	movz	w2, #:abs_g0_nc:GPIO_PUP_PDN_CNTRL_REG0_MASK_15
-	movk	w2, #:abs_g1:GPIO_PUP_PDN_CNTRL_REG0_MASK_15
-	and	w1, w1, w2
-	// Pull none (0) - just use mask
-	str	w1, [x0]
-
-	// Set GPIO pins 15 to be used for ALT5 - UART1 (miniuart)
-	// x0 GPFSEL1
-	movz	x1, #:abs_g0_nc:GPFSEL1
-	movk	x1, #:abs_g1:GPFSEL1
-	add	x0, x1, x26
-	ldr	w1, [x0]
-	movz	w2, #:abs_g0_nc:GPFSEL1_FSEL15_MASK
-	movk	w2, #:abs_g1:GPFSEL1_FSEL15_MASK
-	and	w1, w1, w2
-	movz	w2, #:abs_g0_nc:GPFSEL1_FSEL15_ALT5
-	movk	w2, #:abs_g1:GPFSEL1_FSEL15_ALT5
-	orr	w1, w1, w2
-	str	w1, [x0]
-
-	// x0 AUX_MU_CNTL
-	movz	x1, #:abs_g0_nc:AUX_MU_CNTL
-	movk	x1, #:abs_g1:AUX_MU_CNTL
-	add	x0, x1, x26
-	mov	w1, #3
-	str	w1, [x0]
-
-.uartinitdone:
-	putc	AUX_MU, AUX_MU_LSR, #'.'
+	mov	x0, #'.'
+	bl	init_early_uart_putc
 
 	// AArch64 memory management examples
 	//  https://developer.arm.com/documentation/102416/0100
@@ -587,17 +290,10 @@ el1:	// In EL1
 
 higher_half:
 	// Now that the kernel is mapped, the MMU is enabled and we're in the
-	// higher half, we can set up the initial stack.
+	// higher half, we can set up the initial stack using the virtual address.
 	ldr	x0, =stack
 	add	x0, x0, #STACKSZ
 	mov	sp, x0
-
-	// Clear bss
-	ldr	x0, =bss		// Start address
-	ldr	x1, =end		// End of bss
-1:	str	xzr, [x0], #8
-	cmp	x0, x1
-	b.ne	1b
 
 	// Jump to rust, passing DTB pointer (in x27, then map to upper half)
 	ldr	x0, =(KZERO)
