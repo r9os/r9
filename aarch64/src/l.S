@@ -25,61 +25,15 @@ SPSR_EL2_D			= (1<<9)		// Debug exception
 
 CPACR_EL1_FPEN			= (1<<21) | (1<<20)	// Don't trap FPU instr at EL1,0
 
-TCR_EL1_IPS			= (4 << 32)		// 48bit physical addresses
-TCR_EL1_TG1			= (2 << 30)		// TTBR1_EL1 4KiB granule
-TCR_EL1_SH1			= (3 << 28)		//
-TCR_EL1_ORGN1			= (1 << 26)		//
-TCR_EL1_IRGN1			= (1 << 24)		//
-TCR_EL1_T1SZ			= (16 << 16)		// 2^(64-N) size offset of region addressed by TTBR1_EL1: 2^(64-N)
-TCR_EL1_TG0			= (0 << 14)		// TTBR0_EL1 4KiB granule
-TCR_EL1_SH0			= (3 << 12)		//
-TCR_EL1_ORGN0			= (1 << 10)		//
-TCR_EL1_IRGN0			= (1 << 8)		//
-TCR_EL1_T0SZ			= (16 << 0)		// 2^(64-N) size offset of region addressed by TTBR0_EL1: 2^(64-N)
-TCR_EL1				= (TCR_EL1_IPS|TCR_EL1_TG1|TCR_EL1_SH1|TCR_EL1_ORGN1|TCR_EL1_IRGN1|TCR_EL1_T1SZ|TCR_EL1_TG0|TCR_EL1_SH0|TCR_EL1_ORGN0|TCR_EL1_IRGN0|TCR_EL1_T0SZ)
-
 SCTLR_EL1_I			= (1 << 12)		// Instruction access cacheability
 SCTLR_EL1_C			= (1 << 2)		// Data cacheability
 SCTLR_EL1_M			= (1 << 0)		// Enable MMU
 SCTLR_EL1			= (SCTLR_EL1_I|SCTLR_EL1_C|SCTLR_EL1_M)
 
-// Preset memory attributes.  This register stores 8 8-bit presets that are
-// referenced by index in the page table entries:
-//  [0] 0xff - Normal
-//  [1] 0x00 - Device (Non-gathering, non-reordering, no early write acknowledgement (most restrictive))
-MAIR_EL1			= 0x00ff
-PT_MAIR_NORMAL			= (0<<2)		// Use normal memory attributes
-PT_MAIR_DEVICE			= (1<<2)		// Use device memory attributes
-
-PT_PAGE				= 3			// 4KiB granule
-PT_BLOCK			= 1			// 2MiB granule
-
-// Page table entry AP Flag
-PT_AP_KERNEL_RW			= (0<<6)		// Kernel: rw
-PT_AP_KERNEL_RW_USER_RW		= (1<<6)		// Kernel: rw, User: rw
-PT_AP_KERNEL_RO			= (2<<6)		// Kernel: r
-PT_AP_KERNEL_RO_USER_RO		= (3<<6)		// Kernel: r, User: r
-
-PT_AF				= (1<<10)		// Access Flag
-
-PT_UXN				= (1<<54)		// User execute never
-PT_PXN				= (1<<53)		// Priviledged execute never
-
-// Cache shareability
-PT_NOSH				= (0<<8)		// Non-shareable (single core)
-PT_OSH				= (2<<8)		// Outer shareable (shared across CPUs, GPU)
-PT_ISH				= (3<<8)		// Inner shareable (shared across CPUs)
-
 // This defines the kernel's virtual address location.
 // This value splits a 48 bit address space exactly in half, with the half
 // beginning with 1 going to the kernel.
 KZERO				= 0xffff800000000000
-MiB				= (1<<20)
-GiB				= (1<<30)
-
-// Constants for early uart setup
-MMIO_BASE_RPI4			= 0xfe000000
-GPIO				= 0x00200000	// Offset from MMIO base
 
 // Exception vector IDs
 SYNC_INVALID_EL1t		= 0
@@ -110,7 +64,7 @@ start:
 	// used again.  There's also a couple that are best avoided out of
 	// principle.
 
-	// x27: DTB address
+	// x27: DTB address (physical address)
 	// x28: Entrypoint address
 	// x29: Frame pointer
 	// x30: Link register
@@ -188,92 +142,8 @@ el1:	// In EL1
 	mov	x0, #'.'
 	bl	init_early_uart_putc
 
-	// AArch64 memory management examples
-	//  https://developer.arm.com/documentation/102416/0100
-
-	// AArch64 Address Translation
-	//  https://developer.arm.com/documentation/100940/0101
-
-	// The kernel has been loaded at the entrypoint, but the
-	// addresses used in the elf are virtual addresses in the higher half.
-	// If we try to access them, the CPU will trap, so the next step is to
-	// enable the MMU and identity map the kernel virtual addresses to the
-	// physical addresses that the kernel was loaded into.
-
-	// The Aarch64 is super flexible.  We can have page tables (granules)
-	// of 4, 16, or 64KiB.  If we assume 4KiB granules, we would have:
-	//  [47-39] Index into L4 table, used to get address of the L3 table
-	//  [38-30] Index into L3 table, used to get address of the L2 table
-	//  [29-21] Index into L2 table, used to get address of the L1 table
-	//  [20-12] Index into L1 table, used to get address of physical page
-	//  [11-0]  Offset into physical page corresponding to virtual address
-	// L4-L1 simply refers to the page table with L1 always being the last
-	// to be translated, giving the address of the physical page.
-	// With a 4KiB granule, each index is 9 bits, so there are 512 (2^9)
-	// entries in each table.  In this example the physical page would
-	// also be 4KiB.
-
-	// If we reduce the number of page tables from 4 to 3 (L3 to L1),
-	// we have 21 bits [20-0] for the physical page offset, giving 2MiB
-	// pages.  If we reduce to 2 tables, we have 30 bits [29-0], giving
-	// 1GiB pages.
-
-	// If we use 16KiB granules, the virtual address is split as follows:
-	//  [46-36] Index into L3 table, used to get address of the L2 table
-	//  [35-25] Index into L2 table, used to get address of the L1 table
-	//  [24-14] Index into L1 table, used to get address of physical page
-	//  [13-0]  Offset into physical page corresponding to virtual address
-	// The 14 bits in the offset results in 16KiB pages.  Each table is
-	// 16KiB, consisting of 2048 entries, so requiring 11 bits per index.
-	// If we instead use only 2 levels, that gives us bits [24-0] for the
-	// offset into the physical page, which gives us 32MiB page size.
-
-	// Finally, if we use 64KiB granules, the virtual address is split as
-	// follows:
-	//  [41-29] Index into L2 table, used to get address of the L1 table
-	//  [28-16] Index into L1 table, used to get address of physical page
-	//  [15-0]  Offset into physical page corresponding to virtual address
-	// The 16 bits in the offset results in 64KiB pages.  Each table is
-	// 64KiB, consisting of 8192 entries, so requiring 13 bits per index.
-	// If we instead use only 1 level, that gives us bits [28-0] for the
-	// offset into the physical page, which gives us 512MiB page size.
-
-	// The address of the top level table is stored in the translation table
-	// base registers.  ttbr0_el1 stores the address for the user space,
-	// ttbr1_el1 stores the address for the kernel, both for EL1.
-	// By default, ttbr1_el1 is used when the virtual address bit 55 is 1
-	// otherwise ttbr0_el1 is used.
-
-	// Memory attributes are set per page table entry, and are hierarchical,
-	// so settings at a higher page affect those they reference.
-
-	// Set up root tables for lower (ttbr0_el1) and higher (ttbr1_el1)
-	// addresses.  kernelpt4 is the root of the page hierarchy for addresses
-	// of the form 0xffff800000000000 (KZERO and above), while physicalpt4
-	// handles 0x0000000000000000 until KZERO.  Although what we really
-	// want is to move to virtual higher half addresses, we need to have
-	// ttbr0_el1 identity mapped during the transition until the PC is also
-	// in the higher half.  This is because the PC is still in the lower
-	// half immediately after the MMU is enabled.  Once we enter rust-land,
-	// we can define a new set of tables.
-	adrp	x0, kernelpt4
-	msr	ttbr1_el1, x0
-	adrp	x0, physicalpt4
-	msr	ttbr0_el1, x0
-
-	// Set up the translation control register tcr_el1 as so:
-	//  TCR_EL1_T0SZ: Size offset of region addressed by TTBR0_EL1: 2^30)
-	//  TCR_EL1_T1SZ: Size offset of region addressed by TTBR1_EL1: 2^30)
-	//  TCR_EL1_TG0: 4KiB granule
-	//  TCR_EL1_TG1: 4KiB granule
-	//  TCR_EL1_IPS: 40 bit physical addresses
-	ldr	x0, =(TCR_EL1)
-	msr	tcr_el1, x0
-
-	// The mair_el1 register contains 8 different cache settings, to be
-	// referenced by index by any page table entry.
-	ldr	x0, =(MAIR_EL1)
-	msr	mair_el1, x0
+	mov	x0, x27			// DTB pointer
+	bl	init_vm
 
 	// Force changes to be be seen before MMU enabled, then enable MMU
 	isb
@@ -303,63 +173,6 @@ higher_half:
 .globl dnr
 dnr:	wfe
 	b	dnr
-
-// Early page tables for mapping the kernel to the higher half.
-// It's assumed that the kernelpt* page tables will only be used until the
-// full VM code is running.
-
-// Here we've set up a 2GiB page from the start of the kernel address space.
-// This covers 0xffff_8000_0000_0000 - 0xffff_8000_8000_0000, and should be more
-// than enough at this stage.
-
-// We also want to map the MMIO section, which for the part of MMIO that we care
-// about for Raspberry Pi 4 (to allow us to use the miniuart), is basically
-// 2x2MiB sections starting at from 0xfe00_0000.  This is all in the lower half,
-// so to allow us to abandon the physicalpt4 temp page table quickly, we'll map
-// it into the higher half, starting at 0xffff_8000_fe00_0000.  Note that this
-// is temporary - once we have a rust VM, the MMIO will be mapped somewhere
-// else.
-
-// Unfortunately, this is very specific to Raspberry Pi 4.  Once we're confident
-// that the aarch64 setup code in l.S is solid, we should disable the uart code
-// and perhaps have something that can be enabled manually for dev purposes only
-// in the future.
-
-// One final note is that we've set up recursive page tables here.  This is to
-// allow us to use the vm code, which assumes recursive pagetables, e.g. for
-// dumping out the page tables.
-.balign 4096
-kernelpt4:
-	.space	(256*8)
-	.quad	(kernelpt3 - KZERO) + (PT_AF|PT_PAGE)	// [256] (for kernel + mmio)
-	.space	(254*8)
-	.quad	(kernelpt4 - KZERO) + (PT_AF|PT_PAGE)	// [511] (recursive entry)
-
-.balign 4096
-kernelpt3:
- 	.quad	(0*2*GiB) + (PT_BLOCK|PT_AF|PT_AP_KERNEL_RW|PT_ISH|PT_UXN|PT_MAIR_NORMAL)	// [0] (for kernel)
-	.space	(2*8)
-	.quad	(kernelpt2 - KZERO) + (PT_AF|PT_PAGE)	// [3] (for mmio)
-	.space	(508*8)
-
-.balign 4096
-kernelpt2:
-	.space	(496*8)
- 	.quad	(MMIO_BASE_RPI4) + (PT_BLOCK|PT_AF|PT_AP_KERNEL_RW|PT_ISH|PT_UXN|PT_PXN|PT_MAIR_DEVICE)		// [496] (for mmio)
- 	.quad	(MMIO_BASE_RPI4 + GPIO) + (PT_BLOCK|PT_AF|PT_AP_KERNEL_RW|PT_ISH|PT_UXN|PT_PXN|PT_MAIR_DEVICE)	// [497] (for mmio)
-	.space	(14*8)
-
-// Early page tables for identity mapping the kernel physical addresses.
-// Once we've jumped to the higher half, this will no longer be used.
-.balign 4096
-physicalpt4:
-	.quad	(physicalpt3 - KZERO) + (PT_AF|PT_PAGE)	// [0] (for kernel)
-	.space	(511*8)
-
-.balign 4096
-physicalpt3:
- 	.quad	(0*2*GiB) + (PT_BLOCK|PT_AF|PT_AP_KERNEL_RW|PT_ISH|PT_UXN|PT_MAIR_NORMAL)	// [0] (for kernel)
-	.space	(511*8)
 
 .bss
 .balign	4096
