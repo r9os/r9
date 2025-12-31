@@ -128,9 +128,6 @@ pub extern "C" fn main9(dtb_va: usize) {
     unsafe {
         vm::init_kernel_page_tables(&dt, dtb_physrange);
         vm::switch(vm::kernel_pagetable(), RootPageTableType::Kernel);
-
-        vm::init_user_page_tables();
-        vm::switch(vm::user_pagetable(), RootPageTableType::User);
     }
 
     // From this point we can use the global allocator
@@ -169,6 +166,11 @@ pub extern "C" fn main9(dtb_va: usize) {
     // vmdebug::print_recursive_tables(RootPageTableType::User);
 
     println!("Set up a user process");
+
+    unsafe {
+        vm::init_user_page_tables();
+        vm::switch(vm::user_pagetable(), RootPageTableType::User);
+    }
 
     test_sysexit();
 
