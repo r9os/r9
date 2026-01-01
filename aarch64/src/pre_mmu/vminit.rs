@@ -232,7 +232,6 @@ pub extern "C" fn init_vm(dtb_pa: u64) {
 
     putstr("vm init: switching\n");
 
-    //enable_mmu(kernelpt4_pa, physicalpt4_pa);
     TTBR1_EL1.set(kernelpt4_pa.addr());
     TTBR0_EL1.set(physicalpt4_pa.addr());
 
