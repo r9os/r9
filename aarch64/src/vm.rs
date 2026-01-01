@@ -192,7 +192,7 @@ impl Entry {
             .with_valid(true)
     }
 
-    const fn with_phys_addr(self, pa: PhysAddr) -> Self {
+    pub const fn with_phys_addr(self, pa: PhysAddr) -> Self {
         Entry(self.0).with_addr(pa.addr() >> 12)
     }
 
@@ -695,6 +695,10 @@ pub unsafe fn invalidate_all_tlb_entries() {
                               // are fetched using the old translation
         );
     }
+}
+
+pub trait PageAllocator {
+    fn alloc_physpage(&mut self) -> Result<PhysAddr, PageAllocError>;
 }
 
 #[cfg(test)]

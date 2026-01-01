@@ -1,4 +1,4 @@
-// Aarch64 entry (Raspberry Pi 3, 4 focussed)
+// Aarch64 entry (Raspberry Pi 4 focused)
 
 STACKSZ = 4096*4
 
@@ -25,165 +25,15 @@ SPSR_EL2_D			= (1<<9)		// Debug exception
 
 CPACR_EL1_FPEN			= (1<<21) | (1<<20)	// Don't trap FPU instr at EL1,0
 
-TCR_EL1_IPS			= (4 << 32)		// 48bit physical addresses
-TCR_EL1_TG1			= (2 << 30)		// TTBR1_EL1 4KiB granule
-TCR_EL1_SH1			= (3 << 28)		//
-TCR_EL1_ORGN1			= (1 << 26)		//
-TCR_EL1_IRGN1			= (1 << 24)		//
-TCR_EL1_T1SZ			= (16 << 16)		// 2^(64-N) size offset of region addressed by TTBR1_EL1: 2^(64-N)
-TCR_EL1_TG0			= (0 << 14)		// TTBR0_EL1 4KiB granule
-TCR_EL1_SH0			= (3 << 12)		//
-TCR_EL1_ORGN0			= (1 << 10)		//
-TCR_EL1_IRGN0			= (1 << 8)		//
-TCR_EL1_T0SZ			= (16 << 0)		// 2^(64-N) size offset of region addressed by TTBR0_EL1: 2^(64-N)
-TCR_EL1				= (TCR_EL1_IPS|TCR_EL1_TG1|TCR_EL1_SH1|TCR_EL1_ORGN1|TCR_EL1_IRGN1|TCR_EL1_T1SZ|TCR_EL1_TG0|TCR_EL1_SH0|TCR_EL1_ORGN0|TCR_EL1_IRGN0|TCR_EL1_T0SZ)
-
 SCTLR_EL1_I			= (1 << 12)		// Instruction access cacheability
 SCTLR_EL1_C			= (1 << 2)		// Data cacheability
 SCTLR_EL1_M			= (1 << 0)		// Enable MMU
 SCTLR_EL1			= (SCTLR_EL1_I|SCTLR_EL1_C|SCTLR_EL1_M)
 
-// Preset memory attributes.  This register stores 8 8-bit presets that are
-// referenced by index in the page table entries:
-//  [0] 0xff - Normal
-//  [1] 0x00 - Device (Non-gathering, non-reordering, no early write acknowledgement (most restrictive))
-MAIR_EL1			= 0x00ff
-PT_MAIR_NORMAL			= (0<<2)		// Use normal memory attributes
-PT_MAIR_DEVICE			= (1<<2)		// Use device memory attributes
-
-PT_PAGE				= 3			// 4KiB granule
-PT_BLOCK			= 1			// 2MiB granule
-
-// Page table entry AP Flag
-PT_AP_KERNEL_RW			= (0<<6)		// Kernel: rw
-PT_AP_KERNEL_RW_USER_RW		= (1<<6)		// Kernel: rw, User: rw
-PT_AP_KERNEL_RO			= (2<<6)		// Kernel: r
-PT_AP_KERNEL_RO_USER_RO		= (3<<6)		// Kernel: r, User: r
-
-PT_AF				= (1<<10)		// Access Flag
-
-PT_UXN				= (1<<54)		// User execute never
-PT_PXN				= (1<<53)		// Priviledged execute never
-
-// Cache shareability
-PT_NOSH				= (0<<8)		// Non-shareable (single core)
-PT_OSH				= (2<<8)		// Outer shareable (shared across CPUs, GPU)
-PT_ISH				= (3<<8)		// Inner shareable (shared across CPUs)
-
 // This defines the kernel's virtual address location.
 // This value splits a 48 bit address space exactly in half, with the half
 // beginning with 1 going to the kernel.
 KZERO				= 0xffff800000000000
-MiB				= (1<<20)
-GiB				= (1<<30)
-
-// Constants for early uart setup
-MMIO_BASE_RPI3			= 0x3f000000
-MMIO_BASE_RPI4			= 0xfe000000
-
-GPIO				= 0x00200000	// Offset from MMIO base
-GPFSEL1				= GPIO + 0x04
-GPPUD				= GPIO + 0x94
-GPPUDCLK0			= GPIO + 0x98
-GPIO_PUP_PDN_CNTRL_REG0		= GPIO + 0xe4
-
-GPFSEL1_FSEL14_MASK		= 0xffff8fff	// Mask all but bits 12:14 (pin 14)
-GPFSEL1_FSEL14_ALT5		= 0x00002000	// Pin 14, ALT5
-GPFSEL1_FSEL15_MASK		= 0xfffc7fff	// Mask all but bits 15:17 (pin 15)
-GPFSEL1_FSEL15_ALT5		= 0x00010000	// Pin 15, ALT5
-GPIO_PUP_PDN_CNTRL_REG0_MASK_14	= 0xcfffffff	// Mask all but bits 28:29
-GPIO_PUP_PDN_CNTRL_REG0_MASK_15	= 0x3fffffff	// Mask all but bits 30:31
-GPPUD_ENABLE_14_15		= 0x0000c000	// Enable pins 14, 15
-
-AUX				= 0x00215000	// Offset from MMIO base
-AUX_ENABLES			= AUX + 0x04
-AUX_MU				= AUX + 0x40
-AUX_MU_IER			= AUX_MU + 0x04
-AUX_MU_IIR			= AUX_MU + 0x08
-AUX_MU_LCR			= AUX_MU + 0x0c
-AUX_MU_MCR			= AUX_MU + 0x10
-AUX_MU_LSR			= AUX_MU + 0x14
-AUX_MU_CNTL			= AUX_MU + 0x20
-AUX_MU_BAUD			= AUX_MU + 0x28
-
-// Calculate the baudrate to be inserted into AUX_MU_BAUD
-UART_CLOCK			= 500000000
-UART_BAUDRATE			= 115200
-UART_BAUDRATE_REG		= ((UART_CLOCK/(UART_BAUDRATE*8))-1)
-
-// Exception vector IDs
-SYNC_INVALID_EL1t		= 0
-IRQ_INVALID_EL1t		= 1
-FIQ_INVALID_EL1t		= 2
-ERROR_INVALID_EL1t		= 3
-
-SYNC_INVALID_EL1h		= 4
-IRQ_INVALID_EL1h		= 5
-FIQ_INVALID_EL1h		= 6
-ERROR_INVALID_EL1h		= 7
-
-SYNC_INVALID_EL0_64		= 8
-IRQ_INVALID_EL0_64		= 9
-FIQ_INVALID_EL0_64		= 10
-ERROR_INVALID_EL0_64		= 11
-
-SYNC_INVALID_EL0_32		= 12
-IRQ_INVALID_EL0_32		= 13
-FIQ_INVALID_EL0_32		= 14
-ERROR_INVALID_EL0_32		= 15
-
-// Simple spin macro
-//  reg: Scratch register
-//  numcycles: Number of cycles to spin
-.macro spin reg, numcycles
-	mov	\reg, \numcycles
-1:	isb
-	subs	\reg, \reg, #1
-	cbnz	\reg, 1b
-.endm
-
-// Write a character to the miniuart
-// Overwrites x0, x1, x2
-// Assumes MMIO base is in x26
-.macro putc aux_mu, aux_mu_lsr, chr
-	movz	x1, #:abs_g0_nc:\aux_mu
-	movk	x1, #:abs_g1:\aux_mu
-	add	x0, x1, x26
-	movz	x1, #:abs_g0_nc:\aux_mu_lsr
-	movk	x1, #:abs_g1:\aux_mu_lsr
-	add	x1, x1, x26
-	// Wait for miniuart to become ready to transmit, then write a byte
-1\@:	ldr	w2, [x1]
-	tbz	w2, #5, 1\@b
-	mov	w2, \chr
-	str	w2, [x0]
-.endm
-
-// Write newline to the miniuart
-// Overwrites x0, x1, x2
-// Assumes MMIO base is in x26
-.macro putnewline aux_mu, aux_mu_lsr
-	putc	\aux_mu, \aux_mu_lsr, '\r'
-	putc	\aux_mu, \aux_mu_lsr, '\n'
-.endm
-
-// Define the macro to write a u64 in hex value using putc
-// Overwrites x0, x1, x2, x3, x4
-// Assumes MMIO base is in x26
-.macro putu64 aux_mu, aux_mu_lsr, Xval
-	mov	x3, #60			// Amount to shift by
-1\@:	lsr	x4, \Xval, x3
-	and	x4, x4, #0xf		// Mask off digit
-	cmp	x4, #10
-	bge	3\@f
-	add	x4, x4, #'0'		// 0-9
-	b	4\@f
-3\@:	sub	x4, x4, #10		// a-f
-	add	x4, x4, #'a'
-4\@:	putc	\aux_mu, \aux_mu_lsr, w4
-	subs	x3, x3, #4
-	bpl	1\@b
-.endm
 
 .section .boottext, "awx"
 .globl start
@@ -193,8 +43,7 @@ start:
 	// used again.  There's also a couple that are best avoided out of
 	// principle.
 
-	// x26: MMIO base (to be set later)
-	// x27: DTB address
+	// x27: DTB address (physical address)
 	// x28: Entrypoint address
 	// x29: Frame pointer
 	// x30: Link register
@@ -251,326 +100,29 @@ el2:	// Now in EL2, so prepare jump to EL1
 
 el1:	// In EL1
 
-	// Set up a very early uart - the miniuart.  The full driver is in
-	// uartmini.rs.  This code is just enough to help debug the early stage.
-	// Unfortunately raspberry pi 3 and 4 have differences in miniuart init.
+	// Set up the initial stack using the physical address
+	ldr	x0, =stack
+	ldr	x2, =(KZERO)
+	sub	x0, x0, x2
+	add	x0, x0, #STACKSZ
+	mov	sp, x0
 
-	// We can get the board ID from the midr_el1 register (PartNum [15:4]),
-	// and use that to work out the appropriate MMIO base.
-	mrs	x0, midr_el1
-	lsr	x0, x0, #4
-	and	x0, x0, #0xfff
-	cmp	x0, #0xd03	// Check for rpi3
-	bne	.rpi4uart
+	// Clear BSS using physical addresses
+	ldr	x0, =bss		// Start address
+	sub	x0, x0, x2
+	ldr	x1, =end		// End of bss
+	sub	x1, x1, x2
+1:	str	xzr, [x0], #8
+	cmp	x0, x1
+	b.ne	1b
 
-	// We must be on a raspberry pi 3, which has a different MMIO base, and
-	// a different method for configuring the miniuart...
-	mov	x26, MMIO_BASE_RPI3
+	bl	init_early_uart_rpi4
 
-	// x0 AUX_ENABLES
-	movz	x1, #:abs_g0_nc:AUX_ENABLES
-	movk	x1, #:abs_g1:AUX_ENABLES
-	add	x0, x1, x26
-	ldr	w1, [x0]
-	orr	w1, w1, #1
-	str	w1, [x0]
+	mov	x0, #'.'
+	bl	init_early_uart_putc
 
-	// x0 AUX_MU_CNTL
-	movz	x1, #:abs_g0_nc:AUX_MU_CNTL
-	movk	x1, #:abs_g1:AUX_MU_CNTL
-	add	x0, x1, x26
-	str	wzr, [x0]
-
-	// x0 AUX_MU_LCR
-	movz	x1, #:abs_g0_nc:AUX_MU_LCR
-	movk	x1, #:abs_g1:AUX_MU_LCR
-	add	x0, x1, x26
-	mov	w1, #3
-	str	w1, [x0]
-
-	// x0 AUX_MU_MCR
-	movz	x1, #:abs_g0_nc:AUX_MU_MCR
-	movk	x1, #:abs_g1:AUX_MU_MCR
-	add	x0, x1, x26
-	str	wzr, [x0]
-
-	// x0 AUX_MU_IER
-	movz	x1, #:abs_g0_nc:AUX_MU_IER
-	movk	x1, #:abs_g1:AUX_MU_IER
-	add	x0, x1, x26
-	str	wzr, [x0]
-
-	// x0 AUX_MU_IIR
-	movz	x1, #:abs_g0_nc:AUX_MU_IIR
-	movk	x1, #:abs_g1:AUX_MU_IIR
-	add	x0, x1, x26
-	mov	w1, #0xc6
-	str	w1, [x0]
-
-	// x0 AUX_MU_BAUD
-	movz	x1, #:abs_g0_nc:AUX_MU_BAUD
-	movk	x1, #:abs_g1:AUX_MU_BAUD
-	add	x0, x1, x26
-	mov	w1, UART_BAUDRATE_REG
-	str	w1, [x0]
-
-	// Set GPIO pins 14 to be used for ALT5 - UART1 (miniuart)
-	// x0 GPFSEL1
-	movz	x1, #:abs_g0_nc:GPFSEL1
-	movk	x1, #:abs_g1:GPFSEL1
-	add	x0, x1, x26
-	ldr	w1, [x0]
-	movz	w2, #:abs_g0_nc:GPFSEL1_FSEL14_MASK
-	movk	w2, #:abs_g1:GPFSEL1_FSEL14_MASK
-	and	w1, w1, w2
-	movz	w2, #:abs_g0_nc:GPFSEL1_FSEL14_ALT5
-	movk	w2, #:abs_g1:GPFSEL1_FSEL14_ALT5
-	orr	w1, w1, w2
-	str	w1, [x0]
-
-	// Set GPIO pins 15 to be used for ALT5 - UART1 (miniuart)
-	// x0 GPFSEL1
-	movz	x1, #:abs_g0_nc:GPFSEL1
-	movk	x1, #:abs_g1:GPFSEL1
-	add	x0, x1, x26
-	ldr	w1, [x0]
-	movz	w2, #:abs_g0_nc:GPFSEL1_FSEL15_MASK
-	movk	w2, #:abs_g1:GPFSEL1_FSEL15_MASK
-	and	w1, w1, w2
-	movz	w2, #:abs_g0_nc:GPFSEL1_FSEL15_ALT5
-	movk	w2, #:abs_g1:GPFSEL1_FSEL15_ALT5
-	orr	w1, w1, w2
-	str	w1, [x0]
-
-	// Set up GPIO pull up/down state
-	// x0 GPPUD
-	movz	x1, #:abs_g0_nc:GPPUD
-	movk	x1, #:abs_g1:GPPUD
-	add	x0, x1, x26
-	str	wzr, [x0]
-
-	spin	x3, #150
-
-	// x0 GPPUDCLK0
-	movz	x1, #:abs_g0_nc:GPPUDCLK0
-	movk	x1, #:abs_g1:GPPUDCLK0
-	add	x0, x1, x26
-	ldr	w1, =GPPUD_ENABLE_14_15
-	str	w1, [x0]
-
-	spin	x3, #150
-
-	// Write 0 to GPPUDCLK0
-	str	wzr, [x1]
-
-	// x0 AUX_MU_CNTL
-	movz	x1, #:abs_g0_nc:AUX_MU_CNTL
-	movk	x1, #:abs_g1:AUX_MU_CNTL
-	add	x0, x1, x26
-	mov	w1, #3
-	str	w1, [x0]
-
-	b	.uartinitdone
-
-.rpi4uart:
-	// We're on a raspberry pi 4, or assume future boards have the same uart
-	mov	x26, MMIO_BASE_RPI4
-
-	// x0 AUX_ENABLES
-	movz	x1, #:abs_g0_nc:AUX_ENABLES
-	movk	x1, #:abs_g1:AUX_ENABLES
-	add	x0, x1, x26
-	ldr	w1, [x0]
-	orr	w1, w1, #1
-	str	w1, [x0]
-
-	// x0 AUX_MU_CNTL
-	movz	x1, #:abs_g0_nc:AUX_MU_CNTL
-	movk	x1, #:abs_g1:AUX_MU_CNTL
-	add	x0, x1, x26
-	str	wzr, [x0]
-
-	// x0 AUX_MU_LCR
-	movz	x1, #:abs_g0_nc:AUX_MU_LCR
-	movk	x1, #:abs_g1:AUX_MU_LCR
-	add	x0, x1, x26
-	mov	w1, #3
-	str	w1, [x0]
-
-	// x0 AUX_MU_MCR
-	movz	x1, #:abs_g0_nc:AUX_MU_MCR
-	movk	x1, #:abs_g1:AUX_MU_MCR
-	add	x0, x1, x26
-	str	wzr, [x0]
-
-	// x0 AUX_MU_IER
-	movz	x1, #:abs_g0_nc:AUX_MU_IER
-	movk	x1, #:abs_g1:AUX_MU_IER
-	add	x0, x1, x26
-	str	wzr, [x0]
-
-	// x0 AUX_MU_IIR
-	movz	x1, #:abs_g0_nc:AUX_MU_IIR
-	movk	x1, #:abs_g1:AUX_MU_IIR
-	add	x0, x1, x26
-	mov	w1, #0xc6
-	str	w1, [x0]
-
-	// x0 AUX_MU_BAUD
-	movz	x1, #:abs_g0_nc:AUX_MU_BAUD
-	movk	x1, #:abs_g1:AUX_MU_BAUD
-	add	x0, x1, x26
-	mov	w1, UART_BAUDRATE_REG
-	str	w1, [x0]
-
-	// Set up GPIO pin 14 pull up/down state
-	// x0 GPIO_PUP_PDN_CNTRL_REG0
-	movz	x1, #:abs_g0_nc:GPIO_PUP_PDN_CNTRL_REG0
-	movk	x1, #:abs_g1:GPIO_PUP_PDN_CNTRL_REG0
-	add	x0, x1, x26
-	ldr	w1, [x0]
-	movz	w2, #:abs_g0_nc:GPIO_PUP_PDN_CNTRL_REG0_MASK_14
-	movk	w2, #:abs_g1:GPIO_PUP_PDN_CNTRL_REG0_MASK_14
-	and	w1, w1, w2
-	// Pull none (0) - just use mask
-	str	w1, [x0]
-
-	// Set GPIO pins 14 to be used for ALT5 - UART1 (miniuart)
-	// x0 GPFSEL1
-	movz	x1, #:abs_g0_nc:GPFSEL1
-	movk	x1, #:abs_g1:GPFSEL1
-	add	x0, x1, x26
-	ldr	w1, [x0]
-	movz	w2, #:abs_g0_nc:GPFSEL1_FSEL14_MASK
-	movk	w2, #:abs_g1:GPFSEL1_FSEL14_MASK
-	and	w1, w1, w2
-	movz	w2, #:abs_g0_nc:GPFSEL1_FSEL14_ALT5
-	movk	w2, #:abs_g1:GPFSEL1_FSEL14_ALT5
-	orr	w1, w1, w2
-	str	w1, [x0]
-
-	// Set up GPIO pin 15 pull up/down state
-	// x0 GPIO_PUP_PDN_CNTRL_REG0
-	movz	x1, #:abs_g0_nc:GPIO_PUP_PDN_CNTRL_REG0
-	movk	x1, #:abs_g1:GPIO_PUP_PDN_CNTRL_REG0
-	add	x0, x1, x26
-	ldr	w1, [x0]
-	movz	w2, #:abs_g0_nc:GPIO_PUP_PDN_CNTRL_REG0_MASK_15
-	movk	w2, #:abs_g1:GPIO_PUP_PDN_CNTRL_REG0_MASK_15
-	and	w1, w1, w2
-	// Pull none (0) - just use mask
-	str	w1, [x0]
-
-	// Set GPIO pins 15 to be used for ALT5 - UART1 (miniuart)
-	// x0 GPFSEL1
-	movz	x1, #:abs_g0_nc:GPFSEL1
-	movk	x1, #:abs_g1:GPFSEL1
-	add	x0, x1, x26
-	ldr	w1, [x0]
-	movz	w2, #:abs_g0_nc:GPFSEL1_FSEL15_MASK
-	movk	w2, #:abs_g1:GPFSEL1_FSEL15_MASK
-	and	w1, w1, w2
-	movz	w2, #:abs_g0_nc:GPFSEL1_FSEL15_ALT5
-	movk	w2, #:abs_g1:GPFSEL1_FSEL15_ALT5
-	orr	w1, w1, w2
-	str	w1, [x0]
-
-	// x0 AUX_MU_CNTL
-	movz	x1, #:abs_g0_nc:AUX_MU_CNTL
-	movk	x1, #:abs_g1:AUX_MU_CNTL
-	add	x0, x1, x26
-	mov	w1, #3
-	str	w1, [x0]
-
-.uartinitdone:
-	putc	AUX_MU, AUX_MU_LSR, #'.'
-
-	// AArch64 memory management examples
-	//  https://developer.arm.com/documentation/102416/0100
-
-	// AArch64 Address Translation
-	//  https://developer.arm.com/documentation/100940/0101
-
-	// The kernel has been loaded at the entrypoint, but the
-	// addresses used in the elf are virtual addresses in the higher half.
-	// If we try to access them, the CPU will trap, so the next step is to
-	// enable the MMU and identity map the kernel virtual addresses to the
-	// physical addresses that the kernel was loaded into.
-
-	// The Aarch64 is super flexible.  We can have page tables (granules)
-	// of 4, 16, or 64KiB.  If we assume 4KiB granules, we would have:
-	//  [47-39] Index into L4 table, used to get address of the L3 table
-	//  [38-30] Index into L3 table, used to get address of the L2 table
-	//  [29-21] Index into L2 table, used to get address of the L1 table
-	//  [20-12] Index into L1 table, used to get address of physical page
-	//  [11-0]  Offset into physical page corresponding to virtual address
-	// L4-L1 simply refers to the page table with L1 always being the last
-	// to be translated, giving the address of the physical page.
-	// With a 4KiB granule, each index is 9 bits, so there are 512 (2^9)
-	// entries in each table.  In this example the physical page would
-	// also be 4KiB.
-
-	// If we reduce the number of page tables from 4 to 3 (L3 to L1),
-	// we have 21 bits [20-0] for the physical page offset, giving 2MiB
-	// pages.  If we reduce to 2 tables, we have 30 bits [29-0], giving
-	// 1GiB pages.
-
-	// If we use 16KiB granules, the virtual address is split as follows:
-	//  [46-36] Index into L3 table, used to get address of the L2 table
-	//  [35-25] Index into L2 table, used to get address of the L1 table
-	//  [24-14] Index into L1 table, used to get address of physical page
-	//  [13-0]  Offset into physical page corresponding to virtual address
-	// The 14 bits in the offset results in 16KiB pages.  Each table is
-	// 16KiB, consisting of 2048 entries, so requiring 11 bits per index.
-	// If we instead use only 2 levels, that gives us bits [24-0] for the
-	// offset into the physical page, which gives us 32MiB page size.
-
-	// Finally, if we use 64KiB granules, the virtual address is split as
-	// follows:
-	//  [41-29] Index into L2 table, used to get address of the L1 table
-	//  [28-16] Index into L1 table, used to get address of physical page
-	//  [15-0]  Offset into physical page corresponding to virtual address
-	// The 16 bits in the offset results in 64KiB pages.  Each table is
-	// 64KiB, consisting of 8192 entries, so requiring 13 bits per index.
-	// If we instead use only 1 level, that gives us bits [28-0] for the
-	// offset into the physical page, which gives us 512MiB page size.
-
-	// The address of the top level table is stored in the translation table
-	// base registers.  ttbr0_el1 stores the address for the user space,
-	// ttbr1_el1 stores the address for the kernel, both for EL1.
-	// By default, ttbr1_el1 is used when the virtual address bit 55 is 1
-	// otherwise ttbr0_el1 is used.
-
-	// Memory attributes are set per page table entry, and are hierarchical,
-	// so settings at a higher page affect those they reference.
-
-	// Set up root tables for lower (ttbr0_el1) and higher (ttbr1_el1)
-	// addresses.  kernelpt4 is the root of the page hierarchy for addresses
-	// of the form 0xffff800000000000 (KZERO and above), while physicalpt4
-	// handles 0x0000000000000000 until KZERO.  Although what we really
-	// want is to move to virtual higher half addresses, we need to have
-	// ttbr0_el1 identity mapped during the transition until the PC is also
-	// in the higher half.  This is because the PC is still in the lower
-	// half immediately after the MMU is enabled.  Once we enter rust-land,
-	// we can define a new set of tables.
-	adrp	x0, kernelpt4
-	msr	ttbr1_el1, x0
-	adrp	x0, physicalpt4
-	msr	ttbr0_el1, x0
-
-	// Set up the translation control register tcr_el1 as so:
-	//  TCR_EL1_T0SZ: Size offset of region addressed by TTBR0_EL1: 2^30)
-	//  TCR_EL1_T1SZ: Size offset of region addressed by TTBR1_EL1: 2^30)
-	//  TCR_EL1_TG0: 4KiB granule
-	//  TCR_EL1_TG1: 4KiB granule
-	//  TCR_EL1_IPS: 40 bit physical addresses
-	ldr	x0, =(TCR_EL1)
-	msr	tcr_el1, x0
-
-	// The mair_el1 register contains 8 different cache settings, to be
-	// referenced by index by any page table entry.
-	ldr	x0, =(MAIR_EL1)
-	msr	mair_el1, x0
+	mov	x0, x27			// DTB pointer
+	bl	init_vm
 
 	// Force changes to be be seen before MMU enabled, then enable MMU
 	isb
@@ -587,17 +139,10 @@ el1:	// In EL1
 
 higher_half:
 	// Now that the kernel is mapped, the MMU is enabled and we're in the
-	// higher half, we can set up the initial stack.
+	// higher half, we can set up the initial stack using the virtual address.
 	ldr	x0, =stack
 	add	x0, x0, #STACKSZ
 	mov	sp, x0
-
-	// Clear bss
-	ldr	x0, =bss		// Start address
-	ldr	x1, =end		// End of bss
-1:	str	xzr, [x0], #8
-	cmp	x0, x1
-	b.ne	1b
 
 	// Jump to rust, passing DTB pointer (in x27, then map to upper half)
 	ldr	x0, =(KZERO)
@@ -607,63 +152,6 @@ higher_half:
 .globl dnr
 dnr:	wfe
 	b	dnr
-
-// Early page tables for mapping the kernel to the higher half.
-// It's assumed that the kernelpt* page tables will only be used until the
-// full VM code is running.
-
-// Here we've set up a 2GiB page from the start of the kernel address space.
-// This covers 0xffff_8000_0000_0000 - 0xffff_8000_8000_0000, and should be more
-// than enough at this stage.
-
-// We also want to map the MMIO section, which for the part of MMIO that we care
-// about for Raspberry Pi 4 (to allow us to use the miniuart), is basically
-// 2x2MiB sections starting at from 0xfe00_0000.  This is all in the lower half,
-// so to allow us to abandon the physicalpt4 temp page table quickly, we'll map
-// it into the higher half, starting at 0xffff_8000_fe00_0000.  Note that this
-// is temporary - once we have a rust VM, the MMIO will be mapped somewhere
-// else.
-
-// Unfortunately, this is very specific to Raspberry Pi 4.  Once we're confident
-// that the aarch64 setup code in l.S is solid, we should disable the uart code
-// and perhaps have something that can be enabled manually for dev purposes only
-// in the future.
-
-// One final note is that we've set up recursive page tables here.  This is to
-// allow us to use the vm code, which assumes recursive pagetables, e.g. for
-// dumping out the page tables.
-.balign 4096
-kernelpt4:
-	.space	(256*8)
-	.quad	(kernelpt3 - KZERO) + (PT_AF|PT_PAGE)	// [256] (for kernel + mmio)
-	.space	(254*8)
-	.quad	(kernelpt4 - KZERO) + (PT_AF|PT_PAGE)	// [511] (recursive entry)
-
-.balign 4096
-kernelpt3:
- 	.quad	(0*2*GiB) + (PT_BLOCK|PT_AF|PT_AP_KERNEL_RW|PT_ISH|PT_UXN|PT_MAIR_NORMAL)	// [0] (for kernel)
-	.space	(2*8)
-	.quad	(kernelpt2 - KZERO) + (PT_AF|PT_PAGE)	// [3] (for mmio)
-	.space	(508*8)
-
-.balign 4096
-kernelpt2:
-	.space	(496*8)
- 	.quad	(MMIO_BASE_RPI4) + (PT_BLOCK|PT_AF|PT_AP_KERNEL_RW|PT_ISH|PT_UXN|PT_PXN|PT_MAIR_DEVICE)		// [496] (for mmio)
- 	.quad	(MMIO_BASE_RPI4 + GPIO) + (PT_BLOCK|PT_AF|PT_AP_KERNEL_RW|PT_ISH|PT_UXN|PT_PXN|PT_MAIR_DEVICE)	// [497] (for mmio)
-	.space	(14*8)
-
-// Early page tables for identity mapping the kernel physical addresses.
-// Once we've jumped to the higher half, this will no longer be used.
-.balign 4096
-physicalpt4:
-	.quad	(physicalpt3 - KZERO) + (PT_AF|PT_PAGE)	// [0] (for kernel)
-	.space	(511*8)
-
-.balign 4096
-physicalpt3:
- 	.quad	(0*2*GiB) + (PT_BLOCK|PT_AF|PT_AP_KERNEL_RW|PT_ISH|PT_UXN|PT_MAIR_NORMAL)	// [0] (for kernel)
-	.space	(511*8)
 
 .bss
 .balign	4096

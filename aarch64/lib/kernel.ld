@@ -59,6 +59,10 @@ SECTIONS {
 
 	/* Reserve section for early pagetables. */
 	. = ALIGN(4096);
+	earlyvm_pagetables = .;
+	. += 32 * 4096;
+	eearlyvm_pagetables = .;
+	/* TODO Remove after new vm work */
 	early_pagetables = .;
 	. += 32 * 4096;
 	eearly_pagetables = .;

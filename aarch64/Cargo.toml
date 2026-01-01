@@ -7,7 +7,7 @@ edition = "2024"
 default-target = "aarch64-unknown-none"
 
 [dependencies]
-aarch64-cpu = "10.0"
+aarch64-cpu = "11.2"
 bitstruct = "0.1"
 port = { path = "../port" }
 num_enum = { version = "0.7", default-features = false }
