@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 // Functions to be called in early bootup phase, typically before the MMU has been enabled.
 // This shouldn't normally be used for anything other than debugging at very early init.
 
@@ -74,6 +76,7 @@ pub extern "C" fn init_early_uart_rpi4() {
     }
 }
 
+// Extern no mangle so we can call from asm if necessary
 #[unsafe(no_mangle)]
 pub extern "C" fn init_early_uart_putc(b: u8) {
     unsafe {
@@ -81,6 +84,24 @@ pub extern "C" fn init_early_uart_putc(b: u8) {
             core::hint::spin_loop();
         }
         write_volatile(AUX_MU_IO as *mut u32, b as u32);
+    }
+}
+
+pub fn putstr(s: &str) {
+    for b in s.bytes() {
+        init_early_uart_putc(b);
+    }
+}
+
+pub fn putu64h(v: u64) {
+    putstr("0x");
+    for i in 0..16 {
+        let a = ((v >> ((15 - i) * 4)) & 0xf) as u8;
+        if a < 10 {
+            init_early_uart_putc(('0' as u8 + a) as u8);
+        } else {
+            init_early_uart_putc(('a' as u8 + a - 10) as u8);
+        }
     }
 }
 
