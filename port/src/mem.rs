@@ -14,6 +14,10 @@ pub const PAGE_SIZE_1G: usize = 1 << 30;
 pub struct VirtRange(pub Range<usize>);
 
 impl VirtRange {
+    pub fn with_end(start: usize, end: usize) -> Self {
+        Self(start..end)
+    }
+
     pub fn with_len(start: usize, len: usize) -> Self {
         Self(start..start + len)
     }

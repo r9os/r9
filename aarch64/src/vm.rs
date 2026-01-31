@@ -338,34 +338,42 @@ impl Table {
         level: Level,
         va: usize,
     ) -> Result<&mut Table, PageTableError> {
-        // Try to get a valid page table entry.  If it doesn't exist, create it.
+        // Try to get a valid page table entry.
         let index = va_index(va, level);
         let mut entry = self.entries[index];
-        if !entry.valid() {
-            // Create a new page table and write the entry into the parent table
-            let page_pa = page_allocator.alloc_physpage();
-            let page_pa = match page_pa {
-                Ok(p) => p,
-                Err(err) => {
-                    println!("error:vm:next_mut:can't allocate physpage");
-                    return Err(PageTableError::AllocationFailed(err));
-                }
-            };
-            entry = Entry::rw_kernel_data().with_phys_addr(page_pa).with_page_or_table(true);
-            vmtrait_impl.write_entry(&mut self.entries[index], entry);
 
-            // Clear out the new page
-            let recursive_page_addr = recursive_table_addr(pgtype, va, level.next().unwrap());
-            let page = unsafe { &mut *(recursive_page_addr as *mut PhysPage4K) };
-            page.clear();
-        } else if !entry.is_table(level) {
+        if entry.valid() && !entry.is_table(level) {
             println!("error:vm:next_mut:entry is not a valid table entry:{entry:?} {level:?}");
             return Err(PageTableError::EntryIsNotTable);
         }
 
-        // Return the address of the next table as a recursive address
-        let recursive_page_addr = recursive_table_addr(pgtype, va, level.next().unwrap());
-        Ok(unsafe { &mut *(recursive_page_addr as *mut Table) })
+        if entry.valid() {
+            // Return the address of the next table
+            let next_level = level.next().unwrap();
+            return Ok(unsafe {
+                &mut *vmtrait_impl.resolve_entry_mut::<Table>(entry, pgtype, va, next_level)
+            });
+        }
+
+        // Create a new page table and write the entry into the parent table
+        let page_pa = page_allocator.alloc_physpage();
+        let page_pa = match page_pa {
+            Ok(p) => p,
+            Err(err) => {
+                println!("error:vm:next_mut:can't allocate physpage");
+                return Err(PageTableError::AllocationFailed(err));
+            }
+        };
+        entry = Entry::rw_kernel_data().with_phys_addr(page_pa).with_page_or_table(true);
+        vmtrait_impl.write_entry(&mut self.entries[index], entry);
+
+        // Clear out the new page and return it as the next table
+        let next_level = level.next().unwrap();
+        let page = vmtrait_impl.resolve_entry_mut::<PhysPage4K>(entry, pgtype, va, next_level);
+        return Ok(unsafe {
+            (*page).clear();
+            &mut *(page as *mut Table)
+        });
     }
 }
 
@@ -641,6 +649,17 @@ pub trait VmTrait {
     fn write_recursive_entry(&mut self, pgtype: RootPageTableType, entry: Entry);
 
     fn generate_temp_recursive_address(&self, table: &Table) -> Entry;
+
+    /// Resolve the next table or page from an entry.  In the kernel, this uses recursive
+    /// page table addressing.  In tests, it uses the physical address directly
+    /// from the entry (which is a valid virtual address in the test environment).
+    fn resolve_entry_mut<T>(
+        &self,
+        entry: Entry,
+        pgtype: RootPageTableType,
+        va: usize,
+        level: Level,
+    ) -> *mut T;
 }
 
 #[derive(Clone, Copy)]
@@ -674,6 +693,16 @@ impl VmTrait for VmTraitImpl {
     fn generate_temp_recursive_address(&self, table: &Table) -> Entry {
         let pa = from_ptr_to_physaddr_offset_from_kzero(table);
         Entry::rw_kernel_data().with_phys_addr(pa).with_page_or_table(true)
+    }
+
+    fn resolve_entry_mut<T>(
+        &self,
+        _entry: Entry,
+        pgtype: RootPageTableType,
+        va: usize,
+        level: Level,
+    ) -> *mut T {
+        recursive_table_addr(pgtype, va, level) as *mut T
     }
 }
 
@@ -797,27 +826,38 @@ mod tests {
                 .with_phys_addr(PhysAddr(table as *const _ as u64))
                 .with_page_or_table(true)
         }
+
+        fn resolve_entry_mut<T>(
+            &self,
+            entry: Entry,
+            _pgtype: RootPageTableType,
+            _va: usize,
+            _level: Level,
+        ) -> *mut T {
+            // In tests, the "physical" address is actually a valid virtual address
+            entry.phys_addr().addr() as *mut T
+        }
     }
 
-    // #[test]
-    // fn foo() {
-    //     let mut table = RootPageTable::empty();
-    //     let mut test_page_allocator = TestPageAllocator::new();
-    //     let mut test_vmtrait_impl = TestVmTrait::new();
+    #[test]
+    fn map_phys_range_test() {
+        let mut table = RootPageTable::empty();
+        let mut test_page_allocator = TestPageAllocator::new();
+        let mut test_vmtrait_impl = TestVmTrait::new();
 
-    //     let mapped_virtrange = table
-    //         .map_phys_range(
-    //             &mut test_page_allocator,
-    //             &mut test_vmtrait_impl,
-    //             "test",
-    //             &PhysRange::with_end(4096, 8 * 4096),
-    //             VaMapping::Offset(KZERO),
-    //             Entry::rw_kernel_data(),
-    //             PageSize::Page4K,
-    //             RootPageTableType::Kernel,
-    //         )
-    //         .expect("error:init:mapping failed");
+        let mapped_virtrange = table
+            .map_phys_range(
+                &mut test_page_allocator,
+                &mut test_vmtrait_impl,
+                "test",
+                &PhysRange::with_end(4096, 8 * 4096),
+                VaMapping::Offset(KZERO),
+                Entry::rw_kernel_data(),
+                PageSize::Page4K,
+                RootPageTableType::Kernel,
+            )
+            .expect("error:init:mapping failed");
 
-    //     assert_eq!(mapped_virtrange, VirtRange::with_len(0, 100));
-    // }
+        assert_eq!(mapped_virtrange, VirtRange::with_end(KZERO + 4096, KZERO + 8 * 4096));
+    }
 }
