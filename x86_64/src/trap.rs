@@ -81,7 +81,7 @@ macro_rules! gen_trap_stub {
 }
 
 pub fn stubs() -> &'static [Stub; 256] {
-    unsafe { &*(intr_stubs as usize as *const [Stub; 256]) }
+    unsafe { &*(intr_stubs as *const () as usize as *const [Stub; 256]) }
 }
 
 /// intr_stubs is just a container for interrupt stubs.  It is

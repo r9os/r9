@@ -51,7 +51,7 @@ pub extern "C" fn main(mach: &mut dat::Mach, _mbdata: u64) {
     println!("looping now");
     let mut ctx = Label::new();
     let mut thr = Label::new();
-    thr.pc = jumpback as usize as u64;
+    thr.pc = jumpback as *const () as usize as u64;
     unsafe {
         thr.sp = &mut THRSTACK[1023] as *mut _ as u64;
         CTX = &mut ctx as *mut _ as u64;

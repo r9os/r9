@@ -11,7 +11,7 @@ pub(crate) fn init() {
     const MSR_LSTAR: u32 = 0xc000_0082;
     const MSR_FMASK: u32 = 0xc000_0084;
     unsafe {
-        cpu::wrmsr(MSR_LSTAR, entry as usize as u64);
+        cpu::wrmsr(MSR_LSTAR, entry as *const () as usize as u64);
         cpu::wrmsr(MSR_STAR, vsvm::Gdt::star());
         cpu::wrmsr(MSR_FMASK, cpu::fmask());
     }
