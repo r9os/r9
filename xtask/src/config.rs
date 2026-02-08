@@ -55,7 +55,7 @@ pub struct Config {
     pub nodev: Option<Vec<String>>,
     pub nouart: Option<Vec<String>>,
 
-    /// platform/board possible values: empty, raspi3b, vfive2, nezha, virt etc.
+    /// platform/board possible values: empty, vfive2, nezha, virt etc.
     ///
     /// example usage
     /// ´´´rust
@@ -72,7 +72,7 @@ pub struct Config {
 /// Affects arguments to be passed to qemu - doesn't affect build artefacts.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Qemu {
-    /// Machine (`-M`) value for qemu: raspi3b, raspi4b, etc.
+    /// Machine (`-M`) value for qemu: raspi4b, etc.
     pub machine: Option<String>,
 
     /// Filepath of DTB file relative to crate

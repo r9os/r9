@@ -59,7 +59,7 @@ start:
 	//  EL1 - OS
 	//  EL2 - Hypervisor
 	//  EL3 - Firmware
-	// We want to be in EL1.  Qemu starts in EL3.  Raspi3 usually starts in EL2.
+	// We want to be in EL1.  Qemu starts in EL3.  Hardware usually starts in EL2.
 
 	// Dispatch to code to handle the current exception level
 	mrs	x0, CurrentEL

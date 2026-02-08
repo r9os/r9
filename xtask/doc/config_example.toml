@@ -17,7 +17,7 @@ script = 'riscv64/lib/kernel.ld'
 load-address = '0x80200000'
 
 [config]
-# platform/board possible values: empty, raspi3b, vfive2, nezha, virt etc.
+# platform/board possible values: empty, vfive2, nezha, virt etc.
 # example usage => #[cfg(platform = "virt")]
 platform = "nezha"
 
@@ -29,7 +29,7 @@ features = ["mmu_sv39"]
 # the section name is always the prefix for the configuration
 #
 # example usage for section "dev"
-# 
+#
 # dev = [
 #    'arch',
 #    'cap',
