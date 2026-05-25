@@ -449,14 +449,14 @@ fn next_mut<'a, A: PageAllocator>(
 
         let new_table = unsafe { &mut *(page_pa.addr() as *mut Table) };
         new_table.entries[511] = entry;
-        return Ok(new_table);
+        Ok(new_table)
     } else if !entry.is_table(level) {
         putstr("error:vminit:next_mut:entry is not a valid table entry");
-        return Err(PageTableError::EntryIsNotTable);
+        Err(PageTableError::EntryIsNotTable)
     } else {
         // Return the address of the next table as a recursive address
         let next_table = unsafe { &mut *(entry.phys_addr().addr() as *mut Table) };
-        return Ok(next_table);
+        Ok(next_table)
     }
 }
 

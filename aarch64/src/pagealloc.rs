@@ -37,7 +37,7 @@ static PAGE_ALLOC: Lock<BitmapPageAlloc<32, PAGE_SIZE_4K>> = Lock::new(
 /// add some pages (mark free) to allow us to set up the page tables and build
 /// a memory map.  Once the memory map has been build, we can mark all the unused
 /// space as available.  This allows us to use only one page allocator throughout.
-pub fn init_page_allocator<'a>(
+pub fn init_page_allocator(
     dt: &DeviceTree,
     used_ranges: impl Iterator<Item = PhysRange>,
 ) -> Result<(), PageAllocError> {

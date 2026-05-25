@@ -72,11 +72,7 @@ impl Mailbox {
             .ok_or("can't find mbox")
     }
 
-    fn request<T, U>(&self)
-    where
-        T: Copy,
-        U: Copy,
-    {
+    fn request(&self) {
         // Read status register until full flag not set
         while (read_reg(&self.mbox_virtrange, MBOX_STATUS) & MBOX_FULL) != 0 {}
 
@@ -159,7 +155,7 @@ where
                 msg
             };
 
-            mb.request::<T, U>();
+            mb.request();
             unsafe { msg.response.tags.body }
         })
         .expect("mailbox not initialised")

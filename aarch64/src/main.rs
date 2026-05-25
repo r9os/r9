@@ -1,3 +1,4 @@
+#![allow(clippy::too_many_arguments)]
 #![allow(clippy::upper_case_acronyms)]
 #![allow(internal_features)]
 #![cfg_attr(not(any(test)), no_std)]

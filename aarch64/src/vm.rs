@@ -370,10 +370,10 @@ impl Table {
         // Clear out the new page and return it as the next table
         let next_level = level.next().unwrap();
         let page = vmtrait_impl.resolve_entry_mut::<PhysPage4K>(entry, pgtype, va, next_level);
-        return Ok(unsafe {
+        Ok(unsafe {
             (*page).clear();
             &mut *(page as *mut Table)
-        });
+        })
     }
 }
 

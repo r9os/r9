@@ -744,6 +744,7 @@ impl ClippyStep {
         if self.profile == Profile::Release {
             cmd.arg("--release");
         }
+        cmd.arg("--").arg("-Dwarnings");
         if self.verbose {
             println!("Executing {cmd:?}");
         }

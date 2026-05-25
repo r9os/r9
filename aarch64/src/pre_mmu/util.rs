@@ -12,7 +12,7 @@ const MMIO_BASE: u32 = 0xfe000000;
 const AUX: u32 = MMIO_BASE + 0x00215000;
 const AUX_ENABLES: u32 = AUX + 0x04;
 const AUX_MU: u32 = AUX + 0x40;
-const AUX_MU_IO: u32 = AUX_MU + 0x00; // AUX IO data register
+const AUX_MU_IO: u32 = AUX_MU; // AUX IO data register
 const AUX_MU_IER: u32 = AUX_MU + 0x04;
 const AUX_MU_IIR: u32 = AUX_MU + 0x08;
 const AUX_MU_LCR: u32 = AUX_MU + 0x0c;
@@ -100,9 +100,9 @@ pub fn putu64h(v: u64) {
     for i in 0..16 {
         let a = ((v >> ((15 - i) * 4)) & 0xf) as u8;
         if a < 10 {
-            init_early_uart_putc(('0' as u8 + a) as u8);
+            init_early_uart_putc(b'0' + a);
         } else {
-            init_early_uart_putc(('a' as u8 + a - 10) as u8);
+            init_early_uart_putc(b'a' + a - 10);
         }
     }
 }
