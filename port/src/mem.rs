@@ -10,37 +10,36 @@ pub const PAGE_SIZE_4K: usize = 4 << 10;
 pub const PAGE_SIZE_2M: usize = 2 << 20;
 pub const PAGE_SIZE_1G: usize = 1 << 30;
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct VirtRange(pub Range<usize>);
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VirtRange {
+    pub start: usize,
+    pub end: usize,
+}
 
 impl VirtRange {
-    pub fn with_end(start: usize, end: usize) -> Self {
-        Self(start..end)
+    pub fn new(start: usize, end: usize) -> Self {
+        Self { start, end }
     }
 
     pub fn with_len(start: usize, len: usize) -> Self {
-        Self(start..start + len)
+        Self { start, end: start + len }
     }
 
     pub fn from_physrange(pr: &PhysRange, offset: usize) -> Self {
-        Self((pr.0.start.0 as usize + offset)..(pr.0.end.0 as usize + offset))
+        Self { start: pr.0.start.0 as usize + offset, end: pr.0.end.0 as usize + offset }
     }
 
     pub fn offset_addr(&self, offset: usize) -> Option<usize> {
-        let addr = self.0.start + offset;
-        if self.0.contains(&addr) { Some(addr) } else { None }
-    }
-
-    pub fn start(&self) -> usize {
-        self.0.start
-    }
-
-    pub fn end(&self) -> usize {
-        self.0.end
+        let addr = self.start + offset;
+        if self.contains(addr) { Some(addr) } else { None }
     }
 
     pub fn size(&self) -> usize {
-        self.0.end - self.0.start
+        self.end - self.start
+    }
+
+    pub fn contains(&self, addr: usize) -> bool {
+        addr >= self.start && addr < self.end
     }
 }
 
@@ -48,13 +47,13 @@ impl From<&RegBlock> for VirtRange {
     fn from(r: &RegBlock) -> Self {
         let start = r.addr as usize;
         let end = start + r.len.unwrap_or(0) as usize;
-        VirtRange(start..end)
+        VirtRange { start, end }
     }
 }
 
 impl fmt::Display for VirtRange {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:#018x}..{:#018x}", self.0.start, self.0.end)
+        write!(f, "{:#018x}..{:#018x}", self.start, self.end)
     }
 }
 

@@ -169,9 +169,9 @@ pub extern "C" fn init_vm(dtb_pa: u64) {
             panic!();
         };
 
-        putu64h(mapped_virtrange.start() as u64);
+        putu64h(mapped_virtrange.start as u64);
         putstr("..");
-        putu64h(mapped_virtrange.end() as u64);
+        putu64h(mapped_virtrange.end as u64);
         putstr("\n");
     }
     // puttable(&root_page_table);
@@ -365,7 +365,7 @@ fn map_phys_range<A: PageAllocator>(
             putstr("\n");
         }
     }
-    startva.map(|startva| VirtRange(startva..endva)).ok_or(PageTableError::PhysRangeIsZero)
+    startva.map(|startva| VirtRange::new(startva, endva)).ok_or(PageTableError::PhysRangeIsZero)
 }
 
 /// Ensure there's a mapping from va to entry, creating any intermediate

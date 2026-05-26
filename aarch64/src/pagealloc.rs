@@ -102,7 +102,7 @@ pub fn allocate_virtpage(
         pgtype,
     ) {
         // println!("pagealloc:allocate_virtpage:va:{:#x} -> physpage:{:?}", page_va.start(), page_pa);
-        let virtpage = page_va.start() as *mut VirtPage4K;
+        let virtpage = page_va.start as *mut VirtPage4K;
         Ok(unsafe { &mut *virtpage })
     } else {
         println!("error:pagealloc:allocate_virtpage:unable to map");

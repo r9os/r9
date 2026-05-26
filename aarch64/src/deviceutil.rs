@@ -26,7 +26,7 @@ pub fn map_device_register(
         page_size,
         vm::RootPageTableType::Kernel,
     ) {
-        let offset = vr.start() - page_physrange.start().addr() as usize;
+        let offset = vr.start - page_physrange.start().addr() as usize;
         Ok(VirtRange::from_physrange(&physrange, offset))
     } else {
         Err("failed to map device register")

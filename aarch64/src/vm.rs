@@ -507,7 +507,7 @@ impl RootPageTable {
                 pgtype,
             )?;
         }
-        let mapped_virtrange = startva.map(|startva| VirtRange(startva..endva));
+        let mapped_virtrange = startva.map(|startva| VirtRange::new(startva, endva));
         mapped_virtrange.ok_or(PageTableError::PhysRangeIsZero)
     }
 }
@@ -858,6 +858,6 @@ mod tests {
             )
             .expect("error:init:mapping failed");
 
-        assert_eq!(mapped_virtrange, VirtRange::with_end(KZERO + 4096, KZERO + 8 * 4096));
+        assert_eq!(mapped_virtrange, VirtRange::new(KZERO + 4096, KZERO + 8 * 4096));
     }
 }

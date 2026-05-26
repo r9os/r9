@@ -146,7 +146,7 @@ where
         .as_mut()
         .map(|mb| {
             let msg = unsafe {
-                let page_va_ptr = mb.req_buffer_va.start() as u64 as *mut MessageWithTags<T, U>;
+                let page_va_ptr = mb.req_buffer_va.start as u64 as *mut MessageWithTags<T, U>;
                 core::intrinsics::volatile_set_memory(page_va_ptr, 0, 1);
                 let msg = NonNull::new_unchecked(page_va_ptr).as_mut();
                 msg.request.size = size;
