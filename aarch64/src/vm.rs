@@ -516,7 +516,7 @@ impl RootPageTable {
 static next_free_device_page_va: AtomicUsize = AtomicUsize::new(KZERO + 0x100000000000);
 pub fn next_free_device_page4k() -> VaMapping {
     next_free_device_page_va
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+        .try_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
             Some(current + PageSize::Page4K.size())
         })
         .map(VaMapping::Addr)
