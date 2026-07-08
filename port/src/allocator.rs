@@ -88,7 +88,7 @@ impl BumpAlloc {
         let mut first = ptr::null_mut();
         let mut adjust = 0;
         self.cursor
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
                 first = base.wrapping_add(current);
                 adjust = first.align_offset(align);
                 let offset = current.checked_add(adjust).expect("alignment overflow");
