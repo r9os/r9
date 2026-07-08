@@ -17,6 +17,7 @@ mod mailbox;
 mod pagealloc;
 mod param;
 mod pre_mmu;
+mod reg;
 mod registers;
 mod swtch;
 mod trap;
@@ -33,6 +34,7 @@ use param::KZERO;
 use port::fdt::DeviceTree;
 use port::mem::{PhysAddr, PhysRange, VirtRange};
 use port::println;
+use reg::midr_el1::MidrEl1;
 use vm::{Entry, RootPageTableType, VaMapping};
 
 use crate::kmem::{
@@ -134,7 +136,7 @@ pub extern "C" fn main9(dtb_va: usize) {
     println!();
     println!("r9 from the Internet");
     println!("DTB found at: {:#x}", dtb_va);
-    println!("midr_el1: {:?}", registers::MidrEl1::read());
+    println!("midr_el1: {:?}", MidrEl1::read());
 
     print_stacks();
 

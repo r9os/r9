@@ -1,6 +1,6 @@
 use core::fmt;
 
-use crate::registers::EsrEl1;
+use crate::reg::esr_el1::EsrEl1;
 use port::println;
 
 #[cfg(not(test))]
