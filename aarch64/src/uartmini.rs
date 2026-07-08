@@ -5,14 +5,24 @@ use port::mem::{PhysRange, VirtRange};
 
 use crate::deviceutil::map_device_register;
 use crate::io::{delay, read_reg, write_or_reg, write_reg};
-use crate::registers::{
-    AUX_ENABLE, AUX_MU_BAUD, AUX_MU_CNTL, AUX_MU_IER, AUX_MU_IIR, AUX_MU_IO, AUX_MU_LCR,
-    AUX_MU_LSR, AUX_MU_MCR, GPFSEL1, GPPUD, GPPUDCLK0,
-};
+use crate::registers::{GPFSEL1, GPPUD, GPPUDCLK0};
 use crate::vm;
 
 #[cfg(not(test))]
 use port::println;
+
+// AUX registers, offset from aux_reg
+pub const AUX_ENABLE: usize = 0x04; // AUX enable register (Mini Uart, SPIs)
+
+// UART1 registers, offset from miniuart_reg
+pub const AUX_MU_IO: usize = 0x00; // AUX IO data register
+pub const AUX_MU_IER: usize = 0x04; // Mini Uart interrupt enable register
+pub const AUX_MU_IIR: usize = 0x08; // Mini Uart interrupt identify register
+pub const AUX_MU_LCR: usize = 0x0c; // Mini Uart line control register
+pub const AUX_MU_MCR: usize = 0x10; // Mini Uart line control register
+pub const AUX_MU_LSR: usize = 0x14; // Mini Uart line status register
+pub const AUX_MU_CNTL: usize = 0x20; // Mini Uart control register
+pub const AUX_MU_BAUD: usize = 0x28; // Mini Uart baudrate register
 
 /// MiniUart is assigned to UART1 on the Raspberry Pi.  It is easier to use with
 /// real hardware, as it requires no additional configuration.  Conversely, it's

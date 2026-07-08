@@ -1,9 +1,6 @@
 use crate::deviceutil::map_device_register;
 use crate::io::{GpioPull, delay, read_reg, write_reg};
-use crate::registers::{
-    GPPUD, GPPUDCLK0, UART0_CR, UART0_DR, UART0_FBRD, UART0_FR, UART0_IBRD, UART0_ICR, UART0_IMSC,
-    UART0_LCRH,
-};
+use crate::registers::{GPPUD, GPPUDCLK0};
 use crate::{mailbox, vm};
 use port::Result;
 use port::devcons::Uart;
@@ -12,6 +9,18 @@ use port::mem::{PhysRange, VirtRange};
 
 #[cfg(not(test))]
 use port::println;
+
+// UART 0 (PL011) registers
+#[allow(unused)]
+pub const UART0_DR: usize = 0x00; // Data register
+#[allow(unused)]
+pub const UART0_FR: usize = 0x18; // Flag register
+pub const UART0_IBRD: usize = 0x24; // Integer baud rate divisor
+pub const UART0_FBRD: usize = 0x28; // Fractional baud rate divisor
+pub const UART0_LCRH: usize = 0x2c; // Line control register
+pub const UART0_CR: usize = 0x30; // Control register
+pub const UART0_IMSC: usize = 0x38; // Interrupt mask set clear register
+pub const UART0_ICR: usize = 0x44; // Interrupt clear register
 
 #[allow(dead_code)]
 pub struct Pl011Uart {
