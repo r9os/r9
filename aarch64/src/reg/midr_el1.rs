@@ -15,6 +15,7 @@ bitstruct! {
     }
 }
 
+#[allow(dead_code)]
 impl MidrEl1 {
     pub fn read() -> Self {
         Self(if cfg!(test) { 0 } else { MIDR_EL1.extract().into() })

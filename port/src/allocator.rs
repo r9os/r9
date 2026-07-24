@@ -510,6 +510,12 @@ pub mod global {
         where
             F: FnOnce(&mut QuickFit) -> R,
         {
+            // Interrupt context must not allocate: an interrupt-context
+            // allocation landing while another allocation has the
+            // QuickFit pointer checked out would find it null and panic
+            // only when the timing is unlucky. Catch it deterministically
+            // here instead.
+            assert!(!crate::irq::in_interrupt(), "allocation in interrupt context");
             let a = self.0.swap(ptr::null_mut(), Ordering::Relaxed);
             assert!(!a.is_null(), "global allocator is nil");
             let r = thunk(unsafe { &mut *a });

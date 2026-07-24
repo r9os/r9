@@ -1,6 +1,7 @@
 use core::fmt;
 
 use crate::reg::esr_el1::EsrEl1;
+use crate::{gic, timer};
 use port::iprintln;
 
 #[cfg(not(test))]
@@ -109,6 +110,19 @@ pub extern "C" fn trap_unsafe(frame: *mut TrapFrame) {
 }
 
 fn trap(frame: &mut TrapFrame) {
+    if let Some(iar) = gic::try_ack_interrupt() {
+        match iar.int_id() {
+            gic::TIMER_INTID => timer::interrupt_handler(),
+            intid => {
+                iprintln!("Unhandled GIC IRQ {intid}");
+                // Disable to avoid repeated unhandled interrupts
+                gic::disable_interrupt(intid);
+            }
+        }
+        gic::end_interrupt(iar);
+        return;
+    }
+
     if frame.esr_el1.ec() == 0x15 {
         // Syscall
         let syscallid = frame.esr_el1.iss();

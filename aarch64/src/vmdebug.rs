@@ -88,6 +88,7 @@ fn recursive_root_page_table(pgtype: RootPageTableType) -> &'static mut RootPage
 }
 
 /// Recursively write out all the tables and all its children
+#[allow(dead_code)]
 pub fn print_recursive_tables(pgtype: RootPageTableType) {
     let root_page_table = recursive_root_page_table(pgtype);
     println!("Root va:{:018p}", root_page_table);
