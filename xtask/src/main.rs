@@ -486,13 +486,14 @@ impl QemuStep {
                 if self.wait_for_gdb {
                     cmd.arg("-s").arg("-S");
                 }
-                // Show exception level change events in stdout
-                cmd.arg("-d");
-                cmd.arg("int");
                 cmd.arg("-kernel");
                 cmd.arg(format!("target/{target}/{dir}/aarch64-qemu.gz"));
                 cmd.current_dir(workspace());
                 if self.verbose {
+                    // Show exception level change events in stdout
+                    cmd.arg("-d");
+                    cmd.arg("int");
+
                     println!("Executing {cmd:?}");
                 }
                 let status = annotated_status(&mut cmd)?;
