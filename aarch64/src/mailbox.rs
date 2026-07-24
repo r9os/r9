@@ -38,21 +38,23 @@ pub fn init(dt: &DeviceTree) {
 /// https://developer.arm.com/documentation/ddi0306/b/CHDGHAIG
 /// https://github.com/raspberrypi/firmware/wiki/Mailbox-property-interface
 struct Mailbox {
-    pub mbox_virtrange: VirtRange,
-    req_buffer_va: VirtRange,
-    req_buffer_pa: PhysRange,
+    mbox_virtrange: VirtRange,
+    req_buf_virtrange: VirtRange,
+    req_buf_physrange: PhysRange,
 }
 
 impl Mailbox {
     fn new(dt: &DeviceTree) -> Result<Self> {
         // Allocate a page of device memory for the mailbox request/response buffer
         // TODO Split this into multiple buffers to allow parallel requests.
-        let (req_buffer_va, req_buffer_pa) =
+        let (req_buf_virtrange, req_buf_physrange) =
             deviceutil::alloc_device_page("mailboxbuf", vm::PageSize::Page4K)?;
 
         let mbox_physrange = Self::find_mbox_physrange(dt)?;
         let mbox = match map_device_register("mailbox", mbox_physrange, vm::PageSize::Page4K) {
-            Ok(mbox_virtrange) => Ok(Mailbox { mbox_virtrange, req_buffer_va, req_buffer_pa }),
+            Ok(mbox_virtrange) => {
+                Ok(Mailbox { mbox_virtrange, req_buf_virtrange, req_buf_physrange })
+            }
             Err(msg) => {
                 println!("can't map mailbox {:?}", msg);
                 Err("can't create mailbox")
@@ -78,7 +80,7 @@ impl Mailbox {
 
         // Write the request address combined with the channel to the write register
         let channel = ChannelId::ArmToVc as u32;
-        let uart_mbox_u32 = self.req_buffer_pa.start.addr() as u32;
+        let uart_mbox_u32 = self.req_buf_physrange.start.addr() as u32;
         let r = (uart_mbox_u32 & !0xF) | channel;
         write_reg(&self.mbox_virtrange, MBOX_WRITE, r);
 
@@ -146,7 +148,7 @@ where
         .as_mut()
         .map(|mb| {
             let msg = unsafe {
-                let page_va_ptr = mb.req_buffer_va.start as u64 as *mut MessageWithTags<T, U>;
+                let page_va_ptr = mb.req_buf_virtrange.start as u64 as *mut MessageWithTags<T, U>;
                 core::intrinsics::volatile_set_memory(page_va_ptr, 0, 1);
                 let msg = NonNull::new_unchecked(page_va_ptr).as_mut();
                 msg.request.size = size;
