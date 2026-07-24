@@ -1,7 +1,7 @@
 use core::fmt;
 
 use crate::reg::esr_el1::EsrEl1;
-use port::println;
+use port::iprintln;
 
 #[cfg(not(test))]
 core::arch::global_asm!(include_str!("trap.S"));
@@ -112,10 +112,10 @@ fn trap(frame: &mut TrapFrame) {
     if frame.esr_el1.ec() == 0x15 {
         // Syscall
         let syscallid = frame.esr_el1.iss();
-        println!("Syscall {syscallid}");
+        iprintln!("Syscall {syscallid}");
     } else {
-        println!("{:#?}", frame);
-        println!("Unhandled interrupt");
+        iprintln!("{:#?}", frame);
+        iprintln!("Unhandled interrupt");
     }
 
     loop {

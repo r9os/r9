@@ -23,7 +23,7 @@ pub fn init(dt: &DeviceTree) {
         unsafe {
             let cons = &mut *CONS.get();
             cons.write(uart);
-            Ok(cons.assume_init_mut())
+            Ok(cons.assume_init_ref())
         }
     });
 }

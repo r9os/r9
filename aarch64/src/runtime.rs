@@ -6,13 +6,13 @@ use alloc::alloc::Layout;
 use core::panic::PanicInfo;
 
 #[cfg(not(test))]
-use port::println;
+use port::iprintln;
 
 // TODO
 //  - Add qemu integration test
 #[panic_handler]
 pub fn panic(info: &PanicInfo) -> ! {
-    println!("{}\n", info);
+    iprintln!("{}\n", info);
 
     #[allow(clippy::empty_loop)]
     loop {}

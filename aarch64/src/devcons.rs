@@ -3,7 +3,7 @@
 use crate::uartmini::MiniUart;
 use core::cell::SyncUnsafeCell;
 use core::mem::MaybeUninit;
-use port::devcons::Console;
+use port::devcons::{Console, IprintOps, Uart};
 use port::fdt::DeviceTree;
 #[cfg(not(test))]
 use port::println;
@@ -25,6 +25,19 @@ use port::println;
 // - UART2 PL011
 // - UART3 PL011
 
+static UART: SyncUnsafeCell<MaybeUninit<MiniUart>> = SyncUnsafeCell::new(MaybeUninit::uninit());
+
+static IPRINT_OPS: IprintOps = IprintOps { putb: iputb };
+
+/// Direct polled write for iprint, bypassing the console lock.
+/// `MiniUart::putb` needs only a shared reference, so this can safely
+/// alias the reference held by the console.
+fn iputb(b: u8) {
+    // Safety: IPRINT_OPS is only registered once UART is initialised.
+    let uart = unsafe { (*UART.get()).assume_init_ref() };
+    uart.putb(b);
+}
+
 pub fn init(dt: &DeviceTree) {
     Console::set_uart(|| {
         let uart = MiniUart::new_with_map_ranges(dt);
@@ -35,12 +48,11 @@ pub fn init(dt: &DeviceTree) {
             Ok(uart) => {
                 uart.init();
 
-                static UART: SyncUnsafeCell<MaybeUninit<MiniUart>> =
-                    SyncUnsafeCell::new(MaybeUninit::uninit());
                 unsafe {
                     let cons = &mut *UART.get();
                     cons.write(uart);
-                    Ok(cons.assume_init_mut())
+                    port::devcons::set_iprint_ops(&IPRINT_OPS);
+                    Ok(cons.assume_init_ref())
                 }
             }
             Err(msg) => {
