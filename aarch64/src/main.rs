@@ -12,6 +12,7 @@ mod allocator;
 mod devcons;
 mod deviceutil;
 mod io;
+mod irq;
 mod kmem;
 mod mailbox;
 mod pagealloc;
@@ -112,6 +113,7 @@ fn print_stacks() {
 /// assumed to be dtb_va-KZERO.
 #[unsafe(no_mangle)]
 pub extern "C" fn main9(dtb_va: usize) {
+    irq::init();
     trap::init();
 
     // Parse the DTB before we set up memory so we can correctly map it
