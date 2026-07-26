@@ -95,7 +95,7 @@ pub fn allocate_virtpage(
         &mut physpage_allocator,
         &mut vmtrait_impl,
         debug_name,
-        &range,
+        range,
         va,
         entry,
         crate::vm::PageSize::Page4K,

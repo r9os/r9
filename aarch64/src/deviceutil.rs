@@ -20,14 +20,14 @@ pub fn map_device_register(
         &mut physpage_allocator,
         &mut vmtrait_impl,
         id,
-        &page_physrange,
+        page_physrange,
         vm::next_free_device_page4k(),
         vm::Entry::rw_device(),
         page_size,
         vm::RootPageTableType::Kernel,
     ) {
         let offset = vr.start - page_physrange.start.addr() as usize;
-        Ok(VirtRange::from_physrange(&physrange, offset))
+        Ok(VirtRange::from_physrange(physrange, offset))
     } else {
         Err("failed to map device register")
     }
@@ -49,7 +49,7 @@ pub fn alloc_device_page(
         &mut physpage_allocator,
         &mut vmtrait_impl,
         id,
-        &page_physrange,
+        page_physrange,
         vm::next_free_device_page4k(),
         vm::Entry::rw_device(),
         page_size,

@@ -25,7 +25,7 @@ impl VirtRange {
         Self { start, end: start + len }
     }
 
-    pub fn from_physrange(pr: &PhysRange, offset: usize) -> Self {
+    pub fn from_physrange(pr: PhysRange, offset: usize) -> Self {
         Self { start: pr.start.0 as usize + offset, end: pr.end.0 as usize + offset }
     }
 
@@ -160,7 +160,7 @@ impl PhysRange {
         (startpa..endpa).step_by(step_size)
     }
 
-    pub fn add(&self, other: &PhysRange) -> Self {
+    pub fn add(&self, other: PhysRange) -> Self {
         Self { start: min(self.start, other.start), end: max(self.end, other.end) }
     }
 

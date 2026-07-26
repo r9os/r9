@@ -46,19 +46,19 @@ use crate::vm::PageSize;
 #[cfg(not(test))]
 core::arch::global_asm!(include_str!("l.S"));
 
-fn print_memory_range(name: &str, range: &PhysRange) {
+fn print_memory_range(name: &str, range: PhysRange) {
     let size = range.size();
     println!("  {name}{range} ({size:#x})");
 }
 
 fn print_binary_sections() {
     println!("Binary sections:");
-    print_memory_range("boottext:\t", &boottext_physrange());
-    print_memory_range("text:\t\t", &text_physrange());
-    print_memory_range("rodata:\t", &rodata_physrange());
-    print_memory_range("data:\t\t", &data_physrange());
-    print_memory_range("bss:\t\t", &bss_physrange());
-    print_memory_range("total:\t", &total_kernel_physrange());
+    print_memory_range("boottext:\t", boottext_physrange());
+    print_memory_range("text:\t\t", text_physrange());
+    print_memory_range("rodata:\t", rodata_physrange());
+    print_memory_range("data:\t\t", data_physrange());
+    print_memory_range("bss:\t\t", bss_physrange());
+    print_memory_range("total:\t", total_kernel_physrange());
 }
 
 fn print_memory_info() {
@@ -121,9 +121,9 @@ pub extern "C" fn main9(dtb_va: usize) {
     // Set up page allocator
     let mut physranges = [
         dtb_physrange.round(PageSize::Page4K.size()),
-        boottext_physrange().add(&text_physrange()),
+        boottext_physrange().add(text_physrange()),
         rodata_physrange(),
-        data_physrange().add(&bss_physrange()),
+        data_physrange().add(bss_physrange()),
     ];
     physranges.sort_by_key(|a| a.start);
     if let Err(err) = pagealloc::init_page_allocator(&dt, physranges.into_iter()) {

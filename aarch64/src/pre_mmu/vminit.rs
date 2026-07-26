@@ -119,9 +119,9 @@ pub extern "C" fn init_vm(dtb_pa: u64) {
         let dtb_page_size = PageSize::Page4K;
         let dtb_physrange = dtb_physrange.round(dtb_page_size.size());
 
-        let text_physrange = boottext_physrange().add(&text_physrange());
+        let text_physrange = boottext_physrange().add(text_physrange());
         let ro_data_physrange = rodata_physrange();
-        let data_physrange = data_physrange().add(&bss_physrange());
+        let data_physrange = data_physrange().add(bss_physrange());
 
         let mut map = [
             ("DTB", dtb_physrange, Entry::ro_kernel_data(), dtb_page_size),
@@ -160,7 +160,7 @@ pub extern "C" fn init_vm(dtb_pa: u64) {
             root_page_table,
             &mut physpage_allocator,
             name,
-            range,
+            *range,
             VaMapping::Offset(KZERO),
             *flags,
             *page_size,
@@ -332,7 +332,7 @@ fn map_phys_range<A: PageAllocator>(
     root_page_table: &mut RootPageTable,
     page_allocator: &mut A,
     debug_name: &str,
-    range: &PhysRange,
+    range: PhysRange,
     va_mapping: VaMapping,
     entry: Entry,
     page_size: PageSize,

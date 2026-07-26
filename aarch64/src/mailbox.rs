@@ -76,19 +76,19 @@ impl Mailbox {
 
     fn request(&self) {
         // Read status register until full flag not set
-        while (read_reg(&self.mbox_virtrange, MBOX_STATUS) & MBOX_FULL) != 0 {}
+        while (read_reg(self.mbox_virtrange, MBOX_STATUS) & MBOX_FULL) != 0 {}
 
         // Write the request address combined with the channel to the write register
         let channel = ChannelId::ArmToVc as u32;
         let uart_mbox_u32 = self.req_buf_physrange.start.addr() as u32;
         let r = (uart_mbox_u32 & !0xF) | channel;
-        write_reg(&self.mbox_virtrange, MBOX_WRITE, r);
+        write_reg(self.mbox_virtrange, MBOX_WRITE, r);
 
         // Wait for response
         // FIXME: two infinite loops - could go awry
         loop {
-            while (read_reg(&self.mbox_virtrange, MBOX_STATUS) & MBOX_EMPTY) != 0 {}
-            let response = read_reg(&self.mbox_virtrange, MBOX_READ);
+            while (read_reg(self.mbox_virtrange, MBOX_STATUS) & MBOX_EMPTY) != 0 {}
+            let response = read_reg(self.mbox_virtrange, MBOX_READ);
             if response == r {
                 break;
             }
