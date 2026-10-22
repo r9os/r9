@@ -31,13 +31,13 @@ extern crate alloc;
 use alloc::boxed::Box;
 use core::cell::SyncUnsafeCell;
 use core::hint::black_box;
-use param::KZERO;
+use param::{KZERO, USTKSIZE, USTKTOP, UTZERO};
 use port::fdt::DeviceTree;
 use port::mem::{PAGE_SIZE_4K, PhysAddr, PhysRange, VirtRange};
 use port::println;
 use reg::midr_el1::MidrEl1;
 use swtch::Label;
-use vm::{Entry, RootPageTableType, VaMapping};
+use vm::{Entry, PhysPageAllocator, RootPageTableType, VaMapping, VmTraitImpl};
 
 use crate::kmem::{
     boottext_physrange, bss_physrange, data_physrange, rodata_physrange, text_physrange,
@@ -190,39 +190,44 @@ pub extern "C" fn main9(dtb_va: usize) {
 
 mod runtime;
 
-fn test_user_syscalls() -> ! {
-    // Temporary locations until the user address space layout is defined.
-    const USER_TEXT_VA: usize = 0x1000;
-    const USER_STACK_VA: usize = 0x2000;
+/// A page of user text for test_user_syscalls:
+///   20 05 80 D2    ; mov x0, #41
+///   01 00 00 D4    ; svc #0        (returns x0 + 1)
+///   61 00 00 D4    ; svc #3        (exit)
+/// It fills its own page of the kernel image, so it can be mapped into user
+/// space read-only without the kernel ever writing it.
+#[repr(C, align(4096))]
+struct UserTextPage([u32; PAGE_SIZE_4K / 4]);
 
+static TEST_USER_TEXT: UserTextPage = {
+    let mut text = [0; PAGE_SIZE_4K / 4];
+    text[0] = 0xd280_0520;
+    text[1] = 0xd400_0001;
+    text[2] = 0xd400_0061;
+    UserTextPage(text)
+};
+
+/// Check a syscall returns to EL0, then exit.
+fn test_user_syscalls() -> ! {
     let page_table = vm::user_pagetable();
 
-    // Allocate pages for a user process
-    let user_text = pagealloc::allocate_virtpage(
-        page_table,
-        "usertext",
-        Entry::rw_user_text(),
-        VaMapping::Addr(USER_TEXT_VA),
-        RootPageTableType::User,
-    )
-    .expect("couldn't allocate user_text");
+    let text_pa = kmem::from_ptr_to_physaddr_offset_from_kzero(&TEST_USER_TEXT);
+    page_table
+        .map_phys_range(
+            &mut PhysPageAllocator {},
+            &mut VmTraitImpl {},
+            "usertext",
+            &PhysRange::with_pa_len(text_pa, PAGE_SIZE_4K),
+            VaMapping::Addr(UTZERO),
+            Entry::ro_user_text(),
+            PageSize::Page4K,
+            RootPageTableType::User,
+        )
+        .expect("couldn't map user text");
 
-    // Machine code and assembly to check a syscall returns to EL0, then exit
-    //   20 05 80 D2    ; mov x0, #41
-    //   01 00 00 D4    ; svc #0        (returns x0 + 1)
-    //   61 00 00 D4    ; svc #3        (exit)
-    let proc_text_bytes: [u8; 12] =
-        [0x20, 0x05, 0x80, 0xd2, 0x01, 0x00, 0x00, 0xd4, 0x61, 0x00, 0x00, 0xd4];
-    user_text.0[..proc_text_bytes.len()].copy_from_slice(&proc_text_bytes);
-
-    pagealloc::allocate_virtpage(
-        page_table,
-        "userstack",
-        Entry::rw_user_data(),
-        VaMapping::Addr(USER_STACK_VA),
-        RootPageTableType::User,
-    )
-    .expect("couldn't allocate user_stack");
+    let stack_range = VirtRange::new(USTKTOP - USTKSIZE, USTKTOP);
+    pagealloc::map_zeroed_user_pages(page_table, "userstack", stack_range)
+        .expect("couldn't allocate user stack");
 
     // Exceptions from EL0 are taken on the interrupt stack for now.
     unsafe extern "C" {
@@ -236,7 +241,7 @@ fn test_user_syscalls() -> ! {
     vmdebug::print_recursive_tables(RootPageTableType::User);
 
     println!("Executing user process");
-    unsafe { trap::touser(kstack_top, USER_TEXT_VA as u64, (USER_STACK_VA + PAGE_SIZE_4K) as u64) }
+    unsafe { trap::touser(kstack_top, UTZERO as u64, USTKTOP as u64) }
 }
 
 static SWTCH_TEST_MAIN: SyncUnsafeCell<Label> = SyncUnsafeCell::new(Label::new());

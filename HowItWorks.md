@@ -49,6 +49,16 @@ IRQs, FIQs, SErrors and debug exceptions are masked in both EL1 and EL0 until we
 
 `swtch(save, next)` in `swtch.rs` saves the current kernel context's callee-saved registers (x19-x29, the return address and `sp`) into the `save` `Label`, loads them from `next`, and returns into wherever `next` last called `swtch`. `Label::new_context` builds a label that starts a never-returning function on a fresh stack. This is only for switching between kernel contexts at EL1; entering EL0 is done with `touser`.
 
+### User Address Space
+
+User addresses are translated through `ttbr0_el1`. The layout is defined in `param.rs`:
+
+- `UTZERO` (0x10000): start of user text. The pages below are unmapped to catch null pointers.
+- `USTKTOP` (2^47): top of the user stack, which is `USTKSIZE` (64KiB), mapped up front, with nothing mapped below it.
+- `UADDRTOP` (0x0000_ff80_0000_0000): end of the user address space. Root entry 511 above it recursively maps the user page table. `map_to` refuses addresses in the recursive range, or outside the half of the address space its table translates.
+
+No user page is ever both writable and executable. AArch64 has no "kernel read-write, user read-only" permission, and the kernel has no mapping of all RAM, so it can't yet write into a page that's mapped `ro_user_text`. Until it can, the user test's text is a page-aligned page of the kernel image's read-only data, mapped into user space as is. The kernel writes into user pages through their user addresses, which only works while that page table is active. `map_zeroed_user_pages` checks this.
+
 ### Virtual Memory
 
 VM initialisation proceeds as follows:
