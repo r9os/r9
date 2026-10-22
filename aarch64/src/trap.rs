@@ -9,11 +9,11 @@ core::arch::global_asm!(include_str!("trap.S"));
 pub fn init() {
     #[cfg(not(test))]
     unsafe {
-        // Set up a vector table for any exception that is taken to EL1, then enable IRQ
+        // Set up a vector table for any exception that is taken to EL1.  IRQs
+        // stay masked until we have interrupt sources to handle.
         core::arch::asm!(
             "adr {tmp}, exception_vectors",
             "msr vbar_el1, {tmp}",
-            "msr DAIFClr, #2",
             tmp = out(reg) _,
         );
     }
