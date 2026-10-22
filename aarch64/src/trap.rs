@@ -1,4 +1,5 @@
 use core::fmt;
+use core::mem::{offset_of, size_of};
 
 use crate::reg::esr_el1::EsrEl1;
 use port::println;
@@ -57,6 +58,27 @@ pub struct TrapFrame {
     elr_el1: u64,
     far_el1: u64,
     interrupt_type: u64,
+    sp_el0: u64,
+    spsr_el1: u64,
+}
+
+// Offsets used by trap.S
+const _: () = assert!(offset_of!(TrapFrame, link_register) == 16 * 15);
+const _: () = assert!(offset_of!(TrapFrame, elr_el1) == 16 * 16);
+const _: () = assert!(offset_of!(TrapFrame, interrupt_type) == 16 * 17);
+const _: () = assert!(offset_of!(TrapFrame, sp_el0) == 16 * 17 + 8);
+const _: () = assert!(offset_of!(TrapFrame, spsr_el1) == 16 * 18);
+const _: () = assert!(size_of::<TrapFrame>() == 16 * 19);
+
+/// SPSR_EL1 for entering EL0: EL0t with debug, SError, IRQ and FIQ masked.
+/// Unmask each as it's needed.
+const SPSR_EL0T_MASKED: u64 = 0b1111 << 6;
+
+impl TrapFrame {
+    /// The exception level the trap was taken from.
+    fn exception_level(&self) -> u64 {
+        (self.spsr_el1 >> 2) & 0b11
+    }
 }
 
 impl fmt::Debug for TrapFrame {
@@ -97,6 +119,8 @@ impl fmt::Debug for TrapFrame {
             .field("elr_el1", &format_args!("{:#018?}", self.elr_el1))
             .field("far_el1", &format_args!("{:#018?}", self.far_el1))
             .field("interrupt_type", &format_args!("{}", self.interrupt_type))
+            .field("sp_el0", &format_args!("{:#018x}", self.sp_el0))
+            .field("spsr_el1", &format_args!("{:#018x}", self.spsr_el1))
             .finish()
     }
 }
@@ -108,15 +132,59 @@ pub extern "C" fn trap_unsafe(frame: *mut TrapFrame) {
 
 fn trap(frame: &mut TrapFrame) {
     if frame.esr_el1.ec() == 0x15 {
-        // Syscall
-        let syscallid = frame.esr_el1.iss();
-        println!("Syscall {syscallid}");
-    } else {
-        println!("{:#?}", frame);
-        println!("Unhandled interrupt");
+        syscall(frame);
+        return;
     }
 
-    loop {
-        core::hint::spin_loop();
+    println!("{:#?}", frame);
+    panic!("Unhandled exception from EL{}", frame.exception_level());
+}
+
+/// Placeholder until there's a real syscall table.  Syscall 3 halts, and any
+/// other returns x0 + 1, so that the round trip through EL1 can be checked.
+fn syscall(frame: &mut TrapFrame) {
+    let syscallid = frame.esr_el1.iss();
+    println!("Syscall {syscallid} from EL{}: x0={:#x}", frame.exception_level(), frame.x0);
+
+    if syscallid == 3 {
+        println!("Exit");
+        loop {
+            core::hint::spin_loop();
+        }
     }
+
+    frame.x0 += 1;
+}
+
+/// Enter EL0 at `entry` with the user stack pointer set to `user_sp`.
+///
+/// A TrapFrame is built just below `kstack_top` and restored by trap_return.
+/// This leaves SP_EL1 at `kstack_top` while in EL0, so that is the stack
+/// exceptions from EL0 will be taken on.
+///
+/// # Safety
+///
+/// `kstack_top` must be the 16-byte aligned top of a kernel stack that isn't
+/// in use, and `entry` and `user_sp` must be mapped in the current user page
+/// table.
+pub unsafe fn touser(kstack_top: usize, entry: u64, user_sp: u64) -> ! {
+    let frame = (kstack_top - size_of::<TrapFrame>()) as *mut TrapFrame;
+    let mut tf: TrapFrame = unsafe { core::mem::zeroed() };
+    tf.elr_el1 = entry;
+    tf.sp_el0 = user_sp;
+    tf.spsr_el1 = SPSR_EL0T_MASKED;
+    unsafe { frame.write(tf) };
+
+    #[cfg(not(test))]
+    unsafe {
+        core::arch::asm!(
+            "mov sp, {frame}",
+            "b trap_return",
+            frame = in(reg) frame,
+            options(noreturn),
+        );
+    }
+
+    #[cfg(test)]
+    unreachable!()
 }

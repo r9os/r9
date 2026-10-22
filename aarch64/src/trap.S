@@ -3,6 +3,8 @@
 // Stack base address (bottom):
 //    interruptstackbase+INTERRUPTSTACKSZ
 // Stack pointer will reduce in value as data is pushed to the stack.
+// Until processes have their own kernel stacks, this is the stack that
+// exceptions from EL0 are taken on.
 INTERRUPTSTACKSZ = 4096*16
 
 .bss
@@ -40,23 +42,31 @@ interruptstackbase:	.space INTERRUPTSTACKSZ
 	b	\label
 .endm
 
+// TrapFrame layout.  Must match the TrapFrame struct in trap.rs.
+TF_LR_ESR	= 16 * 15	// x30, ESR_EL1
+TF_ELR_FAR	= 16 * 16	// ELR_EL1, FAR_EL1
+TF_TYPE_SPEL0	= 16 * 17	// Interrupt type, SP_EL0
+TF_SPSR		= 16 * 18	// SPSR_EL1
+TF_SIZE		= 16 * 19
+
 // We save all general purpose registers, and a few useful system registers:
 // - x0-28
 // - x29 (Frame pointer)
 // - x30 (Link register)
-// We additionally save the registers below, so that they're availalble via the TrapFrame
+// We additionally save the registers below, so that they're available via the TrapFrame
 // - ESR_EL1 (Exception syndrome register EL1)
 // - ELR_EL1 (Exception link register EL1)
 // - FAR_EL1 (Fault address register EL1)
+// - SP_EL0 (User stack pointer)
+// - SPSR_EL1 (Saved program status register EL1)
+//
+// The frame is pushed onto the current stack (SP_EL1).  For exceptions taken
+// from EL1 that's the interrupted kernel stack.  For exceptions taken from EL0
+// it's whatever SP_EL1 was set to before the eret into EL0 (see touser).
+// No general purpose register can be used until it has been saved.
 .macro handle_interrupt type
-	// Switch to the interrupt stack
-	ldr	x0, =interruptstackbase
-	add	x0, x0, #INTERRUPTSTACKSZ
-	mov	sp, x0
+	sub 	sp, sp, #TF_SIZE
 
-	sub 	sp, sp, #288
-
-	// Caller-saved registers, FP
 	stp 	x0, x1, [sp, #16 * 0]
 	stp 	x2, x3, [sp, #16 * 1]
 	stp	x4, x5, [sp, #16 * 2]
@@ -75,22 +85,41 @@ interruptstackbase:	.space INTERRUPTSTACKSZ
 
 	// LR, ESR_EL1
 	mrs	x0, esr_el1
-	stp	x30, x0, [sp, #16 * 15]
+	stp	x30, x0, [sp, #TF_LR_ESR]
 
 	// ELR_EL1, FAR_EL1
 	mrs	x1, elr_el1
 	mrs	x2, far_el1
-	stp	x1, x2, [sp, #16 * 16]
+	stp	x1, x2, [sp, #TF_ELR_FAR]
 
-	// Interrupt type
+	// Interrupt type, SP_EL0
 	ldr	x3, =\type
-	str	x3, [sp, #16 * 17]
+	mrs	x4, sp_el0
+	stp	x3, x4, [sp, #TF_TYPE_SPEL0]
+
+	// SPSR_EL1
+	mrs	x5, spsr_el1
+	str	x5, [sp, #TF_SPSR]
 
 	// Pass pointer to TrapFrame (on stack) as the first arg
 	mov	x0, sp
 	bl	trap_unsafe
 
-	// Restore caller-saved registers
+	b	trap_return
+.endm
+
+// Restore the TrapFrame at sp and return from the exception.  The return
+// state (ELR_EL1, SPSR_EL1, SP_EL0) is taken from the frame rather than the
+// live registers, so trap handlers (and touser) control where we return to.
+.globl trap_return
+trap_return:
+	ldr	x0, [sp, #TF_ELR_FAR]
+	msr	elr_el1, x0
+	ldr	x0, [sp, #TF_TYPE_SPEL0 + 8]
+	msr	sp_el0, x0
+	ldr	x0, [sp, #TF_SPSR]
+	msr	spsr_el1, x0
+
 	ldp	x0, x1, [sp, #16 * 0]
 	ldp	x2, x3, [sp, #16 * 1]
 	ldp	x4, x5, [sp, #16 * 2]
@@ -106,13 +135,11 @@ interruptstackbase:	.space INTERRUPTSTACKSZ
 	ldp	x24, x25, [sp, #16 * 12]
 	ldp	x26, x27, [sp, #16 * 13]
 	ldp	x28, x29, [sp, #16 * 14]
-	ldr	x30, [sp, #16 * 15]
+	ldr	x30, [sp, #TF_LR_ESR]
 
-	// Remaining stack frame consists of systems registers we can just ignore
-	add	sp, sp, #288
+	add	sp, sp, #TF_SIZE
 
 	eret
-.endm
 
 /// The exception vector table for exceptions taken to EL1.
 /// Each entry is 16 instructions/128 bytes.

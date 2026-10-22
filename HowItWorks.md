@@ -22,7 +22,7 @@ The code in `l.S` exists to bring us to a state where we can run kernel code in 
 
 ### Initialisation (Rust)
 
-We're now in rust, in `main9`, and at a highlevel we:
+We're now in rust, in `main9`, and at a high level we:
 
 1. Set up interrupt handlers early so that we get a bit of feedback if things go wrong.
 2. Parse the device tree, enabling more informed initialisation.
@@ -31,7 +31,16 @@ We're now in rust, in `main9`, and at a highlevel we:
 5. Write out some useful system information.
 6. Set up [virtual memory](#virtual-memory) in rust. (After switching we no longer need the pagetables set up in early initialisation.)
 7. Write out the page tables.
-8. That's it. Loop.
+8. Run a hand-assembled test program in EL0 that makes a couple of syscalls, ending with an exit syscall that halts.
+
+### Exceptions
+
+`trap.S` holds the exception vector table. Every entry pushes a `TrapFrame` (all general purpose registers, plus `ESR_EL1`, `ELR_EL1`, `FAR_EL1`, `SP_EL0` and `SPSR_EL1`) onto the current stack, calls `trap` in `trap.rs`, then leaves through `trap_return`. `trap_return` takes the return state from the frame rather than the live registers, so a handler can change where we return to, or what's returned in x0.
+
+- Exceptions from EL1 are taken on the interrupted kernel stack.
+- Exceptions from EL0 are taken on whatever `SP_EL1` was when we entered EL0. `touser` enters EL0 by building a `TrapFrame` at the top of a kernel stack and jumping to `trap_return`, which leaves `SP_EL1` at the top of that stack. Until processes have their own kernel stacks, the interrupt stack is used.
+
+IRQs, FIQs, SErrors and debug exceptions are masked in both EL1 and EL0 until we have a use for them. Syscalls are currently placeholders: the `svc` immediate is the syscall number, syscall 3 halts, and any other returns x0 + 1.
 
 ### Virtual Memory
 
