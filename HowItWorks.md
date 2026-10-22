@@ -31,7 +31,8 @@ We're now in rust, in `main9`, and at a high level we:
 5. Write out some useful system information.
 6. Set up [virtual memory](#virtual-memory) in rust. (After switching we no longer need the pagetables set up in early initialisation.)
 7. Write out the page tables.
-8. Run a hand-assembled test program in EL0 that makes a couple of syscalls, ending with an exit syscall that halts.
+8. Switch back and forth between `main9` and a second kernel context to test `swtch`.
+9. Run a hand-assembled test program in EL0 that makes a couple of syscalls, ending with an exit syscall that halts.
 
 ### Exceptions
 
@@ -43,6 +44,10 @@ We're now in rust, in `main9`, and at a high level we:
 The kernel is built softfloat (see `lib/aarch64-unknown-none-elf.json`), so it never uses the FP/SIMD registers and exception entry doesn't need to save them. User FP/SIMD state still needs saving when switching between processes.
 
 IRQs, FIQs, SErrors and debug exceptions are masked in both EL1 and EL0 until we have a use for them. Syscalls are currently placeholders: the `svc` immediate is the syscall number, syscall 3 halts, and any other returns x0 + 1.
+
+### Kernel context switching
+
+`swtch(save, next)` in `swtch.rs` saves the current kernel context's callee-saved registers (x19-x29, the return address and `sp`) into the `save` `Label`, loads them from `next`, and returns into wherever `next` last called `swtch`. `Label::new_context` builds a label that starts a never-returning function on a fresh stack. This is only for switching between kernel contexts at EL1; entering EL0 is done with `touser`.
 
 ### Virtual Memory
 

@@ -19,7 +19,6 @@ mod param;
 mod pre_mmu;
 mod reg;
 mod registers;
-#[allow(dead_code)] // Unused until processes need kernel context switches
 mod swtch;
 mod trap;
 mod uartmini;
@@ -30,11 +29,14 @@ mod vmdebug;
 extern crate alloc;
 
 use alloc::boxed::Box;
+use core::cell::SyncUnsafeCell;
+use core::hint::black_box;
 use param::KZERO;
 use port::fdt::DeviceTree;
 use port::mem::{PAGE_SIZE_4K, PhysAddr, PhysRange, VirtRange};
 use port::println;
 use reg::midr_el1::MidrEl1;
+use swtch::Label;
 use vm::{Entry, RootPageTableType, VaMapping};
 
 use crate::kmem::{
@@ -176,6 +178,8 @@ pub extern "C" fn main9(dtb_va: usize) {
 
     let _b = Box::new("ddododo");
 
+    test_swtch();
+
     unsafe {
         vm::init_user_page_tables();
         vm::switch(vm::user_pagetable(), RootPageTableType::User);
@@ -233,4 +237,40 @@ fn test_user_syscalls() -> ! {
 
     println!("Executing user process");
     unsafe { trap::touser(kstack_top, USER_TEXT_VA as u64, (USER_STACK_VA + PAGE_SIZE_4K) as u64) }
+}
+
+static SWTCH_TEST_MAIN: SyncUnsafeCell<Label> = SyncUnsafeCell::new(Label::new());
+static SWTCH_TEST_OTHER: SyncUnsafeCell<Label> = SyncUnsafeCell::new(Label::new());
+
+/// Switch back and forth between main9 and another kernel context with its
+/// own stack, checking that state held across the switches survives.
+fn test_swtch() {
+    let stack = pagealloc::allocate_virtpage(
+        vm::kernel_pagetable(),
+        "swtchstack",
+        Entry::rw_kernel_data(),
+        VaMapping::Offset(KZERO),
+        RootPageTableType::Kernel,
+    )
+    .expect("couldn't allocate swtch test stack");
+    let stack_top = stack as *mut _ as usize + PAGE_SIZE_4K;
+
+    unsafe { *SWTCH_TEST_OTHER.get() = Label::new_context(swtch_test_other, stack_top) };
+
+    let canary = black_box(0x0123_4567_89ab_cdef_u64);
+    for i in 0..3 {
+        println!("swtch test: main {i}");
+        unsafe { swtch::swtch(SWTCH_TEST_MAIN.get(), SWTCH_TEST_OTHER.get()) };
+    }
+    assert_eq!(black_box(canary), 0x0123_4567_89ab_cdef);
+    println!("swtch test: ok");
+}
+
+extern "C" fn swtch_test_other() -> ! {
+    let mut i = 0;
+    loop {
+        println!("swtch test: other {i}");
+        i += 1;
+        unsafe { swtch::swtch(SWTCH_TEST_OTHER.get(), SWTCH_TEST_MAIN.get()) };
+    }
 }
