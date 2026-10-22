@@ -1,2 +1,10 @@
 [alias]
 xtask = "run --package xtask --"
+
+# Building core with build-std for a softfloat kernel target triggers
+# future-incompatibility lints in core's SIMD intrinsics (aarch64:
+# rust-lang/rust#134375; newer nightlies also do this for x86-64:
+# rust-lang/rust#117938).  Don't report future-incompatibilities in
+# dependencies; lints in our own crates still show.
+[future-incompat-report]
+frequency = "never"
