@@ -18,6 +18,7 @@ use port::bitmapalloc::BitmapPageAlloc;
 use port::fdt::DeviceTree;
 use port::mem::PhysAddr;
 use port::mem::PhysRange;
+use port::mem::VirtRange;
 use port::pagealloc::PageAllocError;
 use port::{
     mcslock::{Lock, LockNode},
@@ -108,6 +109,36 @@ pub fn allocate_virtpage(
         println!("error:pagealloc:allocate_virtpage:unable to map");
         Err(PageAllocError::UnableToMap)
     }
+}
+
+/// Allocate, map and zero a writable data page for each 4KiB page in `range`,
+/// in the user page table `page_table`.  The pages are zeroed through their
+/// user addresses, so `page_table` must be the active user page table.
+pub fn map_zeroed_user_pages(
+    page_table: &mut RootPageTable,
+    debug_name: &str,
+    range: VirtRange,
+) -> Result<(), PageAllocError> {
+    assert!(
+        core::ptr::eq(page_table, crate::vm::root_page_table(RootPageTableType::User)),
+        "map_zeroed_user_pages: page table isn't the active user page table"
+    );
+    assert!(
+        range.start.is_multiple_of(PAGE_SIZE_4K) && range.end.is_multiple_of(PAGE_SIZE_4K),
+        "map_zeroed_user_pages: range {range} isn't page aligned"
+    );
+
+    for va in (range.start..range.end).step_by(PAGE_SIZE_4K) {
+        let page = allocate_virtpage(
+            page_table,
+            debug_name,
+            Entry::rw_user_data(),
+            VaMapping::Addr(va),
+            RootPageTableType::User,
+        )?;
+        page.0.fill(0);
+    }
+    Ok(())
 }
 
 /// Return a tuple of (bytes used, total bytes available) based on the page allocator.

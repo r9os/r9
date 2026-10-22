@@ -165,9 +165,9 @@ impl Entry {
             .with_valid(true)
     }
 
-    pub fn rw_user_text() -> Self {
+    pub fn ro_user_text() -> Self {
         Entry(0)
-            .with_access_permission(AccessPermission::AllRw)
+            .with_access_permission(AccessPermission::AllRo)
             .with_shareable(Shareable::Inner)
             .with_accessed(true)
             .with_uxn(false)
@@ -307,6 +307,24 @@ pub enum PageTableError {
     PhysRangeIsZero,
     PhysRangeIsNotOnPageBoundary,
     MappingRecursiveIndex,
+    VaOutOfRange,
+}
+
+/// Check that `va` can be mapped in a `pgtype` page table: it must be in the
+/// half of the address space that the table translates, and not in the range
+/// covered by the recursive entry.
+fn check_mappable_va(va: usize, pgtype: RootPageTableType) -> Result<(), PageTableError> {
+    let in_range = match pgtype {
+        RootPageTableType::User => va < 0x0001_0000_0000_0000,
+        RootPageTableType::Kernel => va >= 0xffff_0000_0000_0000,
+    };
+    if !in_range {
+        return Err(PageTableError::VaOutOfRange);
+    }
+    if va_index(va, Level::Level0) == 511 {
+        return Err(PageTableError::MappingRecursiveIndex);
+    }
+    Ok(())
 }
 
 impl From<PageAllocError> for PageTableError {
@@ -417,6 +435,11 @@ impl RootPageTable {
         page_size: PageSize,
         pgtype: RootPageTableType,
     ) -> Result<(), PageTableError> {
+        if let Err(err) = check_mappable_va(va, pgtype) {
+            println!("error:vm:map_to:can't map va:{va:#x} pgtype:{pgtype:?} err:{err:?}");
+            return Err(err);
+        }
+
         // We change the last entry of the root page table to the address of
         // self for the duration of this method.  This allows us to work with
         // this hierarchy of pagetables even if it's not the current translation
@@ -708,6 +731,7 @@ impl VmTrait for VmTraitImpl {
 
 #[cfg(test)]
 mod tests {
+    use crate::param::{UADDRTOP, UTZERO};
     use crate::vmdebug::va_indices;
 
     use super::*;
@@ -836,6 +860,52 @@ mod tests {
         ) -> *mut T {
             // In tests, the "physical" address is actually a valid virtual address
             entry.phys_addr().addr() as *mut T
+        }
+    }
+
+    #[test]
+    fn cant_map_recursive_index() {
+        let mut table = RootPageTable::empty();
+        let mut test_page_allocator = TestPageAllocator::new();
+        let mut test_vmtrait_impl = TestVmTrait::new();
+
+        let result = table.map_phys_range(
+            &mut test_page_allocator,
+            &mut test_vmtrait_impl,
+            "recursive",
+            &PhysRange::with_len(0x20_0000, PAGE_SIZE_4K),
+            VaMapping::Addr(UADDRTOP),
+            Entry::rw_user_data(),
+            PageSize::Page4K,
+            RootPageTableType::User,
+        );
+        assert!(matches!(result, Err(PageTableError::MappingRecursiveIndex)));
+    }
+
+    #[test]
+    fn cant_map_va_outside_table_range() {
+        let mut table = RootPageTable::empty();
+        let mut test_page_allocator = TestPageAllocator::new();
+        let mut test_vmtrait_impl = TestVmTrait::new();
+
+        // Above the 48-bit user range, and a kernel address in a user table,
+        // would otherwise be truncated to UTZERO.
+        for (va, pgtype) in [
+            (0x0001_0000_0000_0000 | UTZERO, RootPageTableType::User),
+            (KZERO | UTZERO, RootPageTableType::User),
+            (UTZERO, RootPageTableType::Kernel),
+        ] {
+            let result = table.map_phys_range(
+                &mut test_page_allocator,
+                &mut test_vmtrait_impl,
+                "outofrange",
+                &PhysRange::with_len(0x20_0000, PAGE_SIZE_4K),
+                VaMapping::Addr(va),
+                Entry::rw_user_data(),
+                PageSize::Page4K,
+                pgtype,
+            );
+            assert!(matches!(result, Err(PageTableError::VaOutOfRange)), "va:{va:#x}");
         }
     }
 
