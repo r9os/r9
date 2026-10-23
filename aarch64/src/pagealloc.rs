@@ -7,7 +7,9 @@
 ///    setting up the initial page tables.
 /// 2. `free_unused_ranges` to mark available ranges as the inverse of the
 ///    physical memory map within the bounds of the available memory.
+use crate::kmap::kmap;
 use crate::vm::Entry;
+use crate::vm::PageSize;
 use crate::vm::PhysPageAllocator;
 use crate::vm::RootPageTable;
 use crate::vm::RootPageTableType;
@@ -99,7 +101,7 @@ pub fn allocate_virtpage(
         &range,
         va,
         entry,
-        crate::vm::PageSize::Page4K,
+        PageSize::Page4K,
         pgtype,
     ) {
         // println!("pagealloc:allocate_virtpage:va:{:#x} -> physpage:{:?}", page_va.start(), page_pa);
@@ -111,32 +113,39 @@ pub fn allocate_virtpage(
     }
 }
 
-/// Allocate, map and zero a writable data page for each 4KiB page in `range`,
-/// in the user page table `page_table`.  The pages are zeroed through their
-/// user addresses, so `page_table` must be the active user page table.
+/// Allocate, zero and map a writable data page for each 4KiB page in `range`,
+/// in the user page table `page_table`.  The pages are zeroed through kmap
+/// before they're mapped.
 pub fn map_zeroed_user_pages(
     page_table: &mut RootPageTable,
     debug_name: &str,
     range: VirtRange,
 ) -> Result<(), PageAllocError> {
     assert!(
-        core::ptr::eq(page_table, crate::vm::root_page_table(RootPageTableType::User)),
-        "map_zeroed_user_pages: page table isn't the active user page table"
-    );
-    assert!(
         range.start.is_multiple_of(PAGE_SIZE_4K) && range.end.is_multiple_of(PAGE_SIZE_4K),
         "map_zeroed_user_pages: range {range} isn't page aligned"
     );
 
     for va in (range.start..range.end).step_by(PAGE_SIZE_4K) {
-        let page = allocate_virtpage(
-            page_table,
-            debug_name,
-            Entry::rw_user_data(),
-            VaMapping::Addr(va),
-            RootPageTableType::User,
-        )?;
-        page.0.fill(0);
+        let page_pa = allocate_physpage()?;
+        {
+            let k = kmap(page_pa);
+            // SAFETY: k maps the whole of the newly allocated page, which
+            // nothing else refers to yet.
+            unsafe { core::ptr::write_bytes(k.va() as *mut u8, 0, PAGE_SIZE_4K) };
+        }
+        page_table
+            .map_phys_range(
+                &mut PhysPageAllocator {},
+                &mut VmTraitImpl {},
+                debug_name,
+                &PhysRange::with_pa_len(page_pa, PAGE_SIZE_4K),
+                VaMapping::Addr(va),
+                Entry::rw_user_data(),
+                PageSize::Page4K,
+                RootPageTableType::User,
+            )
+            .map_err(|_| PageAllocError::UnableToMap)?;
     }
     Ok(())
 }

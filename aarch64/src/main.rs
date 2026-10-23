@@ -12,6 +12,7 @@ mod allocator;
 mod devcons;
 mod deviceutil;
 mod io;
+mod kmap;
 mod kmem;
 mod mailbox;
 mod pagealloc;
@@ -33,7 +34,7 @@ use core::cell::SyncUnsafeCell;
 use core::hint::black_box;
 use param::{KZERO, USTKSIZE, USTKTOP, UTZERO};
 use port::fdt::DeviceTree;
-use port::mem::{PAGE_SIZE_4K, PhysAddr, PhysRange, VirtRange};
+use port::mem::{PAGE_SIZE_4K, PhysRange, VirtRange};
 use port::println;
 use reg::midr_el1::MidrEl1;
 use swtch::Label;
@@ -110,15 +111,15 @@ fn print_stacks() {
     println!("Interrupt stack:\t {range} ({range_size:#x})");
 }
 
-/// dtb_va is the virtual address of the DTB structure.  The physical address is
-/// assumed to be dtb_va-KZERO.
+/// dtb_va is the virtual address of the DTB structure, mapped at KZERO + its
+/// physical address.
 #[unsafe(no_mangle)]
 pub extern "C" fn main9(dtb_va: usize) {
     trap::init();
 
     // Parse the DTB before we set up memory so we can correctly map it
     let dt = unsafe { DeviceTree::from_usize(dtb_va).unwrap() };
-    let dtb_physrange = PhysRange::with_pa_len(PhysAddr::new((dtb_va - KZERO) as u64), dt.size());
+    let dtb_physrange = PhysRange::with_pa_len(kmem::paddr(dtb_va as *const u8), dt.size());
 
     // Set up page allocator
     let mut physranges = [
@@ -150,34 +151,11 @@ pub extern "C" fn main9(dtb_va: usize) {
     // vmdebug::print_recursive_tables(RootPageTableType::Kernel);
     // vmdebug::print_recursive_tables(RootPageTableType::User);
 
-    {
-        let page_table = vm::kernel_pagetable();
-        let entry = Entry::rw_kernel_data();
-        for i in 0..3 {
-            let alloc_result = pagealloc::allocate_virtpage(
-                page_table,
-                "testkernel",
-                entry,
-                VaMapping::Offset(KZERO),
-                RootPageTableType::Kernel,
-            );
-            match alloc_result {
-                Ok(_allocated_page) => {}
-                Err(err) => {
-                    println!("Error allocating page in kernel space ({i}): {:?}", err);
-                    break;
-                }
-            }
-        }
-    }
-
-    // vmdebug::print_recursive_tables(RootPageTableType::Kernel);
-    // vmdebug::print_recursive_tables(RootPageTableType::User);
-
     println!("Set up a user process");
 
     let _b = Box::new("ddododo");
 
+    test_kmap();
     test_swtch();
 
     unsafe {
@@ -211,7 +189,7 @@ static TEST_USER_TEXT: UserTextPage = {
 fn test_user_syscalls() -> ! {
     let page_table = vm::user_pagetable();
 
-    let text_pa = kmem::from_ptr_to_physaddr_offset_from_kzero(&TEST_USER_TEXT);
+    let text_pa = kmem::paddr(&TEST_USER_TEXT);
     page_table
         .map_phys_range(
             &mut PhysPageAllocator {},
@@ -242,6 +220,27 @@ fn test_user_syscalls() -> ! {
 
     println!("Executing user process");
     unsafe { trap::touser(kstack_top, UTZERO as u64, USTKTOP as u64) }
+}
+
+/// Write a page that's mapped nowhere else through one kmap, and read it back
+/// through another.
+fn test_kmap() {
+    let pa = pagealloc::allocate_physpage().expect("couldn't allocate kmap test page");
+    let pattern = |i: usize| (i * 7 + 3) as u8;
+
+    {
+        let k = kmap::kmap(pa);
+        // SAFETY: kmaps the whole of the newly allocated page, which nothing
+        // else refers to.
+        let page = unsafe { core::slice::from_raw_parts_mut(k.va() as *mut u8, PAGE_SIZE_4K) };
+        page.iter_mut().enumerate().for_each(|(i, b)| *b = pattern(i));
+    }
+
+    let k = kmap::kmap(pa);
+    // SAFETY: as above.
+    let page = unsafe { core::slice::from_raw_parts(k.va() as *const u8, PAGE_SIZE_4K) };
+    assert!(page.iter().enumerate().all(|(i, &b)| b == pattern(i)), "kmap test: page differs");
+    println!("kmap test: ok");
 }
 
 static SWTCH_TEST_MAIN: SyncUnsafeCell<Label> = SyncUnsafeCell::new(Label::new());
