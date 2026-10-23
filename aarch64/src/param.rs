@@ -3,6 +3,23 @@ use port::mem::PAGE_SIZE_4K;
 // This needs to match KZERO in l.S
 pub const KZERO: usize = 0xffff_8000_0000_0000;
 
+/// Maximum number of CPUs (the Raspberry Pi 4 has four cores).
+pub const MAXMACH: usize = 4;
+
+/// Base of the kmap region: root entry 510, just below the recursive entry.
+/// Each CPU has KMAPSLOTS consecutive 4KiB slots, all in one level 3 table
+/// that vminit builds before the MMU is enabled.
+pub const KMAPBASE: usize = 0xffff_ff00_0000_0000;
+
+/// Number of kmap slots per CPU: how many pages one CPU can have kmapped at
+/// once.
+pub const KMAPSLOTS: usize = 8;
+
+// The pre-MMU vminit writes a self-referencing entry 511 into every new
+// table, so slot 511 of the kmap table isn't usable.
+const _: () = assert!(MAXMACH * KMAPSLOTS < 511);
+const _: () = assert!(KMAPBASE.is_multiple_of(2 << 20));
+
 // User address space layout.  User addresses are translated by ttbr0_el1.
 
 /// Start of user text.  The pages below are left unmapped to catch null

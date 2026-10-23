@@ -4,7 +4,7 @@
 /// Note that currently there are a lot of assumptions that we're dealing with
 /// 4KiB tables here, although it supports various sizes of pages.
 use crate::{
-    kmem::{from_ptr_to_physaddr_offset_from_kzero, physaddr_as_ptr_mut_offset_from_kzero},
+    kmem::{kaddr, paddr},
     pagealloc,
     param::KZERO,
 };
@@ -299,6 +299,14 @@ fn recursive_table_addr(pgtype: RootPageTableType, va: usize, level: Level) -> u
     msbits | recursive_indices | ((indices >> shift) & indices_mask)
 }
 
+/// Return the level 3 entry that maps `va` in the kernel page table, reached
+/// through the kernel's recursive entry.  The level 3 table for `va` must
+/// already exist, as the kmap region's does.
+pub fn kernel_pte(va: usize) -> *mut Entry {
+    let table = recursive_table_addr(RootPageTableType::Kernel, va, Level::Level3) as *mut Entry;
+    table.wrapping_add(va_index(va, Level::Level3))
+}
+
 #[derive(Debug)]
 #[allow(dead_code)]
 pub enum PageTableError {
@@ -470,6 +478,7 @@ impl RootPageTable {
                     "error:vm:map_to:couldn't find page table entry. va:{:#x} err:{:?}",
                     va, err
                 );
+                vmtrait_impl.write_recursive_entry(pgtype, old_recursive_entry);
                 return Err(err);
             }
         };
@@ -552,7 +561,7 @@ pub fn root_page_table(pgtype: RootPageTableType) -> &'static mut RootPageTable 
         RootPageTableType::User => ttbr0_el1(),
         RootPageTableType::Kernel => ttbr1_el1(),
     };
-    unsafe { &mut *physaddr_as_ptr_mut_offset_from_kzero::<RootPageTable>(page_table_pa) }
+    unsafe { &mut *kaddr::<RootPageTable>(page_table_pa) }
 }
 
 pub unsafe fn init_user_page_tables() {
@@ -564,9 +573,8 @@ pub unsafe fn init_user_page_tables() {
 /// address, but all we have is the virtual address
 unsafe fn init_empty_root_page_table(root_page_table: &mut RootPageTable) {
     unsafe {
-        let entry = Entry::rw_kernel_data()
-            .with_phys_addr(from_ptr_to_physaddr_offset_from_kzero(root_page_table))
-            .with_page_or_table(true);
+        let entry =
+            Entry::rw_kernel_data().with_phys_addr(paddr(root_page_table)).with_page_or_table(true);
         write_volatile(&mut root_page_table.entries[511], entry);
     }
 }
@@ -610,7 +618,7 @@ fn ttbr1_el1() -> PhysAddr {
 pub unsafe fn switch(page_table: &RootPageTable, pgtype: RootPageTableType) {
     #[cfg(not(test))]
     unsafe {
-        let pt_phys = from_ptr_to_physaddr_offset_from_kzero(page_table).addr();
+        let pt_phys = paddr(page_table).addr();
         // https://forum.osdev.org/viewtopic.php?t=36412&p=303237
         match pgtype {
             RootPageTableType::User => {
@@ -714,7 +722,7 @@ impl VmTrait for VmTraitImpl {
     }
 
     fn generate_temp_recursive_address(&self, table: &Table) -> Entry {
-        let pa = from_ptr_to_physaddr_offset_from_kzero(table);
+        let pa = paddr(table);
         Entry::rw_kernel_data().with_phys_addr(pa).with_page_or_table(true)
     }
 
