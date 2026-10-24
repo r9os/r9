@@ -372,6 +372,7 @@ pub enum PageTableError {
     PhysRangeIsNotOnPageBoundary,
     MappingRecursiveIndex,
     NoAddressSpace,
+    AlreadyMapped,
     VaOutOfRange,
 }
 
@@ -484,10 +485,12 @@ impl RootPageTable {
         RootPageTable { entries: [Entry::empty(); 512] }
     }
 
-    /// Ensure there's a mapping from va to entry, creating any intermediate
-    /// page tables that don't already exist.  If a mapping already exists,
-    /// replace it.  self must be the active root of its half, reached through
-    /// the recursive window, since that's how the tables below it are reached.
+    /// Map va to entry, creating any intermediate page tables that don't
+    /// already exist.  If va is already mapped, fail with AlreadyMapped:
+    /// replacing a valid entry would need break-before-make, and would leak
+    /// the page it mapped.  self must be the active root of its half, reached
+    /// through the recursive window, since that's how the tables below it are
+    /// reached.
     fn map_to<A: PageAllocator, B: VmTrait>(
         &mut self,
         page_allocator: &mut A,
@@ -526,6 +529,11 @@ impl RootPageTable {
                 return Err(err);
             }
         };
+
+        if dest_entry.valid() {
+            println!("error:vm:map_to:va:{va:#x} is already mapped");
+            return Err(PageTableError::AlreadyMapped);
+        }
 
         // Entries at level 3 should have the page flag set
         let entry =
@@ -1065,5 +1073,30 @@ mod tests {
         assert!(matches!(result, Err(PageTableError::NoAddressSpace)));
         // Nothing was allocated or mapped.
         assert_eq!(test_page_allocator.next_page_idx, 0);
+    }
+
+    #[test]
+    fn cant_map_an_address_twice() {
+        let mut table = RootPageTable::empty();
+        let mut test_page_allocator = TestPageAllocator::new();
+        let mut test_vmtrait_impl = TestVmTrait::new(&mut table);
+
+        for (pa, expected_ok) in [(0x20_0000, true), (0x40_0000, false)] {
+            let result = map_phys_range(
+                &mut test_page_allocator,
+                &mut test_vmtrait_impl,
+                "twice",
+                &PhysRange::with_len(pa, PAGE_SIZE_4K),
+                VaMapping::Addr(UTZERO),
+                Entry::rw_user_data(),
+                PageSize::Page4K,
+                RootPageTableType::User,
+            );
+            if expected_ok {
+                assert!(result.is_ok());
+            } else {
+                assert!(matches!(result, Err(PageTableError::AlreadyMapped)));
+            }
+        }
     }
 }
