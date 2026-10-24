@@ -4,6 +4,7 @@
 /// Note that currently there are a lot of assumptions that we're dealing with
 /// 4KiB tables here, although it supports various sizes of pages.
 use crate::{
+    kmap::kmap,
     kmem::paddr,
     pagealloc,
     param::{KVA_BASE, KZERO, UVA_END},
@@ -20,17 +21,10 @@ use port::{
 #[cfg(not(test))]
 use port::println;
 
-//static mut KERNEL_PAGETABLE: RootPageTable = RootPageTable::empty();
-static mut USER_PAGETABLE: RootPageTable = RootPageTable::empty();
-
 /// The user root that's loaded when there's no user address space.  It holds
 /// only its recursive entry, so every other user address faults, including
 /// the null page.
 static mut EMPTY_USER_ROOT: RootPageTable = RootPageTable::empty();
-
-pub fn user_pagetable() -> &'static mut RootPageTable {
-    unsafe { &mut *ptr::addr_of_mut!(USER_PAGETABLE) }
-}
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -602,12 +596,39 @@ pub unsafe fn load_empty_user_root() {
     let root = unsafe { &mut *ptr::addr_of_mut!(EMPTY_USER_ROOT) };
     unsafe {
         init_empty_root_page_table(root);
-        switch(root, RootPageTableType::User);
+        load_user_root(paddr(root));
     }
 }
 
-pub unsafe fn init_user_page_tables() {
-    unsafe { init_empty_root_page_table(user_pagetable()) };
+/// A user address space: the physical address of its root page table.  The
+/// root isn't mapped at KZERO, so before it's loaded it's only reached through
+/// kmap, and after that through the recursive window.  Address spaces aren't
+/// freed yet.
+pub struct AddressSpace {
+    root: PhysAddr,
+}
+
+impl AddressSpace {
+    /// Allocate a new, empty address space.
+    pub fn new() -> Result<Self, PageAllocError> {
+        let root = pagealloc::allocate_zeroed_physpage()?;
+        let k = kmap(root);
+        // SAFETY: kmaps the newly allocated root, which nothing else refers
+        // to yet.
+        unsafe { write_volatile((k.va() as *mut Entry).add(511), Entry::table(root)) };
+        Ok(Self { root })
+    }
+}
+
+/// Load `space` into ttbr0_el1, making it the user address space that
+/// map_phys_range edits.
+///
+/// # Safety
+///
+/// Nothing may still refer to memory through the user address space that's
+/// being replaced.
+pub unsafe fn switch(space: &AddressSpace) {
+    unsafe { load_user_root(space.root) };
 }
 
 /// Given an empty, statically allocated page table.  We need to write a
@@ -640,36 +661,22 @@ fn ttbr0_el1() -> PhysAddr {
     PhysAddr::new(0)
 }
 
-// TODO this should just call invalidate_all_tlb_entries afterwards?
+/// Load the user root at `root` into ttbr0_el1.
 #[allow(unused_variables)]
-pub unsafe fn switch(page_table: &RootPageTable, pgtype: RootPageTableType) {
+unsafe fn load_user_root(root: PhysAddr) {
     // Make the new root's entries visible to the table walker before it's
     // loaded.
     write_barrier();
     #[cfg(not(test))]
     unsafe {
-        let pt_phys = paddr(page_table).addr();
         // https://forum.osdev.org/viewtopic.php?t=36412&p=303237
-        match pgtype {
-            RootPageTableType::User => {
-                core::arch::asm!(
-                    "msr ttbr0_el1, {pt_phys}",
-                    "tlbi vmalle1is", // invalidate all TLB entries
-                    "dsb ish",      // ensure write has completed
-                    "isb",          // synchronize context and ensure that no instructions
-                                    // are fetched using the old translation
-                    pt_phys = in(reg) pt_phys);
-            }
-            RootPageTableType::Kernel => {
-                core::arch::asm!(
-                    "msr ttbr1_el1, {pt_phys}",
-                    "tlbi vmalle1is", // invalidate all TLB entries
-                    "dsb ish",      // ensure write has completed
-                    "isb",          // synchronize context and ensure that no instructions
-                                    // are fetched using the old translation
-                    pt_phys = in(reg) pt_phys);
-            }
-        }
+        core::arch::asm!(
+            "msr ttbr0_el1, {root}",
+            "tlbi vmalle1is", // invalidate all TLB entries
+            "dsb ish",        // ensure write has completed
+            "isb",            // synchronize context and ensure that no instructions
+                              // are fetched using the old translation
+            root = in(reg) root.addr());
     }
 }
 
