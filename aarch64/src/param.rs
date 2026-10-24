@@ -32,6 +32,24 @@ pub const KMAPSLOTS: usize = 8;
 const _: () = assert!(MAXMACH * KMAPSLOTS <= 512);
 const _: () = assert!(KMAPBASE.is_multiple_of(2 << 20));
 
+/// Base of the kernel stack region: the 2MiB after the kmap region.  It holds
+/// KSTACKSLOTS slots, each 2 * KSTACKSIZE and aligned to that size: an
+/// unmapped guard of KSTACKSIZE, then a stack of KSTACKSIZE above it.  Stacks
+/// grow down, so an overflow runs into the guard below the stack.  All the
+/// slots are in one level 3 table that vminit builds before the MMU is
+/// enabled.
+pub const KSTACKBASE: usize = KMAPBASE + (2 << 20);
+
+/// Size of a kernel stack, as STACKSZ in l.S.
+pub const KSTACKSIZE: usize = 16 * 1024;
+
+/// Number of kernel stacks.
+pub const KSTACKSLOTS: usize = 64;
+
+const _: () = assert!(KSTACKSLOTS * 2 * KSTACKSIZE <= 2 << 20);
+const _: () = assert!(KSTACKBASE.is_multiple_of(2 << 20));
+const _: () = assert!(KSTACKSIZE.is_multiple_of(PAGE_SIZE_4K));
+
 // User address space layout.  User addresses are translated by ttbr0_el1.
 
 /// Start of user text.  The pages below are left unmapped to catch null

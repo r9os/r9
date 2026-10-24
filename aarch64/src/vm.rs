@@ -55,11 +55,6 @@ impl PhysPage4K {
     }
 }
 
-#[repr(C, align(4096))]
-pub struct VirtPage4K(pub [u8; PAGE_SIZE_4K]);
-
-impl VirtPage4K {}
-
 #[derive(Debug, IntoPrimitive, FromPrimitive)]
 #[repr(u8)]
 pub enum Mair {
@@ -304,7 +299,7 @@ fn recursive_table_addr(pgtype: RootPageTableType, va: usize, level: Level) -> u
 
 /// Return the level 3 entry that maps `va` in the kernel page table, reached
 /// through the kernel's recursive entry.  The level 3 table for `va` must
-/// already exist, as the kmap region's does.
+/// already exist, as vminit builds for the kmap and kernel stack regions.
 fn kernel_pte(va: usize) -> *mut Entry {
     let table = recursive_table_addr(RootPageTableType::Kernel, va, Level::Level3) as *mut Entry;
     table.wrapping_add(va_index(va, Level::Level3))

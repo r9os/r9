@@ -94,8 +94,6 @@ No user page is ever both writable and executable. AArch64 has no "kernel read-w
                        |   0x20_0000 kernel rodata                   RO   |
                        |   0x40_0000 kernel data, bss, early tables  RW   |
                        |   0x800_0000 DTB                            RO   |
-                       |   kernel pages from allocate_virtpage,           |
-                       |   4KiB each (e.g. stacks)                   RW   |
                        +--------------------------------------------------+
                        |                       ...                        |
 0xffff_9000_0000_0000  +--------------------------------------------------+ KZERO + 16TiB
@@ -107,6 +105,9 @@ No user page is ever both writable and executable. AArch64 has no "kernel read-w
 0xffff_ff00_0000_0000  +--------------------------------------------------+ KMAPBASE
                        | kmap: KMAPSLOTS 4KiB slots per CPU, mapped and   |
                        | unmapped one page at a time                 RW   |
+0xffff_ff00_0020_0000  +--------------------------------------------------+ KSTACKBASE
+                       | kernel stacks: 64 slots of 32KiB, each a 16KiB   |
+                       | unmapped guard below a 16KiB stack          RW   |
                        +--------------------------------------------------+
                        |                       ...                        |
 0xffff_ff80_0000_0000  +--------------------------------------------------+
@@ -115,7 +116,8 @@ No user page is ever both writable and executable. AArch64 has no "kernel read-w
 0xffff_ffff_ffff_ffff  +--------------------------------------------------+
 ```
 
-- There's no direct map of RAM. `paddr(va)` in `kmem.rs` converts only for what's mapped at KZERO + its physical address: the kernel image, the DTB and pages the kernel maps for itself with `allocate_virtpage`.
+- There's no direct map of RAM. `paddr(va)` in `kmem.rs` converts only for what's mapped at KZERO + its physical address: the kernel image and the DTB.
+- Kernel stacks (`kstack.rs`) come from their own region. Each stack has an unmapped guard below it, so an overflow faults instead of corrupting memory. The kernel heap is a static in the kernel image's BSS.
 - After the MMU is on, page tables are only ever edited while they're active: `map_phys_range` takes no table, and always edits the active root of its half through the recursive window. To map into a user address space, switch to it first. When there's no user address space, `ttbr0_el1` holds an empty root, which has only its recursive entry. Mapping user pages then fails with `NoAddressSpace`, and every other user address faults, including null.
 - Page tables are reached through the recursive entries. Any other physical page, such as a user page, is reached through `kmap` (`kmap.rs`, as in Plan 9). `kmap(pa)` maps the page in one of the current CPU's slots and returns a guard. Dropping the guard unmaps it and invalidates that address in the TLB. The tables for the region are built before the MMU is on, so `kmap` never allocates. It's for thread context only.
 - The kernel image sections are 2MiB aligned by `kernel.ld`, so they can have their own permissions using 2MiB blocks.
@@ -126,7 +128,7 @@ VM initialisation proceeds as follows:
 1. **Before the MMU is on,** `init_vm` (`pre_mmu/vminit.rs`) builds the initial page tables. It takes table pages from the 32 pages reserved as `earlyvm_pagetables` in `kernel.ld`, with its own small allocator, `EarlyPageAllocator`. It maps:
    - the kernel image at KZERO + its physical address: text (including boottext) read-only and executable, rodata read-only, data and BSS read-write, all with 2MiB blocks
    - the DTB, read-only
-   - the tables for the kmap region, with no pages mapped
+   - the tables for the kmap and kernel stack regions, with no pages mapped
    - an identity map of the first 1GiB in `ttbr0_el1`, so `l.S` keeps running when the MMU is turned on
 
    It also sets `TCR_EL1` and `MAIR_EL1`. MMIO isn't mapped here: each driver maps its registers later, at KZERO + 16TiB (`deviceutil.rs`).

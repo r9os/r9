@@ -14,6 +14,7 @@ mod deviceutil;
 mod io;
 mod kmap;
 mod kmem;
+mod kstack;
 mod mailbox;
 mod pagealloc;
 mod param;
@@ -32,7 +33,7 @@ extern crate alloc;
 use alloc::boxed::Box;
 use core::cell::SyncUnsafeCell;
 use core::hint::black_box;
-use param::{KZERO, USTKSIZE, USTKTOP, UTZERO};
+use param::{USTKSIZE, USTKTOP, UTZERO};
 use port::fdt::DeviceTree;
 use port::mem::{PAGE_SIZE_4K, PhysRange, VirtRange};
 use port::println;
@@ -252,14 +253,9 @@ static SWTCH_TEST_OTHER: SyncUnsafeCell<Label> = SyncUnsafeCell::new(Label::new(
 /// Switch back and forth between main9 and another kernel context with its
 /// own stack, checking that state held across the switches survives.
 fn test_swtch() {
-    let stack = pagealloc::allocate_virtpage(
-        "swtchstack",
-        Entry::rw_kernel_data(),
-        VaMapping::Offset(KZERO),
-        RootPageTableType::Kernel,
-    )
-    .expect("couldn't allocate swtch test stack");
-    let stack_top = stack as *mut _ as usize + PAGE_SIZE_4K;
+    let (used_before, _) = port::pagealloc::usage_bytes();
+    let stack = kstack::alloc().expect("couldn't allocate swtch test stack");
+    let stack_top = stack.top();
 
     unsafe { *SWTCH_TEST_OTHER.get() = Label::new_context(swtch_test_other, stack_top) };
 
@@ -269,6 +265,19 @@ fn test_swtch() {
         unsafe { swtch::swtch(SWTCH_TEST_MAIN.get(), SWTCH_TEST_OTHER.get()) };
     }
     assert_eq!(black_box(canary), 0x0123_4567_89ab_cdef);
+
+    // Nothing switches back to the other context, so its stack can be freed.
+    // A new stack then reuses the slot, and the pages are all returned.
+    // SAFETY: the other context is never resumed.
+    unsafe { kstack::free(stack) };
+    // Its label now points into a freed stack.  Reset it, so a mistaken
+    // switch to it jumps to address 0 and faults.
+    unsafe { *SWTCH_TEST_OTHER.get() = Label::new() };
+    let again = kstack::alloc().expect("couldn't allocate a second stack");
+    assert_eq!(again.top(), stack_top);
+    // SAFETY: nothing ran on this stack.
+    unsafe { kstack::free(again) };
+    assert_eq!(port::pagealloc::usage_bytes().0, used_before);
     println!("swtch test: ok");
 }
 
