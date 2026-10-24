@@ -121,6 +121,14 @@ impl Entry {
         Entry(0)
     }
 
+    /// An entry that points to the next level's table at `pa`.  A walk ignores
+    /// table entry bits [11:2] and [58:52], so the page attributes set here
+    /// only apply when the recursive window reads the entry as a page.  They
+    /// map the table kernel read-write, never executable and inner-shareable.
+    pub fn table(pa: PhysAddr) -> Self {
+        Self::rw_kernel_data().with_phys_addr(pa).with_page_or_table(true)
+    }
+
     pub fn rw_kernel_data() -> Self {
         Entry(0)
             .with_access_permission(AccessPermission::PrivRw)
@@ -391,7 +399,7 @@ impl Table {
                 return Err(PageTableError::AllocationFailed(err));
             }
         };
-        entry = Entry::rw_kernel_data().with_phys_addr(page_pa).with_page_or_table(true);
+        entry = Entry::table(page_pa);
         vmtrait_impl.write_entry(&mut self.entries[index], entry);
 
         // Clear out the new page and return it as the next table
@@ -574,8 +582,7 @@ pub unsafe fn init_user_page_tables() {
 /// address, but all we have is the virtual address
 unsafe fn init_empty_root_page_table(root_page_table: &mut RootPageTable) {
     unsafe {
-        let entry =
-            Entry::rw_kernel_data().with_phys_addr(paddr(root_page_table)).with_page_or_table(true);
+        let entry = Entry::table(paddr(root_page_table));
         write_volatile(&mut root_page_table.entries[511], entry);
     }
 }
@@ -724,7 +731,7 @@ impl VmTrait for VmTraitImpl {
 
     fn generate_temp_recursive_address(&self, table: &Table) -> Entry {
         let pa = paddr(table);
-        Entry::rw_kernel_data().with_phys_addr(pa).with_page_or_table(true)
+        Entry::table(pa)
     }
 
     fn resolve_entry_mut<T>(
@@ -855,9 +862,7 @@ mod tests {
         }
 
         fn generate_temp_recursive_address(&self, table: &Table) -> Entry {
-            Entry::rw_kernel_data()
-                .with_phys_addr(PhysAddr(table as *const _ as u64))
-                .with_page_or_table(true)
+            Entry::table(PhysAddr(table as *const _ as u64))
         }
 
         fn resolve_entry_mut<T>(
@@ -938,5 +943,19 @@ mod tests {
             .expect("error:init:mapping failed");
 
         assert_eq!(mapped_virtrange, VirtRange::new(KZERO + 4096, KZERO + 8 * 4096));
+    }
+
+    #[test]
+    fn table_entry_attributes() {
+        let pa = PhysAddr::new(0x40_0000);
+        let e = Entry::table(pa);
+        assert!(e.valid() && e.page_or_table());
+        assert_eq!(e.phys_addr(), pa);
+        // As a page, through the recursive window: kernel RW, never
+        // executable, inner-shareable, normal memory, accessed.
+        assert_eq!(u8::from(e.access_permission()), u8::from(AccessPermission::PrivRw));
+        assert!(e.pxn() && e.uxn() && e.accessed());
+        assert_eq!(u8::from(e.shareable()), u8::from(Shareable::Inner));
+        assert_eq!(u8::from(e.mair_index()), u8::from(Mair::Normal));
     }
 }
