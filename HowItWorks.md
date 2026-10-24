@@ -25,30 +25,39 @@ The code in `l.S` exists to bring us to a state where we can run kernel code in 
 
 We're now in rust, in `main9`, and at a high level we:
 
-1. Set up interrupt handlers early so that we get a bit of feedback if things go wrong.
+1. Point `TPIDR_EL1` at this CPU's `Mach` (`mach.rs`), then set up interrupt handlers early so that we get a bit of feedback if things go wrong.
 2. Parse the device tree, enabling more informed initialisation.
 3. Set up the mailbox (rpi-specific, but allows us to extract more information from the hardware, and interact directly in certain ways).
 4. Initialise the [console](#devcons), ensuring we can use `port::println` to write to the UART.
 5. Write out some useful system information.
 6. Set up [virtual memory](#virtual-memory) in rust. (After switching we no longer need the pagetables set up in early initialisation.)
-7. Write out the page tables.
+7. Write out the kernel page tables.
 8. Switch back and forth between `main9` and a second kernel context to test `swtch`.
-9. Run a hand-assembled test program in EL0 that makes a couple of syscalls, ending with an exit syscall that halts.
+9. Run a [process](#processes) whose hand-assembled program makes a syscall and exits with its result, and check that everything it allocated is freed.
 
 ### Exceptions
 
 `trap.S` holds the exception vector table. Every entry pushes a `TrapFrame` (all general purpose registers, plus `ESR_EL1`, `ELR_EL1`, `FAR_EL1`, `SP_EL0` and `SPSR_EL1`) onto the current stack, calls `trap` in `trap.rs`, then leaves through `trap_return`. `trap_return` takes the return state from the frame rather than the live registers, so a handler can change where we return to, or what's returned in x0.
 
 - Exceptions from EL1 are taken on the interrupted kernel stack.
-- Exceptions from EL0 are taken on whatever `SP_EL1` was when we entered EL0. `to_user` enters EL0 by building a `TrapFrame` at the top of a kernel stack and jumping to `trap_return`, which leaves `SP_EL1` at the top of that stack. Until processes have their own kernel stacks, the interrupt stack is used.
+- Exceptions from EL0 are taken on whatever `SP_EL1` was when we entered EL0. `to_user` enters EL0 by building a `TrapFrame` at the top of the process's kernel stack and jumping to `trap_return`, which leaves `SP_EL1` at the top of that stack. A process's first kernel context starts below that frame's space, as Plan 9 keeps the top of each kernel stack for its `Ureg`.
 
 The kernel is built softfloat (see `lib/aarch64-unknown-none-elf.json`), so it never uses the FP/SIMD registers and exception entry doesn't need to save them. `to_user` zeroes the user FP/SIMD state, so one process can't read another's. It will need saving once processes are switched between.
 
-IRQs, FIQs, SErrors and debug exceptions are masked in both EL1 and EL0 until we have a use for them. Syscalls are currently placeholders: the `svc` immediate is the syscall number, syscall 3 halts, and any other returns x0 + 1.
+IRQs, FIQs, SErrors and debug exceptions are masked in both EL1 and EL0 until we have a use for them. Syscalls are currently placeholders: the `svc` immediate is the syscall number, syscall 3 exits the process with status x0 (`pexit`), and any other returns x0 + 1.
 
 ### Kernel context switching
 
 `swtch(save, next)` in `swtch.rs` saves the current kernel context's callee-saved registers (x19-x29, the return address and `sp`) into the `save` `Label`, loads them from `next`, and returns into wherever `next` last called `swtch`. `Label::new_context` builds a label that starts a never-returning function on a fresh stack. This is only for switching between kernel contexts at EL1; entering EL0 is done with `to_user`.
+
+### Processes
+
+A process is a `port::dat::Proc<A>`, and its lifecycle is in `port/src/proc.rs`, following Plan 9's `port/proc.c`. `A` is the architecture, which implements two traits from `port::dat`: `MMU`, for the process's address space (its `Pmmu`), and `ProcArch`, for its kernel stack, kernel context, and the per-CPU `up` and scheduler context. On aarch64 that's `Arm64` in `proc.rs`, and the per-CPU state is `Mach` in `mach.rs`, found through `TPIDR_EL1`.
+
+- `newproc(start)` allocates an address space and a kernel stack, and a context that starts in `proc_start`.
+- `run(p)` makes `p` the current process (`up`), and switches to it from the scheduler context. There's no scheduler yet, so a process runs until it exits.
+- `proc_start` switches to the process's address space and calls `start`, as Plan 9's `kproc` runs a function in a new process. `start` loads the program and enters EL0 with `to_user`.
+- `pexit(status)` records the exit status and switches back to the scheduler context, where `run` reaps the process: its address space is released, every page mapped in it is freed, and its kernel stack is freed.
 
 ### User Address Space
 
@@ -58,7 +67,7 @@ User addresses are translated through `ttbr0_el1`. The layout is defined in `par
 - `USTKTOP` (2^47): top of the user stack, which is `USTKSIZE` (64KiB), mapped up front, with nothing mapped below it.
 - `UADDRTOP` (0x0000_ff80_0000_0000): end of the user address space. Root entry 511 above it recursively maps the user page table. `map_to` refuses addresses in the recursive range, or outside the half of the address space its table translates.
 
-No user page is ever both writable and executable. AArch64 has no "kernel read-write, user read-only" permission, so the kernel fills user pages through [`kmap`](#virtual-address-map), never through their user address. `map_zeroed_user_pages` zeroes each page this way before mapping it. The user test's text is still a page-aligned page of the kernel image's read-only data, mapped into user space as is, until there's an ELF loader.
+No user page is ever both writable and executable. AArch64 has no "kernel read-write, user read-only" permission, so the kernel fills user pages through [`kmap`](#virtual-address-map), never through their user address. `map_zeroed_user_pages` zeroes each page this way before mapping it. The test process copies its text into a page it allocates, through kmap, then cleans the data cache and invalidates the instruction cache (`vm::sync_icache`), so the instructions it fetches at `UTZERO` are the ones written. A process owns every page mapped in its address space, until there are segments.
 
 ### Virtual Memory
 

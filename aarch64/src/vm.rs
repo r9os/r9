@@ -816,6 +816,42 @@ fn write_barrier() {
     }
 }
 
+/// Make instructions written at `va` visible to instruction fetch, through
+/// any mapping of the same memory: clean the data cache to the point of
+/// unification, then invalidate the whole instruction cache, since it may be
+/// VIPT, and the instructions will run at a different address.  Either step
+/// is skipped if CTR_EL0 says the hardware doesn't need it (IDC, DIC).  See
+/// the Arm ARM (DDI 0487) on instruction cache maintenance and CTR_EL0, and
+/// Linux's sync_icache_aliases.
+#[allow(unused_variables)]
+pub fn sync_icache(va: usize, len: usize) {
+    #[cfg(not(test))]
+    {
+        let ctr: u64;
+        // SAFETY: reads CTR_EL0 only.
+        unsafe { core::arch::asm!("mrs {ctr}, ctr_el0", ctr = out(reg) ctr) };
+        let idc = ctr & (1 << 28) != 0;
+        let dic = ctr & (1 << 29) != 0;
+        // DminLine, bits [19:16], is log2 of the smallest data cache line in
+        // words.
+        let line = 4 << ((ctr >> 16) & 0xf);
+        if !idc {
+            for addr in (va & !(line - 1)..va + len).step_by(line) {
+                // SAFETY: cleaning a line has no effect on its contents.
+                unsafe { core::arch::asm!("dc cvau, {addr}", addr = in(reg) addr) };
+            }
+        }
+        if dic {
+            // SAFETY: barriers only.
+            unsafe { core::arch::asm!("dsb ish", "isb") };
+        } else {
+            // SAFETY: barriers, and invalidating the instruction cache, which
+            // only costs refetching.
+            unsafe { core::arch::asm!("dsb ish", "ic ialluis", "dsb ish", "isb") };
+        }
+    }
+}
+
 #[allow(unused_variables)]
 pub unsafe fn invalidate_all_tlb_entries() {
     #[cfg(not(test))]

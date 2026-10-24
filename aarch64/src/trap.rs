@@ -1,6 +1,7 @@
 use core::fmt;
 use core::mem::{offset_of, size_of};
 
+use crate::proc::Arm64;
 use crate::reg::esr_el1::EsrEl1;
 use port::println;
 
@@ -147,10 +148,7 @@ fn syscall(frame: &mut TrapFrame) {
     println!("Syscall {syscallid} from EL{}: x0={:#x}", frame.exception_level(), frame.x0);
 
     if syscallid == 3 {
-        println!("Exit");
-        loop {
-            core::hint::spin_loop();
-        }
+        port::proc::pexit::<Arm64>(frame.x0);
     }
 
     frame.x0 += 1;
@@ -165,9 +163,9 @@ fn syscall(frame: &mut TrapFrame) {
 ///
 /// # Safety
 ///
-/// `kstack_top` must be the 16-byte aligned top of a kernel stack that isn't
-/// in use, and `entry` and `user_sp` must be mapped in the current user page
-/// table.
+/// `kstack_top` must be the 16-byte aligned top of a kernel stack, and the
+/// TrapFrame below it must not be in use.  `entry` and `user_sp` must be mapped
+/// in the current user page table.
 pub unsafe fn to_user(kstack_top: usize, entry: u64, user_sp: u64) -> ! {
     let frame = (kstack_top - size_of::<TrapFrame>()) as *mut TrapFrame;
     let mut tf: TrapFrame = unsafe { core::mem::zeroed() };

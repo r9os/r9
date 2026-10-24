@@ -15,10 +15,12 @@ mod io;
 mod kmap;
 mod kmem;
 mod kstack;
+mod mach;
 mod mailbox;
 mod pagealloc;
 mod param;
 mod pre_mmu;
+mod proc;
 mod reg;
 mod registers;
 mod swtch;
@@ -34,9 +36,11 @@ use alloc::boxed::Box;
 use core::cell::SyncUnsafeCell;
 use core::hint::black_box;
 use param::{USTKSIZE, USTKTOP, UTZERO};
+use port::dat::ProcArch;
 use port::fdt::DeviceTree;
 use port::mem::{PAGE_SIZE_4K, PhysRange, VirtRange};
 use port::println;
+use proc::Arm64;
 use reg::midr_el1::MidrEl1;
 use swtch::Label;
 use vm::{Entry, PhysPageAllocator, RootPageTableType, VaMapping, VmTraitImpl};
@@ -116,6 +120,7 @@ fn print_stacks() {
 /// physical address.
 #[unsafe(no_mangle)]
 pub extern "C" fn main9(dtb_va: usize) {
+    mach::init();
     trap::init();
 
     // Nothing needs the boot identity map in ttbr0_el1 any more.  Replace it
@@ -158,8 +163,7 @@ pub extern "C" fn main9(dtb_va: usize) {
     print_board_info();
     print_memory_info();
 
-    // vmdebug::print_recursive_tables(RootPageTableType::Kernel);
-    // vmdebug::print_recursive_tables(RootPageTableType::User);
+    vmdebug::print_recursive_tables(RootPageTableType::Kernel);
 
     println!("Set up a user process");
 
@@ -168,37 +172,40 @@ pub extern "C" fn main9(dtb_va: usize) {
     test_kmap();
     test_swtch();
     test_release();
-
-    // The user test runs in its own address space.
-    let space = vm::AddressSpace::new().expect("couldn't allocate user address space");
-    // SAFETY: nothing refers to memory through the empty root.
-    unsafe { vm::switch(&space) };
-
-    test_user_syscalls();
+    test_user_process();
 }
 
 mod runtime;
 
-/// A page of user text for test_user_syscalls:
+/// User text for test_user_process:
 ///   20 05 80 D2    ; mov x0, #41
 ///   01 00 00 D4    ; svc #0        (returns x0 + 1)
-///   61 00 00 D4    ; svc #3        (exit)
-/// It fills its own page of the kernel image, so it can be mapped into user
-/// space read-only without the kernel ever writing it.
-#[repr(C, align(4096))]
-struct UserTextPage([u32; PAGE_SIZE_4K / 4]);
+///   61 00 00 D4    ; svc #3        (exit with x0)
+const TEST_USER_TEXT: [u32; 3] = [0xd280_0520, 0xd400_0001, 0xd400_0061];
 
-static TEST_USER_TEXT: UserTextPage = {
-    let mut text = [0; PAGE_SIZE_4K / 4];
-    text[0] = 0xd280_0520;
-    text[1] = 0xd400_0001;
-    text[2] = 0xd400_0061;
-    UserTextPage(text)
-};
+/// Run a process that makes a syscall and exits with its result, checking that
+/// it frees everything it allocated.
+fn test_user_process() {
+    let (used_before, _) = port::pagealloc::usage_bytes();
+    let p = port::proc::newproc::<Arm64>(test_user_start).expect("couldn't create process");
+    println!("Executing user process");
+    assert_eq!(port::proc::run(p), 42);
+    assert_eq!(port::pagealloc::usage_bytes().0, used_before);
+    println!("user process test: ok");
+}
 
-/// Check a syscall returns to EL0, then exit.
-fn test_user_syscalls() -> ! {
-    let text_pa = kmem::paddr(&TEST_USER_TEXT);
+/// The test process's start: load TEST_USER_TEXT and enter it.
+fn test_user_start() {
+    let text_pa = port::pagealloc::allocate_physpage().expect("couldn't allocate user text");
+    {
+        let k = kmap::kmap(text_pa);
+        // SAFETY: kmaps the whole of the newly allocated page, which nothing
+        // else refers to.
+        let page = unsafe { core::slice::from_raw_parts_mut(k.va() as *mut u32, PAGE_SIZE_4K / 4) };
+        page.fill(0);
+        page[..TEST_USER_TEXT.len()].copy_from_slice(&TEST_USER_TEXT);
+        vm::sync_icache(k.va(), PAGE_SIZE_4K);
+    }
     vm::map_phys_range(
         &mut PhysPageAllocator {},
         &mut VmTraitImpl {},
@@ -215,18 +222,10 @@ fn test_user_syscalls() -> ! {
     pagealloc::map_zeroed_user_pages("userstack", stack_range)
         .expect("couldn't allocate user stack");
 
-    // Exceptions from EL0 are taken on the interrupt stack for now.
-    unsafe extern "C" {
-        static interruptstackbase: [u64; 0];
-        static interruptstacksz: [u64; 0];
-    }
-    let kstack_top =
-        unsafe { interruptstackbase.as_ptr().addr() + interruptstacksz.as_ptr().addr() };
-
-    vmdebug::print_recursive_tables(RootPageTableType::Kernel);
-    vmdebug::print_recursive_tables(RootPageTableType::User);
-
-    println!("Executing user process");
+    // SAFETY: up is this process, which is running, and its context started
+    // below the space to_user uses at the top of its stack.
+    let kstack_top = unsafe { (*Arm64::up()).kstack().top() };
+    // SAFETY: as above, and the text and stack were just mapped.
     unsafe { trap::to_user(kstack_top, UTZERO as u64, USTKTOP as u64) }
 }
 
