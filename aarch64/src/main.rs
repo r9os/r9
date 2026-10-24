@@ -193,24 +193,21 @@ static TEST_USER_TEXT: UserTextPage = {
 
 /// Check a syscall returns to EL0, then exit.
 fn test_user_syscalls() -> ! {
-    let page_table = vm::user_pagetable();
-
     let text_pa = kmem::paddr(&TEST_USER_TEXT);
-    page_table
-        .map_phys_range(
-            &mut PhysPageAllocator {},
-            &mut VmTraitImpl {},
-            "usertext",
-            &PhysRange::with_pa_len(text_pa, PAGE_SIZE_4K),
-            VaMapping::Addr(UTZERO),
-            Entry::ro_user_text(),
-            PageSize::Page4K,
-            RootPageTableType::User,
-        )
-        .expect("couldn't map user text");
+    vm::map_phys_range(
+        &mut PhysPageAllocator {},
+        &mut VmTraitImpl {},
+        "usertext",
+        &PhysRange::with_pa_len(text_pa, PAGE_SIZE_4K),
+        VaMapping::Addr(UTZERO),
+        Entry::ro_user_text(),
+        PageSize::Page4K,
+        RootPageTableType::User,
+    )
+    .expect("couldn't map user text");
 
     let stack_range = VirtRange::new(USTKTOP - USTKSIZE, USTKTOP);
-    pagealloc::map_zeroed_user_pages(page_table, "userstack", stack_range)
+    pagealloc::map_zeroed_user_pages("userstack", stack_range)
         .expect("couldn't allocate user stack");
 
     // Exceptions from EL0 are taken on the interrupt stack for now.
@@ -256,7 +253,6 @@ static SWTCH_TEST_OTHER: SyncUnsafeCell<Label> = SyncUnsafeCell::new(Label::new(
 /// own stack, checking that state held across the switches survives.
 fn test_swtch() {
     let stack = pagealloc::allocate_virtpage(
-        vm::kernel_pagetable(),
         "swtchstack",
         Entry::rw_kernel_data(),
         VaMapping::Offset(KZERO),
