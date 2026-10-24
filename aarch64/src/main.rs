@@ -167,6 +167,7 @@ pub extern "C" fn main9(dtb_va: usize) {
 
     test_kmap();
     test_swtch();
+    test_release();
 
     // The user test runs in its own address space.
     let space = vm::AddressSpace::new().expect("couldn't allocate user address space");
@@ -248,6 +249,33 @@ fn test_kmap() {
     let page = unsafe { core::slice::from_raw_parts(k.va() as *const u8, PAGE_SIZE_4K) };
     assert!(page.iter().enumerate().all(|(i, &b)| b == pattern(i)), "kmap test: page differs");
     println!("kmap test: ok");
+}
+
+/// Map some pages into a new address space, then release it, checking that
+/// every page comes back.
+fn test_release() {
+    let (used_before, _) = port::pagealloc::usage_bytes();
+    let space = vm::AddressSpace::new().expect("couldn't allocate address space");
+    // SAFETY: nothing refers to memory through the empty address space.
+    unsafe { vm::switch(&space) };
+    let range = VirtRange::new(UTZERO, UTZERO + 4 * PAGE_SIZE_4K);
+    pagealloc::map_zeroed_user_pages("releasetest", range).expect("couldn't map pages");
+
+    let mut freed = 0;
+    // SAFETY: nothing refers to memory through space after this.
+    unsafe {
+        vm::release(space, |pa| {
+            port::pagealloc::free_physpage(pa).expect("couldn't free a page");
+            freed += 1;
+        })
+    }
+    .expect("couldn't release address space");
+    assert_eq!(freed, 4);
+    // SAFETY: the empty address space is refused, and nothing is freed.
+    let empty = unsafe { vm::release(vm::AddressSpace::empty(), |_| {}) };
+    assert!(matches!(empty, Err(vm::PageTableError::EmptyAddressSpace)));
+    assert_eq!(port::pagealloc::usage_bytes().0, used_before);
+    println!("release test: ok");
 }
 
 static SWTCH_TEST_MAIN: SyncUnsafeCell<Label> = SyncUnsafeCell::new(Label::new());
