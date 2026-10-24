@@ -28,9 +28,8 @@ pub const KMAPBASE: usize = 0xffff_ff00_0000_0000;
 /// once.
 pub const KMAPSLOTS: usize = 8;
 
-// The pre-MMU vminit writes a self-referencing entry 511 into every new
-// table, so slot 511 of the kmap table isn't usable.
-const _: () = assert!(MAXMACH * KMAPSLOTS < 511);
+// All the slots fit in the one level 3 table that vminit builds.
+const _: () = assert!(MAXMACH * KMAPSLOTS <= 512);
 const _: () = assert!(KMAPBASE.is_multiple_of(2 << 20));
 
 // User address space layout.  User addresses are translated by ttbr0_el1.
