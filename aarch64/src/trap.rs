@@ -156,7 +156,8 @@ fn syscall(frame: &mut TrapFrame) {
     frame.x0 += 1;
 }
 
-/// Enter EL0 at `entry` with the user stack pointer set to `user_sp`.
+/// Enter EL0 at `entry` with the user stack pointer set to `user_sp`, and the
+/// user FP/SIMD state zeroed.
 ///
 /// A TrapFrame is built just below `kstack_top` and restored by trap_return.
 /// This leaves SP_EL1 at `kstack_top` while in EL0, so that is the stack
@@ -177,7 +178,46 @@ pub unsafe fn to_user(kstack_top: usize, entry: u64, user_sp: u64) -> ! {
 
     #[cfg(not(test))]
     unsafe {
+        // Zero the user FP/SIMD state, so a process can't read whatever the
+        // last one left there.  Writing a D register zeroes the rest of its V
+        // register, so this clears q0-q31.  The kernel is built softfloat and
+        // never uses these registers, so the assembler needs FP enabled here.
         core::arch::asm!(
+            ".arch_extension fp",
+            "fmov d0, xzr",
+            "fmov d1, xzr",
+            "fmov d2, xzr",
+            "fmov d3, xzr",
+            "fmov d4, xzr",
+            "fmov d5, xzr",
+            "fmov d6, xzr",
+            "fmov d7, xzr",
+            "fmov d8, xzr",
+            "fmov d9, xzr",
+            "fmov d10, xzr",
+            "fmov d11, xzr",
+            "fmov d12, xzr",
+            "fmov d13, xzr",
+            "fmov d14, xzr",
+            "fmov d15, xzr",
+            "fmov d16, xzr",
+            "fmov d17, xzr",
+            "fmov d18, xzr",
+            "fmov d19, xzr",
+            "fmov d20, xzr",
+            "fmov d21, xzr",
+            "fmov d22, xzr",
+            "fmov d23, xzr",
+            "fmov d24, xzr",
+            "fmov d25, xzr",
+            "fmov d26, xzr",
+            "fmov d27, xzr",
+            "fmov d28, xzr",
+            "fmov d29, xzr",
+            "fmov d30, xzr",
+            "fmov d31, xzr",
+            "msr fpcr, xzr",
+            "msr fpsr, xzr",
             "mov sp, {frame}",
             "b trap_return",
             frame = in(reg) frame,
