@@ -5,6 +5,9 @@ use bitflags::bitflags;
 use core::ptr::NonNull;
 use core::result::Result;
 
+use crate::mem::PhysAddr;
+use crate::pagealloc::PageAllocError;
+
 pub struct Error {}
 
 pub struct Chan {
@@ -98,4 +101,93 @@ pub struct Walkqid {
     _qids: [Qid],
 }
 
-pub struct Proc {}
+/// The architecture's MMU, for port code.  Operations take the architecture's
+/// per-process MMU state, rather than a Proc, so that the trait and Proc don't
+/// depend on each other.  put, flush and flushva are placeholders, with no
+/// callers yet.
+pub trait MMU {
+    /// Per-process MMU state (Plan 9's PMMU): a user address space.
+    type Pmmu;
+
+    /// Create a new user address space, with nothing mapped.
+    fn newpmmu() -> Result<Self::Pmmu, PageAllocError>;
+
+    fn put();
+    fn flush();
+    fn flushva(ptr: *const ());
+
+    /// Make `pmmu` the current user address space.
+    ///
+    /// # Safety
+    ///
+    /// Nothing may still refer to memory through the address space being
+    /// replaced.
+    unsafe fn switch(pmmu: &Self::Pmmu);
+
+    /// Free `pmmu`'s page tables, and pass each page mapped in it to
+    /// `free_leaf`, which frees it if the caller owns it.
+    ///
+    /// # Safety
+    ///
+    /// Nothing may still refer to memory through `pmmu`.
+    unsafe fn release(pmmu: Self::Pmmu, free_leaf: impl FnMut(PhysAddr));
+}
+
+/// What a process needs from the architecture, besides its MMU.
+pub trait ProcArch: MMU + Sized {
+    /// A saved kernel context, as swtch saves and restores.
+    type Label;
+
+    /// A kernel stack.
+    type KStack;
+
+    /// Allocate a kernel stack.
+    fn kstack_alloc() -> Result<Self::KStack, PageAllocError>;
+
+    /// Free a kernel stack.
+    ///
+    /// # Safety
+    ///
+    /// No context may be running on `stack`, or be switched to on it later.
+    unsafe fn kstack_free(stack: Self::KStack);
+
+    /// A context that, when switched to, starts running `entry` on `stack`.
+    fn new_context(entry: extern "C" fn() -> !, stack: &Self::KStack) -> Self::Label;
+
+    /// Save the current context in `save`, and resume the one in `next`.
+    ///
+    /// # Safety
+    ///
+    /// `save` must be valid for writes, and `next` must hold a context saved
+    /// by swtch or made by new_context.
+    unsafe fn swtch(save: *mut Self::Label, next: *const Self::Label);
+
+    /// This CPU's current process (Plan 9's `up`), or null if there's none.
+    fn up() -> *mut Proc<Self>;
+
+    /// Set this CPU's current process.
+    fn set_up(p: *mut Proc<Self>);
+
+    /// This CPU's scheduler context (Plan 9's `m->sched`), which a process
+    /// switches back to when it exits.
+    fn sched() -> *mut Self::Label;
+}
+
+/// A process.  See port::proc for its lifecycle.
+pub struct Proc<A: ProcArch> {
+    pub pid: u64,
+    /// Run in the process's own context, with its address space active, to
+    /// load its program and enter user mode.  It returns only on failure.
+    pub(crate) start: fn(),
+    pub(crate) pmmu: A::Pmmu,
+    pub(crate) kstack: A::KStack,
+    pub(crate) label: A::Label,
+    pub(crate) exit_status: Option<u64>,
+}
+
+impl<A: ProcArch> Proc<A> {
+    /// The process's kernel stack.
+    pub fn kstack(&self) -> &A::KStack {
+        &self.kstack
+    }
+}
