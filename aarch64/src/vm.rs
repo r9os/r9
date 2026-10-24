@@ -4,9 +4,9 @@
 /// Note that currently there are a lot of assumptions that we're dealing with
 /// 4KiB tables here, although it supports various sizes of pages.
 use crate::{
-    kmem::{from_ptr_to_physaddr_offset_from_kzero, physaddr_as_ptr_mut_offset_from_kzero},
+    kmem::{kaddr, paddr},
     pagealloc,
-    param::KZERO,
+    param::{KVA_BASE, KZERO, UVA_END},
 };
 use bitstruct::bitstruct;
 use core::{fmt, ptr, sync::atomic::Ordering};
@@ -121,6 +121,14 @@ impl Entry {
         Entry(0)
     }
 
+    /// An entry that points to the next level's table at `pa`.  A walk ignores
+    /// table entry bits [11:2] and [58:52], so the page attributes set here
+    /// only apply when the recursive window reads the entry as a page.  They
+    /// map the table kernel read-write, never executable and inner-shareable.
+    pub fn table(pa: PhysAddr) -> Self {
+        Self::rw_kernel_data().with_phys_addr(pa).with_page_or_table(true)
+    }
+
     pub fn rw_kernel_data() -> Self {
         Entry(0)
             .with_access_permission(AccessPermission::PrivRw)
@@ -165,9 +173,9 @@ impl Entry {
             .with_valid(true)
     }
 
-    pub fn rw_user_text() -> Self {
+    pub fn ro_user_text() -> Self {
         Entry(0)
-            .with_access_permission(AccessPermission::AllRw)
+            .with_access_permission(AccessPermission::AllRo)
             .with_shareable(Shareable::Inner)
             .with_accessed(true)
             .with_uxn(false)
@@ -278,7 +286,8 @@ pub fn va_index(va: usize, level: Level) -> usize {
 /// Return the virtual address for the page table at level `level` for the
 /// given virtual address, assuming the use of recursive page tables.
 fn recursive_table_addr(pgtype: RootPageTableType, va: usize, level: Level) -> usize {
-    let indices_mask = 0x0000_ffff_ffff_f000;
+    // The table indices: VA bits [VA_BITS-1:12].
+    let indices_mask = (UVA_END - 1) & !(PAGE_SIZE_4K - 1);
     let indices = va & indices_mask;
     let shift = match level {
         Level::Level0 => 36,
@@ -293,10 +302,18 @@ fn recursive_table_addr(pgtype: RootPageTableType, va: usize, level: Level) -> u
         Level::Level3 => 511 << 39,
     };
     let msbits = match pgtype {
-        RootPageTableType::Kernel => 0xffff_0000_0000_0000,
-        RootPageTableType::User => 0x0000_0000_0000_0000,
+        RootPageTableType::Kernel => KVA_BASE,
+        RootPageTableType::User => 0,
     };
     msbits | recursive_indices | ((indices >> shift) & indices_mask)
+}
+
+/// Return the level 3 entry that maps `va` in the kernel page table, reached
+/// through the kernel's recursive entry.  The level 3 table for `va` must
+/// already exist, as the kmap region's does.
+pub fn kernel_pte(va: usize) -> *mut Entry {
+    let table = recursive_table_addr(RootPageTableType::Kernel, va, Level::Level3) as *mut Entry;
+    table.wrapping_add(va_index(va, Level::Level3))
 }
 
 #[derive(Debug)]
@@ -307,6 +324,24 @@ pub enum PageTableError {
     PhysRangeIsZero,
     PhysRangeIsNotOnPageBoundary,
     MappingRecursiveIndex,
+    VaOutOfRange,
+}
+
+/// Check that `va` can be mapped in a `pgtype` page table: it must be in the
+/// half of the address space that the table translates, and not in the range
+/// covered by the recursive entry.
+fn check_mappable_va(va: usize, pgtype: RootPageTableType) -> Result<(), PageTableError> {
+    let in_range = match pgtype {
+        RootPageTableType::User => va < UVA_END,
+        RootPageTableType::Kernel => va >= KVA_BASE,
+    };
+    if !in_range {
+        return Err(PageTableError::VaOutOfRange);
+    }
+    if va_index(va, Level::Level0) == 511 {
+        return Err(PageTableError::MappingRecursiveIndex);
+    }
+    Ok(())
 }
 
 impl From<PageAllocError> for PageTableError {
@@ -355,7 +390,9 @@ impl Table {
             });
         }
 
-        // Create a new page table and write the entry into the parent table
+        // Add a new, empty table to this table.  The page is zeroed before it's
+        // linked, so the table walker never sees stale entries in it, even
+        // speculatively.
         let page_pa = page_allocator.alloc_physpage();
         let page_pa = match page_pa {
             Ok(p) => p,
@@ -364,16 +401,11 @@ impl Table {
                 return Err(PageTableError::AllocationFailed(err));
             }
         };
-        entry = Entry::rw_kernel_data().with_phys_addr(page_pa).with_page_or_table(true);
+        entry = Entry::table(page_pa);
         vmtrait_impl.write_entry(&mut self.entries[index], entry);
 
-        // Clear out the new page and return it as the next table
         let next_level = level.next().unwrap();
-        let page = vmtrait_impl.resolve_entry_mut::<PhysPage4K>(entry, pgtype, va, next_level);
-        Ok(unsafe {
-            (*page).clear();
-            &mut *(page as *mut Table)
-        })
+        Ok(unsafe { &mut *vmtrait_impl.resolve_entry_mut::<Table>(entry, pgtype, va, next_level) })
     }
 }
 
@@ -417,6 +449,11 @@ impl RootPageTable {
         page_size: PageSize,
         pgtype: RootPageTableType,
     ) -> Result<(), PageTableError> {
+        if let Err(err) = check_mappable_va(va, pgtype) {
+            println!("error:vm:map_to:can't map va:{va:#x} pgtype:{pgtype:?} err:{err:?}");
+            return Err(err);
+        }
+
         // We change the last entry of the root page table to the address of
         // self for the duration of this method.  This allows us to work with
         // this hierarchy of pagetables even if it's not the current translation
@@ -447,6 +484,7 @@ impl RootPageTable {
                     "error:vm:map_to:couldn't find page table entry. va:{:#x} err:{:?}",
                     va, err
                 );
+                vmtrait_impl.write_recursive_entry(pgtype, old_recursive_entry);
                 return Err(err);
             }
         };
@@ -529,7 +567,7 @@ pub fn root_page_table(pgtype: RootPageTableType) -> &'static mut RootPageTable 
         RootPageTableType::User => ttbr0_el1(),
         RootPageTableType::Kernel => ttbr1_el1(),
     };
-    unsafe { &mut *physaddr_as_ptr_mut_offset_from_kzero::<RootPageTable>(page_table_pa) }
+    unsafe { &mut *kaddr::<RootPageTable>(page_table_pa) }
 }
 
 pub unsafe fn init_user_page_tables() {
@@ -541,9 +579,7 @@ pub unsafe fn init_user_page_tables() {
 /// address, but all we have is the virtual address
 unsafe fn init_empty_root_page_table(root_page_table: &mut RootPageTable) {
     unsafe {
-        let entry = Entry::rw_kernel_data()
-            .with_phys_addr(from_ptr_to_physaddr_offset_from_kzero(root_page_table))
-            .with_page_or_table(true);
+        let entry = Entry::table(paddr(root_page_table));
         write_volatile(&mut root_page_table.entries[511], entry);
     }
 }
@@ -587,7 +623,7 @@ fn ttbr1_el1() -> PhysAddr {
 pub unsafe fn switch(page_table: &RootPageTable, pgtype: RootPageTableType) {
     #[cfg(not(test))]
     unsafe {
-        let pt_phys = from_ptr_to_physaddr_offset_from_kzero(page_table).addr();
+        let pt_phys = paddr(page_table).addr();
         // https://forum.osdev.org/viewtopic.php?t=36412&p=303237
         match pgtype {
             RootPageTableType::User => {
@@ -612,6 +648,18 @@ pub unsafe fn switch(page_table: &RootPageTable, pgtype: RootPageTableType) {
     }
 }
 
+/// Wait for earlier stores, including to page tables, to be visible to every
+/// CPU and table walker in the inner-shareable domain.  Table walks are
+/// cacheable and inner-shareable (TCR_EL1's IRGN, ORGN and SH), so no cache
+/// maintenance is needed.
+fn write_barrier() {
+    #[cfg(not(test))]
+    // SAFETY: a barrier only.
+    unsafe {
+        core::arch::asm!("dsb ishst");
+    }
+}
+
 #[allow(unused_variables)]
 pub unsafe fn invalidate_all_tlb_entries() {
     #[cfg(not(test))]
@@ -627,6 +675,8 @@ pub unsafe fn invalidate_all_tlb_entries() {
 }
 
 pub trait PageAllocator {
+    /// Allocate a physical page, which must already be zeroed: it may become a
+    /// page table as soon as it's returned.
     fn alloc_physpage(&mut self) -> Result<PhysAddr, PageAllocError>;
 }
 
@@ -635,7 +685,7 @@ pub struct PhysPageAllocator {}
 
 impl PageAllocator for PhysPageAllocator {
     fn alloc_physpage(&mut self) -> Result<PhysAddr, PageAllocError> {
-        pagealloc::allocate_physpage()
+        pagealloc::allocate_zeroed_physpage()
     }
 }
 
@@ -668,7 +718,13 @@ pub struct VmTraitImpl {}
 impl VmTrait for VmTraitImpl {
     fn write_entry(&self, dest_entry: &mut Entry, entry: Entry) {
         unsafe {
+            // Make earlier writes, such as zeroing a new table, visible to the
+            // table walker before the entry that refers to them.
+            write_barrier();
             write_volatile(dest_entry, entry);
+            // Make the entry visible to the table walker before the TLB
+            // invalidate, so the old translation can't be cached again.
+            write_barrier();
             invalidate_all_tlb_entries();
         }
     }
@@ -683,16 +739,18 @@ impl VmTrait for VmTraitImpl {
     fn write_recursive_entry(&mut self, pgtype: RootPageTableType, entry: Entry) {
         let page_table = root_page_table(pgtype);
         unsafe {
-            // Return the recursive entry to its original state
+            // Return the recursive entry to its original state, making it
+            // visible to the table walker before the TLB invalidate.
             write_volatile(&mut page_table.entries[511], entry);
+            write_barrier();
             // TODO Need to invalidate the single cache entry (+ optionally the recursive entry)
             invalidate_all_tlb_entries();
         }
     }
 
     fn generate_temp_recursive_address(&self, table: &Table) -> Entry {
-        let pa = from_ptr_to_physaddr_offset_from_kzero(table);
-        Entry::rw_kernel_data().with_phys_addr(pa).with_page_or_table(true)
+        let pa = paddr(table);
+        Entry::table(pa)
     }
 
     fn resolve_entry_mut<T>(
@@ -708,6 +766,7 @@ impl VmTrait for VmTraitImpl {
 
 #[cfg(test)]
 mod tests {
+    use crate::param::{UADDRTOP, UTZERO};
     use crate::vmdebug::va_indices;
 
     use super::*;
@@ -822,9 +881,7 @@ mod tests {
         }
 
         fn generate_temp_recursive_address(&self, table: &Table) -> Entry {
-            Entry::rw_kernel_data()
-                .with_phys_addr(PhysAddr(table as *const _ as u64))
-                .with_page_or_table(true)
+            Entry::table(PhysAddr(table as *const _ as u64))
         }
 
         fn resolve_entry_mut<T>(
@@ -836,6 +893,52 @@ mod tests {
         ) -> *mut T {
             // In tests, the "physical" address is actually a valid virtual address
             entry.phys_addr().addr() as *mut T
+        }
+    }
+
+    #[test]
+    fn cant_map_recursive_index() {
+        let mut table = RootPageTable::empty();
+        let mut test_page_allocator = TestPageAllocator::new();
+        let mut test_vmtrait_impl = TestVmTrait::new();
+
+        let result = table.map_phys_range(
+            &mut test_page_allocator,
+            &mut test_vmtrait_impl,
+            "recursive",
+            &PhysRange::with_len(0x20_0000, PAGE_SIZE_4K),
+            VaMapping::Addr(UADDRTOP),
+            Entry::rw_user_data(),
+            PageSize::Page4K,
+            RootPageTableType::User,
+        );
+        assert!(matches!(result, Err(PageTableError::MappingRecursiveIndex)));
+    }
+
+    #[test]
+    fn cant_map_va_outside_table_range() {
+        let mut table = RootPageTable::empty();
+        let mut test_page_allocator = TestPageAllocator::new();
+        let mut test_vmtrait_impl = TestVmTrait::new();
+
+        // Above the 48-bit user range, and a kernel address in a user table,
+        // would otherwise be truncated to UTZERO.
+        for (va, pgtype) in [
+            (UVA_END | UTZERO, RootPageTableType::User),
+            (KZERO | UTZERO, RootPageTableType::User),
+            (UTZERO, RootPageTableType::Kernel),
+        ] {
+            let result = table.map_phys_range(
+                &mut test_page_allocator,
+                &mut test_vmtrait_impl,
+                "outofrange",
+                &PhysRange::with_len(0x20_0000, PAGE_SIZE_4K),
+                VaMapping::Addr(va),
+                Entry::rw_user_data(),
+                PageSize::Page4K,
+                pgtype,
+            );
+            assert!(matches!(result, Err(PageTableError::VaOutOfRange)), "va:{va:#x}");
         }
     }
 
@@ -859,5 +962,19 @@ mod tests {
             .expect("error:init:mapping failed");
 
         assert_eq!(mapped_virtrange, VirtRange::new(KZERO + 4096, KZERO + 8 * 4096));
+    }
+
+    #[test]
+    fn table_entry_attributes() {
+        let pa = PhysAddr::new(0x40_0000);
+        let e = Entry::table(pa);
+        assert!(e.valid() && e.page_or_table());
+        assert_eq!(e.phys_addr(), pa);
+        // As a page, through the recursive window: kernel RW, never
+        // executable, inner-shareable, normal memory, accessed.
+        assert_eq!(u8::from(e.access_permission()), u8::from(AccessPermission::PrivRw));
+        assert!(e.pxn() && e.uxn() && e.accessed());
+        assert_eq!(u8::from(e.shareable()), u8::from(Shareable::Inner));
+        assert_eq!(u8::from(e.mair_index()), u8::from(Mair::Normal));
     }
 }

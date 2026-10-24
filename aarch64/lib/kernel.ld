@@ -71,6 +71,6 @@ SECTIONS {
 
 
 	/DISCARD/ : {
-		*(.eh_frame .note.GNU-stack)
+		*(.eh_frame .eh_frame_hdr .note.GNU-stack)
 	}
 }
