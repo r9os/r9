@@ -6,7 +6,7 @@
 use crate::{
     kmem::{kaddr, paddr},
     pagealloc,
-    param::KZERO,
+    param::{KVA_BASE, KZERO, UVA_END},
 };
 use bitstruct::bitstruct;
 use core::{fmt, ptr, sync::atomic::Ordering};
@@ -278,7 +278,8 @@ pub fn va_index(va: usize, level: Level) -> usize {
 /// Return the virtual address for the page table at level `level` for the
 /// given virtual address, assuming the use of recursive page tables.
 fn recursive_table_addr(pgtype: RootPageTableType, va: usize, level: Level) -> usize {
-    let indices_mask = 0x0000_ffff_ffff_f000;
+    // The table indices: VA bits [VA_BITS-1:12].
+    let indices_mask = (UVA_END - 1) & !(PAGE_SIZE_4K - 1);
     let indices = va & indices_mask;
     let shift = match level {
         Level::Level0 => 36,
@@ -293,8 +294,8 @@ fn recursive_table_addr(pgtype: RootPageTableType, va: usize, level: Level) -> u
         Level::Level3 => 511 << 39,
     };
     let msbits = match pgtype {
-        RootPageTableType::Kernel => 0xffff_0000_0000_0000,
-        RootPageTableType::User => 0x0000_0000_0000_0000,
+        RootPageTableType::Kernel => KVA_BASE,
+        RootPageTableType::User => 0,
     };
     msbits | recursive_indices | ((indices >> shift) & indices_mask)
 }
@@ -323,8 +324,8 @@ pub enum PageTableError {
 /// covered by the recursive entry.
 fn check_mappable_va(va: usize, pgtype: RootPageTableType) -> Result<(), PageTableError> {
     let in_range = match pgtype {
-        RootPageTableType::User => va < 0x0001_0000_0000_0000,
-        RootPageTableType::Kernel => va >= 0xffff_0000_0000_0000,
+        RootPageTableType::User => va < UVA_END,
+        RootPageTableType::Kernel => va >= KVA_BASE,
     };
     if !in_range {
         return Err(PageTableError::VaOutOfRange);
@@ -899,7 +900,7 @@ mod tests {
         // Above the 48-bit user range, and a kernel address in a user table,
         // would otherwise be truncated to UTZERO.
         for (va, pgtype) in [
-            (0x0001_0000_0000_0000 | UTZERO, RootPageTableType::User),
+            (UVA_END | UTZERO, RootPageTableType::User),
             (KZERO | UTZERO, RootPageTableType::User),
             (UTZERO, RootPageTableType::Kernel),
         ] {
