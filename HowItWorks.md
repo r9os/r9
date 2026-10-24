@@ -115,7 +115,8 @@ No user page is ever both writable and executable. AArch64 has no "kernel read-w
 0xffff_ffff_ffff_ffff  +--------------------------------------------------+
 ```
 
-- There's no direct map of RAM. `kaddr(pa)` and `paddr(va)` in `kmem.rs` convert only for what's mapped at KZERO + its physical address: the kernel image, the DTB and pages the kernel maps for itself with `allocate_virtpage`.
+- There's no direct map of RAM. `paddr(va)` in `kmem.rs` converts only for what's mapped at KZERO + its physical address: the kernel image, the DTB and pages the kernel maps for itself with `allocate_virtpage`.
+- After the MMU is on, page tables are only ever edited while they're active: `map_phys_range` takes no table, and always edits the active root of its half through the recursive window. To map into a user address space, switch to it first. When there's no user address space, `ttbr0_el1` holds an empty root, which has only its recursive entry. Mapping user pages then fails with `NoAddressSpace`, and every other user address faults, including null.
 - Page tables are reached through the recursive entries. Any other physical page, such as a user page, is reached through `kmap` (`kmap.rs`, as in Plan 9). `kmap(pa)` maps the page in one of the current CPU's slots and returns a guard. Dropping the guard unmaps it and invalidates that address in the TLB. The tables for the region are built before the MMU is on, so `kmap` never allocates. It's for thread context only.
 - The kernel image sections are 2MiB aligned by `kernel.ld`, so they can have their own permissions using 2MiB blocks.
 - Before the switch to the higher half, `ttbr0_el1` holds an identity map of the first 1GiB, so `l.S` keeps running when the MMU is turned on. It's replaced by the user page table.
