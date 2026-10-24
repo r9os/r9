@@ -1,7 +1,20 @@
 use port::mem::PAGE_SIZE_4K;
 
+/// Virtual address bits in each half of the address space: ttbr0_el1
+/// translates [0, UVA_END) and ttbr1_el1 translates [KVA_BASE, 2^64).
+/// TCR_EL1.T0SZ and T1SZ are 64 - VA_BITS.
+pub const VA_BITS: usize = 48;
+
+/// End of the range ttbr0_el1 translates.
+pub const UVA_END: usize = 1 << VA_BITS;
+
+/// Start of the range ttbr1_el1 translates.
+pub const KVA_BASE: usize = !(UVA_END - 1);
+
 // This needs to match KZERO in l.S
 pub const KZERO: usize = 0xffff_8000_0000_0000;
+
+const _: () = assert!(KZERO >= KVA_BASE);
 
 /// Maximum number of CPUs (the Raspberry Pi 4 has four cores).
 pub const MAXMACH: usize = 4;
@@ -42,3 +55,4 @@ const _: () = assert!(USTKTOP.is_multiple_of(PAGE_SIZE_4K));
 const _: () = assert!(USTKSIZE.is_multiple_of(PAGE_SIZE_4K));
 const _: () = assert!(UTZERO < USTKTOP - USTKSIZE);
 const _: () = assert!(USTKTOP <= UADDRTOP);
+const _: () = assert!(UADDRTOP <= UVA_END);

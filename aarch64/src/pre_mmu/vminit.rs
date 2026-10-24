@@ -9,7 +9,7 @@ use port::{
 };
 
 use crate::{
-    param::{KMAPBASE, KZERO},
+    param::{KMAPBASE, KZERO, VA_BITS},
     pre_mmu::util::{putstr, putu64h},
     vm::{
         AccessPermission, Entry, Level, Mair, PageAllocator, PageSize, PageTableError, PhysPage4K,
@@ -309,12 +309,12 @@ pub extern "C" fn init_vm(dtb_pa: u64) {
             + TCR_EL1::ORGN1::WriteBack_ReadAlloc_WriteAlloc_Cacheable
             + TCR_EL1::IRGN1::WriteBack_ReadAlloc_WriteAlloc_Cacheable
             // + TCR_EL1::EPD1::SET
-            + TCR_EL1::T1SZ.val(16)
+            + TCR_EL1::T1SZ.val((64 - VA_BITS) as u64)
             + TCR_EL1::TG0::KiB_4
             + TCR_EL1::SH0::Inner
             + TCR_EL1::ORGN0::WriteBack_ReadAlloc_WriteAlloc_Cacheable
             + TCR_EL1::IRGN0::WriteBack_ReadAlloc_WriteAlloc_Cacheable
-            + TCR_EL1::T0SZ.val(16),
+            + TCR_EL1::T0SZ.val((64 - VA_BITS) as u64),
     );
 
     // Preset memory attributes.  This register stores 8 8-bit presets that are
