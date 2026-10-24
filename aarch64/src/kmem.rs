@@ -78,16 +78,10 @@ pub fn total_kernel_physrange() -> PhysRange {
     PhysRange::new(base_physaddr(), ebss_physaddr())
 }
 
-/// Return the kernel address of the physical address `pa`, at KZERO + `pa`.
-/// Only the kernel image, the DTB and pages the kernel maps for itself are
-/// mapped there.  Other pages are reached through kmap, or, for page tables,
-/// through the recursive window.
-pub const fn kaddr<T>(pa: PhysAddr) -> *mut T {
-    (pa.addr() as usize).wrapping_add(KZERO) as *mut T
-}
-
 /// Return the physical address of `a`, which must be mapped at KZERO + its
-/// physical address (see kaddr).
+/// physical address.  Only the kernel image, the DTB and pages the kernel maps
+/// for itself are mapped there.  Other pages are reached through kmap, or, for
+/// page tables, through the recursive window.
 pub fn paddr<T>(a: *const T) -> PhysAddr {
     let va = a.addr();
     debug_assert!(va >= KZERO, "paddr: va {va:#x} must be >= KZERO ({KZERO:#x})");
