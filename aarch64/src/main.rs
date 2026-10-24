@@ -120,9 +120,12 @@ pub extern "C" fn main9(dtb_va: usize) {
 
     // Nothing needs the boot identity map in ttbr0_el1 any more.  Replace it
     // with the empty user root, so low addresses, including null, fault.
-    // SAFETY: nothing refers to memory through the identity map, and the
-    // other CPUs are parked.
-    unsafe { vm::load_empty_user_root() };
+    // SAFETY: the empty root hasn't been loaded yet, the other CPUs are
+    // parked, and nothing refers to memory through the identity map.
+    unsafe {
+        vm::init_empty_user_root();
+        vm::switch(&vm::AddressSpace::empty());
+    }
 
     // Parse the DTB before we set up memory so we can correctly map it
     let dt = unsafe { DeviceTree::from_usize(dtb_va).unwrap() };
