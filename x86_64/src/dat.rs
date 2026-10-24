@@ -1,7 +1,6 @@
 pub use crate::vsvm::{Gdt, Idt, Tss};
 
 use bitstruct::bitstruct;
-use port::dat as portdat;
 use zerocopy::FromZeros;
 
 pub const KCPUZERO: usize = 0xffff_ff00_0000_0000;
@@ -203,10 +202,10 @@ pub struct Mach {
     pub zero: Page,           // Mapped to (per-node) read-only zeroed page
     pub stack: KStack,        // Kernel stack for scheduler
 
-    me: *mut Mach,            // %gs:0 is a `*mut Mach` pointing to this `Mach`.
-    scratch: usize,           // A scratch word used on entry to kernel
-    splpc: usize,             // PC of last caller to ` k`.  Cleared by `spllo`.
-    proc: *mut portdat::Proc, // Current process on this process.
+    me: *mut Mach,  // %gs:0 is a `*mut Mach` pointing to this `Mach`.
+    scratch: usize, // A scratch word used on entry to kernel
+    splpc: usize,   // PC of last caller to ` k`.  Cleared by `spllo`.
+    proc: *mut (),  // Current process (an opaque port::dat::Proc<A>).
 
     machno: u32,  // Logical ID of CPU.
     cpuno: u32,   // Physical ID of CPU.
