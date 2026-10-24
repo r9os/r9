@@ -66,7 +66,7 @@ fn print_binary_sections() {
 
 fn print_memory_info() {
     println!("Memory usage:");
-    let (used, total) = pagealloc::usage_bytes();
+    let (used, total) = port::pagealloc::usage_bytes();
     println!("  Used:\t\t{used:#016x}");
     println!("  Total:\t{total:#016x}");
 }
@@ -135,7 +135,7 @@ pub extern "C" fn main9(dtb_va: usize) {
         data_physrange().add(&bss_physrange()),
     ];
     physranges.sort_by_key(|a| a.start);
-    if let Err(err) = pagealloc::init_page_allocator(&dt, physranges.into_iter()) {
+    if let Err(err) = port::pagealloc::init_page_allocator(&dt, physranges.into_iter()) {
         panic!("error:Couldn't mark unused pages as free: err: {:?}", err);
     }
 
@@ -228,7 +228,7 @@ fn test_user_syscalls() -> ! {
 /// Write a page that's mapped nowhere else through one kmap, and read it back
 /// through another.
 fn test_kmap() {
-    let pa = pagealloc::allocate_physpage().expect("couldn't allocate kmap test page");
+    let pa = port::pagealloc::allocate_physpage().expect("couldn't allocate kmap test page");
     let pattern = |i: usize| (i * 7 + 3) as u8;
 
     {
