@@ -16,7 +16,7 @@ pub fn map_device_register(
     let mut physpage_allocator = PhysPageAllocator {};
     let mut vmtrait_impl = VmTraitImpl {};
 
-    if let Ok(vr) = vm::kernel_pagetable().map_phys_range(
+    if let Ok(vr) = vm::map_phys_range(
         &mut physpage_allocator,
         &mut vmtrait_impl,
         id,
@@ -45,7 +45,7 @@ pub fn alloc_device_page(
     let mut physpage_allocator = PhysPageAllocator {};
     let mut vmtrait_impl = VmTraitImpl {};
 
-    if let Ok(vr) = vm::kernel_pagetable().map_phys_range(
+    if let Ok(vr) = vm::map_phys_range(
         &mut physpage_allocator,
         &mut vmtrait_impl,
         id,
