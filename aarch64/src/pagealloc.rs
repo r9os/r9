@@ -1,12 +1,5 @@
-/// This module acts as an interface between the portable allocator and the
-/// arch-specific use of it.
-///
-/// The page allocator is constructed and finalised in a number of phases:
-/// 1. `init_page_allocator` to create a fixed size allocator assuming everything
-///    is in use except a small number of statically defined pages available for
-///    setting up the initial page tables.
-/// 2. `free_unused_ranges` to mark available ranges as the inverse of the
-///    physical memory map within the bounds of the available memory.
+/// aarch64 uses of the page allocator, which is port::pagealloc: zeroed pages,
+/// and pages mapped into the kernel or a user address space.
 use crate::kmap::kmap;
 use crate::vm;
 use crate::vm::Entry;
@@ -16,69 +9,14 @@ use crate::vm::RootPageTableType;
 use crate::vm::VaMapping;
 use crate::vm::VirtPage4K;
 use crate::vm::VmTraitImpl;
-use port::bitmapalloc::BitmapPageAlloc;
-use port::fdt::DeviceTree;
+use port::mem::PAGE_SIZE_4K;
 use port::mem::PhysAddr;
 use port::mem::PhysRange;
 use port::mem::VirtRange;
-use port::pagealloc::PageAllocError;
-use port::{
-    mcslock::{Lock, LockNode},
-    mem::PAGE_SIZE_4K,
-};
+use port::pagealloc::{PageAllocError, allocate_physpage};
 
 #[cfg(not(test))]
 use port::println;
-
-/// Set up bitmap page allocator assuming everything is allocated.
-static PAGE_ALLOC: Lock<BitmapPageAlloc<32, PAGE_SIZE_4K>> = Lock::new(
-    "page_alloc",
-    const { BitmapPageAlloc::<32, PAGE_SIZE_4K>::new_all_allocated(PAGE_SIZE_4K) },
-);
-
-/// The bitmap allocator has all pages marked as allocated initially.  We'll
-/// add some pages (mark free) to allow us to set up the page tables and build
-/// a memory map.  Once the memory map has been build, we can mark all the unused
-/// space as available.  This allows us to use only one page allocator throughout.
-pub fn init_page_allocator(
-    dt: &DeviceTree,
-    used_ranges: impl Iterator<Item = PhysRange>,
-) -> Result<(), PageAllocError> {
-    // Free unused pages in mem that aren't covered by the memory map.  Assumes
-    // that custom_map is sorted.
-    let Some(available_mem) = dt
-        .find_device_type("memory")
-        .flat_map(|memory| dt.property_translated_reg_iter(memory).flat_map(|r| r.regblock()))
-        .map(|memory| PhysRange::from(&memory))
-        .next()
-    else {
-        panic!("error:pagealloc:free_unused_ranges: can't get memory from dtb\n");
-    };
-
-    let node = LockNode::new();
-    let mut lock = PAGE_ALLOC.lock(&node);
-    let page_alloc = &mut *lock;
-
-    page_alloc.free_unused_ranges(available_mem, used_ranges)
-}
-
-/// Try to allocate a physical page.  Note that this is NOT mapped.
-pub fn allocate_physpage() -> Result<PhysAddr, PageAllocError> {
-    let node = LockNode::new();
-    let mut lock = PAGE_ALLOC.lock(&node);
-    let page_alloc = &mut *lock;
-
-    match page_alloc.allocate() {
-        Ok(page_pa) => {
-            //println!("pagealloc:allocate_physpage pa:{:?}", page_pa);
-            Ok(page_pa)
-        }
-        Err(err) => {
-            println!("error:pagealloc:allocate_physpage:failed to allocate: {:?}", err);
-            Err(err)
-        }
-    }
-}
 
 /// Try to allocate a physical page, zeroed through kmap.  Note that this is NOT
 /// mapped.
@@ -147,12 +85,4 @@ pub fn map_zeroed_user_pages(debug_name: &str, range: VirtRange) -> Result<(), P
         .map_err(|_| PageAllocError::UnableToMap)?;
     }
     Ok(())
-}
-
-/// Return a tuple of (bytes used, total bytes available) based on the page allocator.
-pub fn usage_bytes() -> (usize, usize) {
-    let node = LockNode::new();
-    let mut lock = PAGE_ALLOC.lock(&node);
-    let page_alloc = &mut *lock;
-    page_alloc.usage_bytes()
 }
