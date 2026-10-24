@@ -3,7 +3,9 @@
 #[cfg(not(test))]
 use port::println;
 
+use crate::param::{KVA_BASE, UVA_END};
 use crate::vm::{Entry, Level, RootPageTable, RootPageTableType, Table};
+use port::mem::PAGE_SIZE_4K;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct PteIndices {
@@ -58,8 +60,8 @@ impl PteIndices {
 
     fn as_va(&self) -> usize {
         let mut va = match self.pgtype {
-            RootPageTableType::Kernel => 0xffff_0000_0000_0000,
-            RootPageTableType::User => 0x0000_0000_0000_0000,
+            RootPageTableType::Kernel => KVA_BASE,
+            RootPageTableType::User => 0,
         };
 
         va |= if let Some(i) = self.l0 { i << 39 } else { 0 };
@@ -75,8 +77,8 @@ impl PteIndices {
 /// This depends on the recursive entry of root page tables to have been set up correctly.
 fn recursive_root_page_table_va(pgtype: RootPageTableType) -> usize {
     match pgtype {
-        RootPageTableType::User => 0x0000_ffff_ffff_f000,
-        RootPageTableType::Kernel => 0xffff_ffff_ffff_f000,
+        RootPageTableType::User => UVA_END - PAGE_SIZE_4K,
+        RootPageTableType::Kernel => usize::MAX - (PAGE_SIZE_4K - 1),
     }
 }
 
@@ -122,7 +124,7 @@ fn print_table_at_level(
         } else if i != 511 {
             // Recurse into child table (unless it's the recursive index)
             let child_table_va = match pgtype {
-                RootPageTableType::User => ((table_va << 9) | (i << 12)) & 0x0000_ffff_ffff_ffff,
+                RootPageTableType::User => ((table_va << 9) | (i << 12)) & (UVA_END - 1),
                 RootPageTableType::Kernel => (table_va << 9) | (i << 12),
             };
             print_pte_table(indent, i, pte, child_table_va);
