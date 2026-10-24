@@ -123,16 +123,15 @@ No user page is ever both writable and executable. AArch64 has no "kernel read-w
 
 VM initialisation proceeds as follows:
 
-1. Set up the page allocator. We use a bitmap allocator defined in `pagealloc.rs`. This makes use of the `earlypages` reserved in the `kernel.ld` linker script. The 16KiB reserved here allows us to manage 16\*4096\*8 pages. Each bit represents 4096KiB, allowing us to map 2GiB of RAM. The allocator assumes everything except the early pages are allocated at first. This is to ensure we don't mistakenly allocate a page that should not be available (e.g. will be mapped below).
-2. Build an initial memory map. This is also a bit rpi4-specific. It maps:
+1. **Before the MMU is on,** `init_vm` (`pre_mmu/vminit.rs`) builds the initial page tables. It takes table pages from the 32 pages reserved as `earlyvm_pagetables` in `kernel.ld`, with its own small allocator, `EarlyPageAllocator`. It maps:
+   - the kernel image at KZERO + its physical address: text (including boottext) read-only and executable, rodata read-only, data and BSS read-write, all with 2MiB blocks
+   - the DTB, read-only
+   - the tables for the kmap region, with no pages mapped
+   - an identity map of the first 1GiB in `ttbr0_el1`, so `l.S` keeps running when the MMU is turned on
 
-- Device tree DTB
-- Kernel text, data and BSS
-- The tables for the kmap region, with no pages mapped
-- MMIO
-
-3. We map each of the above ranges according to the defined entry flags.
-4. We now mark all the unallocated pages free.
+   It also sets `TCR_EL1` and `MAIR_EL1`. MMIO isn't mapped here: each driver maps its registers later, at KZERO + 16TiB (`deviceutil.rs`).
+2. **At the start of `main9`,** the empty user root replaces the identity map in `ttbr0_el1`.
+3. **`main9` then sets up the page allocator,** `port/src/pagealloc.rs`, which is shared by every architecture. It's a bitmap allocator (`port/src/bitmapalloc.rs`) whose bitmaps are a static: 32 bitmaps of 4KiB, one bit per 4KiB page, so it can track up to 4GiB. Every page starts marked as allocated. `init_page_allocator` then frees the first DTB memory region, except the ranges already in use: the kernel image (including the early page tables in its BSS) and the DTB. From here on, page tables, kmap and drivers all allocate pages from it.
 
 To document:
 
@@ -140,10 +139,9 @@ To document:
 
 Future Improvements:
 
-- The page table management code needs to be able to obtain new page frames while updating page tables. It's simplest to ensure we have at least X page frames pre-mapped, and available in the page allocator.
+- The page allocator only uses the first DTB memory region.
 - Replace the page allocator with something a little more sophisticated with a higher upper bound.
 - If the page allocator made use of something like a free list, we could add the early pages to that free list, and avoid the weird hack of marking everything as allocated up front and having to later mark as unallocated.
-- Move the page allocator to port.
 
 ## x86_64
 
