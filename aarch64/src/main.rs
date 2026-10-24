@@ -164,10 +164,10 @@ pub extern "C" fn main9(dtb_va: usize) {
     test_kmap();
     test_swtch();
 
-    unsafe {
-        vm::init_user_page_tables();
-        vm::switch(vm::user_pagetable(), RootPageTableType::User);
-    }
+    // The user test runs in its own address space.
+    let space = vm::AddressSpace::new().expect("couldn't allocate user address space");
+    // SAFETY: nothing refers to memory through the empty root.
+    unsafe { vm::switch(&space) };
 
     test_user_syscalls();
 }
