@@ -42,7 +42,7 @@ We're now in rust, in `main9`, and at a high level we:
 - Exceptions from EL1 are taken on the interrupted kernel stack.
 - Exceptions from EL0 are taken on whatever `SP_EL1` was when we entered EL0. `to_user` enters EL0 by building a `TrapFrame` at the top of a kernel stack and jumping to `trap_return`, which leaves `SP_EL1` at the top of that stack. Until processes have their own kernel stacks, the interrupt stack is used.
 
-The kernel is built softfloat (see `lib/aarch64-unknown-none-elf.json`), so it never uses the FP/SIMD registers and exception entry doesn't need to save them. User FP/SIMD state still needs saving when switching between processes.
+The kernel is built softfloat (see `lib/aarch64-unknown-none-elf.json`), so it never uses the FP/SIMD registers and exception entry doesn't need to save them. `to_user` zeroes the user FP/SIMD state, so one process can't read another's. It will need saving once processes are switched between.
 
 IRQs, FIQs, SErrors and debug exceptions are masked in both EL1 and EL0 until we have a use for them. Syscalls are currently placeholders: the `svc` immediate is the syscall number, syscall 3 halts, and any other returns x0 + 1.
 
