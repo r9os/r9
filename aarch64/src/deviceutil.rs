@@ -1,8 +1,8 @@
 use port::Result;
 use port::mem::{PhysRange, VirtRange};
 
+use crate::vm;
 use crate::vm::{PhysPageAllocator, VmTraitImpl};
-use crate::{pagealloc, vm};
 
 /// Map a device register to device memory
 /// TODO Maybe make this a macro and wrap the error reporting?
@@ -16,7 +16,7 @@ pub fn map_device_register(
     let mut physpage_allocator = PhysPageAllocator {};
     let mut vmtrait_impl = VmTraitImpl {};
 
-    if let Ok(vr) = vm::kernel_pagetable().map_phys_range(
+    if let Ok(vr) = vm::map_phys_range(
         &mut physpage_allocator,
         &mut vmtrait_impl,
         id,
@@ -39,13 +39,13 @@ pub fn alloc_device_page(
     id: &'static str,
     page_size: vm::PageSize,
 ) -> Result<(VirtRange, PhysRange)> {
-    let page_pa = pagealloc::allocate_physpage().expect("couldn't allocate page");
+    let page_pa = port::pagealloc::allocate_physpage().expect("couldn't allocate page");
     let page_physrange = PhysRange::with_pa_len(page_pa, page_size.size());
 
     let mut physpage_allocator = PhysPageAllocator {};
     let mut vmtrait_impl = VmTraitImpl {};
 
-    if let Ok(vr) = vm::kernel_pagetable().map_phys_range(
+    if let Ok(vr) = vm::map_phys_range(
         &mut physpage_allocator,
         &mut vmtrait_impl,
         id,
