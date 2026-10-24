@@ -23,6 +23,11 @@ use port::println;
 //static mut KERNEL_PAGETABLE: RootPageTable = RootPageTable::empty();
 static mut USER_PAGETABLE: RootPageTable = RootPageTable::empty();
 
+/// The user root that's loaded when there's no user address space.  It holds
+/// only its recursive entry, so every other user address faults, including
+/// the null page.
+static mut EMPTY_USER_ROOT: RootPageTable = RootPageTable::empty();
+
 pub fn kernel_pagetable() -> &'static mut RootPageTable {
     //unsafe { &mut *ptr::addr_of_mut!(KERNEL_PAGETABLE) }
     root_page_table(RootPageTableType::Kernel)
@@ -570,6 +575,22 @@ pub fn root_page_table(pgtype: RootPageTableType) -> &'static mut RootPageTable 
     unsafe { &mut *kaddr::<RootPageTable>(page_table_pa) }
 }
 
+/// Load the empty user root into ttbr0_el1.  At boot this retires the identity
+/// map that l.S needed while turning on the MMU.
+///
+/// # Safety
+///
+/// Nothing may still refer to memory through the user address space that's
+/// being replaced, and no other CPU may be loading the empty root at the same
+/// time, since this rewrites it.
+pub unsafe fn load_empty_user_root() {
+    let root = unsafe { &mut *ptr::addr_of_mut!(EMPTY_USER_ROOT) };
+    unsafe {
+        init_empty_root_page_table(root);
+        switch(root, RootPageTableType::User);
+    }
+}
+
 pub unsafe fn init_user_page_tables() {
     unsafe { init_empty_root_page_table(user_pagetable()) };
 }
@@ -621,6 +642,9 @@ fn ttbr1_el1() -> PhysAddr {
 // TODO this should just call invalidate_all_tlb_entries afterwards?
 #[allow(unused_variables)]
 pub unsafe fn switch(page_table: &RootPageTable, pgtype: RootPageTableType) {
+    // Make the new root's entries visible to the table walker before it's
+    // loaded.
+    write_barrier();
     #[cfg(not(test))]
     unsafe {
         let pt_phys = paddr(page_table).addr();
