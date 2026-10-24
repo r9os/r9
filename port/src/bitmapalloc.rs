@@ -151,17 +151,22 @@ impl<const NUM_BITMAPS: usize, const BITMAP_SIZE_BYTES: usize>
 
     /// Deallocate the page corresponding to the given PhysAddr.
     pub fn deallocate(&mut self, pa: PhysAddr) -> Result<(), PageAllocError> {
-        if pa > self.end {
+        // end is exclusive: pages from end onwards aren't memory.
+        if pa >= self.end {
             return Err(PageAllocError::OutOfBounds);
+        }
+        if !pa.is_multiple_of(self.alloc_page_size as u64) {
+            return Err(PageAllocError::MisalignedAddr);
         }
 
         let (bitmap_idx, byte_idx, bit_idx) = self.physaddr_as_indices(pa);
 
         let bitmap = &mut self.bitmaps[bitmap_idx];
-        if !bitmap.is_set(8 * byte_idx + bit_idx) {
+        let i = 8 * byte_idx + bit_idx;
+        if !bitmap.is_set(i) {
             return Err(PageAllocError::NotAllocated);
         }
-        bitmap.set(bit_idx, false);
+        bitmap.set(i, false);
 
         self.next_pa_to_scan = pa; // Next allocation will reuse this
 
@@ -405,6 +410,18 @@ mod tests {
 
         // Allocate once more, expecting the physical address we just deallocated
         assert_eq!(alloc.allocate()?, PhysAddr::new(4));
+
+        // Deallocate a page in the second byte of the first bitmap (bit 9),
+        // which must clear that bit, not bit 1 of the first byte
+        assert!(alloc.deallocate(PhysAddr::new(36)).is_ok());
+        assert_eq!(alloc.bytes(), [0xff, 0xfd, 0xff, 0xff]);
+        assert_eq!(alloc.allocate()?, PhysAddr::new(36));
+
+        // end is exclusive, so a page at end isn't memory and can't be freed
+        assert_eq!(alloc.deallocate(PhysAddr::new(128)).unwrap_err(), PageAllocError::OutOfBounds);
+
+        // A misaligned address is an error, not a panic
+        assert_eq!(alloc.deallocate(PhysAddr::new(6)).unwrap_err(), PageAllocError::MisalignedAddr);
 
         Ok(())
     }
