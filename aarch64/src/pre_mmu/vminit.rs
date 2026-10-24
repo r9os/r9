@@ -422,8 +422,9 @@ fn next_mut<'a, A: PageAllocator>(
     va: usize,
 ) -> Result<&'a mut Table, PageTableError> {
     // Try to get a valid page table entry.  If it doesn't exist, create it.
+    // Only the root's entry 511 is reserved, for the recursive entry.
     let index = va_index(va, level);
-    if index == 511 {
+    if level == Level::Level0 && index == 511 {
         putstr("error:vminit:next_mut:can't use the recursive index");
         return Err(PageTableError::MappingRecursiveIndex);
     }
@@ -444,19 +445,16 @@ fn next_mut<'a, A: PageAllocator>(
         let page = unsafe { &mut *(page_pa.addr() as *mut PhysPage4K) };
         page.clear();
 
-        // Add same entry to parent table and recursive entry of new table
+        // Add the new table to the parent table
         entry = Entry::table(page_pa);
-
         table.entries[index] = entry;
 
-        let new_table = unsafe { &mut *(page_pa.addr() as *mut Table) };
-        new_table.entries[511] = entry;
-        Ok(new_table)
+        Ok(unsafe { &mut *(page_pa.addr() as *mut Table) })
     } else if !entry.is_table(level) {
         putstr("error:vminit:next_mut:entry is not a valid table entry");
         Err(PageTableError::EntryIsNotTable)
     } else {
-        // Return the address of the next table as a recursive address
+        // The MMU is off, so the table's physical address is usable as is
         let next_table = unsafe { &mut *(entry.phys_addr().addr() as *mut Table) };
         Ok(next_table)
     }
@@ -501,6 +499,86 @@ impl PageAllocator for EarlyPageAllocator {
         } else {
             putstr("error:vminit:alloc_physpage:Out of space");
             Err(PageAllocError::OutOfSpace)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use port::mem::PAGE_SIZE_4K;
+
+    #[repr(C, align(4096))]
+    struct Page([u8; PAGE_SIZE_4K]);
+
+    struct TestPageAllocator {
+        pages: [Page; 3],
+        next: usize,
+    }
+
+    impl PageAllocator for TestPageAllocator {
+        fn alloc_physpage(&mut self) -> Result<PhysAddr, PageAllocError> {
+            let page = self.pages.get(self.next).ok_or(PageAllocError::OutOfSpace)?;
+            self.next += 1;
+            Ok(PhysAddr::new(page as *const Page as u64))
+        }
+    }
+
+    fn test_page_allocator() -> TestPageAllocator {
+        TestPageAllocator { pages: core::array::from_fn(|_| Page([0; PAGE_SIZE_4K])), next: 0 }
+    }
+
+    /// Walk `table` through the tables below it to the level 3 entry for `va`.
+    fn level3_entry(table: &RootPageTable, va: usize) -> Entry {
+        let mut table = table;
+        for level in [Level::Level0, Level::Level1, Level::Level2] {
+            let entry = table.entries[va_index(va, level)];
+            assert!(entry.valid() && entry.is_table(level), "no table at {level:?}");
+            // SAFETY: in these tests, table entries hold the host addresses
+            // of the test allocator's pages.
+            table = unsafe { &*(entry.phys_addr().addr() as *const Table) };
+        }
+        table.entries[va_index(va, Level::Level3)]
+    }
+
+    #[test]
+    fn can_map_index_511_below_the_root() {
+        let mut root = RootPageTable::empty();
+        let mut alloc = test_page_allocator();
+        // Indices (256, 511, 511, 511).
+        let va = KZERO | (511 << 30) | (511 << 21) | (511 << 12);
+        let pa = PhysAddr::new(0x20_0000);
+
+        map_to(
+            &mut root,
+            &mut alloc,
+            Entry::rw_kernel_data().with_phys_addr(pa),
+            va,
+            PageSize::Page4K,
+        )
+        .expect("couldn't map");
+        assert_eq!(level3_entry(&root, va).phys_addr(), pa);
+    }
+
+    #[test]
+    fn new_tables_have_no_entry_511() {
+        let mut root = RootPageTable::empty();
+        let mut alloc = test_page_allocator();
+        let pa = PhysAddr::new(0x20_0000);
+
+        map_to(
+            &mut root,
+            &mut alloc,
+            Entry::rw_kernel_data().with_phys_addr(pa),
+            KZERO,
+            PageSize::Page4K,
+        )
+        .expect("couldn't map");
+        assert_eq!(alloc.next, 3);
+        for page in &alloc.pages {
+            // SAFETY: each page is 4KiB aligned and the size of a Table.
+            let table = unsafe { &*(page as *const Page as *const Table) };
+            assert!(!table.entries[511].valid());
         }
     }
 }
