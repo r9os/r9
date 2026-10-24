@@ -127,7 +127,9 @@ impl fmt::Debug for TrapFrame {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn trap_unsafe(frame: *mut TrapFrame) {
+    port::irq::enter_interrupt();
     unsafe { trap(frame.as_mut().unwrap()) }
+    port::irq::exit_interrupt();
 }
 
 fn trap(frame: &mut TrapFrame) {

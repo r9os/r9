@@ -12,6 +12,7 @@ pub mod bitmapalloc;
 pub mod dat;
 pub mod devcons;
 pub mod fdt;
+pub mod irq;
 pub mod maths;
 pub mod mcslock;
 pub mod mem;
