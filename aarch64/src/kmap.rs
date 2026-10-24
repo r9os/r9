@@ -7,6 +7,7 @@
 //! handlers must not use it, since they could take a slot that the
 //! interrupted code is about to claim.
 
+use crate::mach::machno;
 use crate::param::{KMAPBASE, KMAPSLOTS, MAXMACH};
 use crate::vm::{map_kernel_page, unmap_kernel_page};
 use core::marker::PhantomData;
@@ -66,18 +67,4 @@ pub fn kmap(pa: PhysAddr) -> KMap {
 
 fn slot_va(machno: usize, slot: usize) -> usize {
     KMAPBASE + (machno * KMAPSLOTS + slot) * PAGE_SIZE_4K
-}
-
-/// Return this CPU's number, Aff0 of MPIDR_EL1 (one cluster of up to four
-/// cores on the Raspberry Pi 4).
-fn machno() -> usize {
-    #[cfg(not(test))]
-    let machno = {
-        use aarch64_cpu::registers::{MPIDR_EL1, Readable};
-        MPIDR_EL1.read(MPIDR_EL1::Aff0) as usize
-    };
-    #[cfg(test)]
-    let machno = 0;
-    assert!(machno < MAXMACH, "machno {machno} >= MAXMACH");
-    machno
 }
