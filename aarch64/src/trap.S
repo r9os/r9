@@ -62,7 +62,7 @@ TF_SIZE		= 16 * 19
 //
 // The frame is pushed onto the current stack (SP_EL1).  For exceptions taken
 // from EL1 that's the interrupted kernel stack.  For exceptions taken from EL0
-// it's whatever SP_EL1 was set to before the eret into EL0 (see touser).
+// it's whatever SP_EL1 was set to before the eret into EL0 (see to_user).
 // No general purpose register can be used until it has been saved.
 .macro handle_interrupt type
 	sub 	sp, sp, #TF_SIZE
@@ -110,7 +110,7 @@ TF_SIZE		= 16 * 19
 
 // Restore the TrapFrame at sp and return from the exception.  The return
 // state (ELR_EL1, SPSR_EL1, SP_EL0) is taken from the frame rather than the
-// live registers, so trap handlers (and touser) control where we return to.
+// live registers, so trap handlers (and to_user) control where we return to.
 .globl trap_return
 trap_return:
 	ldr	x0, [sp, #TF_ELR_FAR]
