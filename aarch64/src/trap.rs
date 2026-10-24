@@ -167,7 +167,7 @@ fn syscall(frame: &mut TrapFrame) {
 /// `kstack_top` must be the 16-byte aligned top of a kernel stack that isn't
 /// in use, and `entry` and `user_sp` must be mapped in the current user page
 /// table.
-pub unsafe fn touser(kstack_top: usize, entry: u64, user_sp: u64) -> ! {
+pub unsafe fn to_user(kstack_top: usize, entry: u64, user_sp: u64) -> ! {
     let frame = (kstack_top - size_of::<TrapFrame>()) as *mut TrapFrame;
     let mut tf: TrapFrame = unsafe { core::mem::zeroed() };
     tf.elr_el1 = entry;

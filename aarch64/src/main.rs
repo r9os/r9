@@ -227,7 +227,7 @@ fn test_user_syscalls() -> ! {
     vmdebug::print_recursive_tables(RootPageTableType::User);
 
     println!("Executing user process");
-    unsafe { trap::touser(kstack_top, UTZERO as u64, USTKTOP as u64) }
+    unsafe { trap::to_user(kstack_top, UTZERO as u64, USTKTOP as u64) }
 }
 
 /// Write a page that's mapped nowhere else through one kmap, and read it back
