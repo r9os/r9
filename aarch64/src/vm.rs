@@ -390,7 +390,9 @@ impl Table {
             });
         }
 
-        // Create a new page table and write the entry into the parent table
+        // Add a new, empty table to this table.  The page is zeroed before it's
+        // linked, so the table walker never sees stale entries in it, even
+        // speculatively.
         let page_pa = page_allocator.alloc_physpage();
         let page_pa = match page_pa {
             Ok(p) => p,
@@ -402,13 +404,8 @@ impl Table {
         entry = Entry::table(page_pa);
         vmtrait_impl.write_entry(&mut self.entries[index], entry);
 
-        // Clear out the new page and return it as the next table
         let next_level = level.next().unwrap();
-        let page = vmtrait_impl.resolve_entry_mut::<PhysPage4K>(entry, pgtype, va, next_level);
-        Ok(unsafe {
-            (*page).clear();
-            &mut *(page as *mut Table)
-        })
+        Ok(unsafe { &mut *vmtrait_impl.resolve_entry_mut::<Table>(entry, pgtype, va, next_level) })
     }
 }
 
@@ -651,6 +648,18 @@ pub unsafe fn switch(page_table: &RootPageTable, pgtype: RootPageTableType) {
     }
 }
 
+/// Wait for earlier stores, including to page tables, to be visible to every
+/// CPU and table walker in the inner-shareable domain.  Table walks are
+/// cacheable and inner-shareable (TCR_EL1's IRGN, ORGN and SH), so no cache
+/// maintenance is needed.
+fn write_barrier() {
+    #[cfg(not(test))]
+    // SAFETY: a barrier only.
+    unsafe {
+        core::arch::asm!("dsb ishst");
+    }
+}
+
 #[allow(unused_variables)]
 pub unsafe fn invalidate_all_tlb_entries() {
     #[cfg(not(test))]
@@ -666,6 +675,8 @@ pub unsafe fn invalidate_all_tlb_entries() {
 }
 
 pub trait PageAllocator {
+    /// Allocate a physical page, which must already be zeroed: it may become a
+    /// page table as soon as it's returned.
     fn alloc_physpage(&mut self) -> Result<PhysAddr, PageAllocError>;
 }
 
@@ -674,7 +685,7 @@ pub struct PhysPageAllocator {}
 
 impl PageAllocator for PhysPageAllocator {
     fn alloc_physpage(&mut self) -> Result<PhysAddr, PageAllocError> {
-        pagealloc::allocate_physpage()
+        pagealloc::allocate_zeroed_physpage()
     }
 }
 
@@ -707,7 +718,13 @@ pub struct VmTraitImpl {}
 impl VmTrait for VmTraitImpl {
     fn write_entry(&self, dest_entry: &mut Entry, entry: Entry) {
         unsafe {
+            // Make earlier writes, such as zeroing a new table, visible to the
+            // table walker before the entry that refers to them.
+            write_barrier();
             write_volatile(dest_entry, entry);
+            // Make the entry visible to the table walker before the TLB
+            // invalidate, so the old translation can't be cached again.
+            write_barrier();
             invalidate_all_tlb_entries();
         }
     }
@@ -722,8 +739,10 @@ impl VmTrait for VmTraitImpl {
     fn write_recursive_entry(&mut self, pgtype: RootPageTableType, entry: Entry) {
         let page_table = root_page_table(pgtype);
         unsafe {
-            // Return the recursive entry to its original state
+            // Return the recursive entry to its original state, making it
+            // visible to the table walker before the TLB invalidate.
             write_volatile(&mut page_table.entries[511], entry);
+            write_barrier();
             // TODO Need to invalidate the single cache entry (+ optionally the recursive entry)
             invalidate_all_tlb_entries();
         }
