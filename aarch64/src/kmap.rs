@@ -8,9 +8,8 @@
 //! interrupted code is about to claim.
 
 use crate::param::{KMAPBASE, KMAPSLOTS, MAXMACH};
-use crate::vm::{Entry, kernel_pte};
+use crate::vm::{map_kernel_page, unmap_kernel_page};
 use core::marker::PhantomData;
-use core::ptr::write_volatile;
 use core::sync::atomic::{AtomicBool, Ordering};
 use port::mem::{PAGE_SIZE_4K, PhysAddr};
 
@@ -37,11 +36,9 @@ impl KMap {
 
 impl Drop for KMap {
     fn drop(&mut self) {
-        let va = self.va();
-        // SAFETY: va is in this CPU's kmap region, whose level 3 table vminit
-        // built, and this KMap owns the slot.
-        unsafe { write_volatile(kernel_pte(va), Entry::empty()) };
-        invalidate_kernel_va(va);
+        // SAFETY: the address is in this CPU's kmap region, whose level 3
+        // table vminit built, and this KMap owns the slot and its mapping.
+        unsafe { unmap_kernel_page(self.va()) };
         INUSE[self.machno][self.slot].store(false, Ordering::Release);
     }
 }
@@ -61,16 +58,9 @@ pub fn kmap(pa: PhysAddr) -> KMap {
         .expect("kmap: all slots in use");
     let k = KMap { machno, slot, _not_send: PhantomData };
 
-    let entry = Entry::rw_kernel_data().with_phys_addr(pa).with_page_or_table(true);
-    // SAFETY: as in drop.  The slot was free, so the entry is invalid and no
-    // TLB entry for it can exist: the TLB doesn't hold faulting translations.
-    unsafe { write_volatile(kernel_pte(k.va()), entry) };
-    #[cfg(not(test))]
-    // SAFETY: barriers only.
-    unsafe {
-        // Make the entry visible to the table walker before the slot is used.
-        core::arch::asm!("dsb ishst", "isb");
-    }
+    // SAFETY: the address is in this CPU's kmap region, whose level 3 table
+    // vminit built, and the slot was free, so its entry is invalid.
+    unsafe { map_kernel_page(k.va(), pa) };
     k
 }
 
@@ -90,25 +80,4 @@ fn machno() -> usize {
     let machno = 0;
     assert!(machno < MAXMACH, "machno {machno} >= MAXMACH");
     machno
-}
-
-/// Remove any TLB entry for the kernel address `va` on every CPU.
-#[allow(unused_variables)]
-fn invalidate_kernel_va(va: usize) {
-    #[cfg(not(test))]
-    // SAFETY: TLB maintenance and barriers only.
-    unsafe {
-        // Make the cleared entry visible to the table walker, then remove the
-        // old translation.  Kernel entries are global, so invalidate for all
-        // ASIDs (vaae1is).  The operand's bits [43:0] are VA[55:12]; the bits
-        // above must be clear, as bits [47:44] are the TTL hint (Arm ARM,
-        // TLBI VAAE1IS; Linux __TLBI_VADDR masks the same way).
-        core::arch::asm!(
-            "dsb ishst",
-            "tlbi vaae1is, {page}",
-            "dsb ish",
-            "isb",
-            page = in(reg) (va >> 12) & ((1 << 44) - 1),
-        );
-    }
 }

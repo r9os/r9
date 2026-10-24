@@ -305,9 +305,67 @@ fn recursive_table_addr(pgtype: RootPageTableType, va: usize, level: Level) -> u
 /// Return the level 3 entry that maps `va` in the kernel page table, reached
 /// through the kernel's recursive entry.  The level 3 table for `va` must
 /// already exist, as the kmap region's does.
-pub fn kernel_pte(va: usize) -> *mut Entry {
+fn kernel_pte(va: usize) -> *mut Entry {
     let table = recursive_table_addr(RootPageTableType::Kernel, va, Level::Level3) as *mut Entry;
     table.wrapping_add(va_index(va, Level::Level3))
+}
+
+/// Map the physical page at `pa` at the kernel address `va`, kernel read-write
+/// and never executable.
+///
+/// # Safety
+///
+/// The level 3 table for `va` must exist, as vminit builds for the kmap and
+/// kernel stack regions, and `va`'s entry must be invalid.  `pa` must be RAM.
+pub unsafe fn map_kernel_page(va: usize, pa: PhysAddr) {
+    let entry = Entry::rw_kernel_data().with_phys_addr(pa).with_page_or_table(true);
+    // SAFETY: the caller guarantees the table exists and the entry is free.
+    unsafe { write_volatile(kernel_pte(va), entry) };
+    // The entry was invalid, so no TLB entry for it can exist: the TLB doesn't
+    // hold faulting translations.  Make the entry visible to the table walker
+    // before va is used.
+    #[cfg(not(test))]
+    // SAFETY: barriers only.
+    unsafe {
+        core::arch::asm!("dsb ishst", "isb");
+    }
+}
+
+/// Unmap the kernel page at `va`, and return the physical page that was mapped
+/// there.
+///
+/// # Safety
+///
+/// `va` must have been mapped with map_kernel_page, and nothing may still use
+/// it.
+pub unsafe fn unmap_kernel_page(va: usize) -> PhysAddr {
+    let pte = kernel_pte(va);
+    // SAFETY: the caller guarantees the entry is one map_kernel_page wrote.
+    let pa = unsafe { (*pte).phys_addr() };
+    unsafe { write_volatile(pte, Entry::empty()) };
+    invalidate_kernel_va(va);
+    pa
+}
+
+/// Remove any TLB entry for the kernel address `va` on every CPU.
+#[allow(unused_variables)]
+fn invalidate_kernel_va(va: usize) {
+    #[cfg(not(test))]
+    // SAFETY: TLB maintenance and barriers only.
+    unsafe {
+        // Make the cleared entry visible to the table walker, then remove the
+        // old translation.  Kernel entries are global, so invalidate for all
+        // ASIDs (vaae1is).  The operand's bits [43:0] are VA[55:12]; the bits
+        // above must be clear, as bits [47:44] are the TTL hint (Arm ARM,
+        // TLBI VAAE1IS; Linux __TLBI_VADDR masks the same way).
+        core::arch::asm!(
+            "dsb ishst",
+            "tlbi vaae1is, {page}",
+            "dsb ish",
+            "isb",
+            page = in(reg) (va >> 12) & ((1 << 44) - 1),
+        );
+    }
 }
 
 #[derive(Debug)]
