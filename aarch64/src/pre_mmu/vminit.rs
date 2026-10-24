@@ -142,11 +142,7 @@ pub extern "C" fn init_vm(dtb_pa: u64) {
             putstr("error:vminit:init_vm: failed to alloc root_kernelpt4\n");
             panic!();
         };
-    root_page_table.entries[511] = Entry::empty()
-        .with_phys_addr(root_page_table_pa)
-        .with_accessed(true)
-        .with_valid(true)
-        .with_page_or_table(true);
+    root_page_table.entries[511] = Entry::table(root_page_table_pa);
 
     for (name, range, flags, page_size) in custom_map.iter() {
         putstr(name);
@@ -225,8 +221,7 @@ pub extern "C" fn init_vm(dtb_pa: u64) {
     };
     //.quad	(physicalpt3)
     // + (PT_AF|PT_PAGE)	// [0] (for kernel)
-    physicalpt4.entries[0] =
-        Entry::empty().with_phys_addr(physicalpt3_pa).with_valid(true).with_page_or_table(true);
+    physicalpt4.entries[0] = Entry::table(physicalpt3_pa);
 
     // AArch64 memory management examples
     //  https://developer.arm.com/documentation/102416/0100
@@ -450,14 +445,7 @@ fn next_mut<'a, A: PageAllocator>(
         page.clear();
 
         // Add same entry to parent table and recursive entry of new table
-        entry = Entry::empty()
-            .with_access_permission(AccessPermission::PrivRw)
-            //.with_shareable(Shareable::Inner)
-            .with_accessed(true)
-            .with_mair_index(Mair::Normal)
-            .with_phys_addr(page_pa)
-            .with_valid(true)
-            .with_page_or_table(true);
+        entry = Entry::table(page_pa);
 
         table.entries[index] = entry;
 
