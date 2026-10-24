@@ -183,14 +183,20 @@ mod runtime;
 ///   61 00 00 D4    ; svc #3        (exit with x0)
 const TEST_USER_TEXT: [u32; 3] = [0xd280_0520, 0xd400_0001, 0xd400_0061];
 
-/// Run a process that makes a syscall and exits with its result, checking that
-/// it frees everything it allocated.
+/// Run a process that makes a syscall and exits with its result, twice,
+/// checking that each run frees everything it allocated, so the second reuses
+/// the first's kernel stack.
 fn test_user_process() {
-    let (used_before, _) = port::pagealloc::usage_bytes();
-    let p = port::proc::newproc::<Arm64>(test_user_start).expect("couldn't create process");
-    println!("Executing user process");
-    assert_eq!(port::proc::run(p), 42);
-    assert_eq!(port::pagealloc::usage_bytes().0, used_before);
+    let mut first_kstack_top = None;
+    for i in 0..2 {
+        let (used_before, _) = port::pagealloc::usage_bytes();
+        let p = port::proc::newproc::<Arm64>(test_user_start).expect("couldn't create process");
+        let kstack_top = p.kstack().top();
+        assert_eq!(*first_kstack_top.get_or_insert(kstack_top), kstack_top);
+        println!("Executing user process {i}");
+        assert_eq!(port::proc::run(p), 42);
+        assert_eq!(port::pagealloc::usage_bytes().0, used_before);
+    }
     println!("user process test: ok");
 }
 
