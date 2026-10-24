@@ -645,32 +645,33 @@ pub fn next_free_device_page4k() -> VaMapping {
         .expect("next_free_device_page4k: unable to return new va")
 }
 
-/// Load the empty user root into ttbr0_el1.  At boot this retires the identity
-/// map that l.S needed while turning on the MMU.
+/// Write the empty user root's recursive entry, once, at boot.
 ///
 /// # Safety
 ///
-/// Nothing may still refer to memory through the user address space that's
-/// being replaced, and no other CPU may be loading the empty root at the same
-/// time, since this rewrites it.
-pub unsafe fn load_empty_user_root() {
+/// It must be called before the empty root is first loaded, and no other CPU
+/// may be running.
+pub unsafe fn init_empty_user_root() {
     let root = unsafe { &mut *ptr::addr_of_mut!(EMPTY_USER_ROOT) };
-    unsafe {
-        init_empty_root_page_table(root);
-        load_user_root(paddr(root));
-    }
+    unsafe { init_empty_root_page_table(root) };
 }
 
 /// A user address space: the physical address of its root page table.  The
 /// root isn't mapped at KZERO, so before it's loaded it's only reached through
-/// kmap, and after that through the recursive window.  Address spaces aren't
-/// freed yet.
+/// kmap, and after that through the recursive window.
 pub struct AddressSpace {
     root: PhysAddr,
 }
 
 impl AddressSpace {
-    /// Allocate a new, empty address space.
+    /// The empty address space, which is loaded when there's no other.  Its
+    /// root, a static, holds only its recursive entry, so every user address
+    /// faults, including null.  It can't be released.
+    pub fn empty() -> Self {
+        Self { root: paddr(ptr::addr_of!(EMPTY_USER_ROOT)) }
+    }
+
+    /// Allocate a new address space, with nothing mapped.
     pub fn new() -> Result<Self, PageAllocError> {
         let root = pagealloc::allocate_zeroed_physpage()?;
         let k = kmap(root);
@@ -821,8 +822,7 @@ impl VmTrait for VmTraitImpl {
     }
 
     fn active_root(&self, pgtype: RootPageTableType) -> Result<*mut RootPageTable, PageTableError> {
-        if pgtype == RootPageTableType::User && ttbr0_el1() == paddr(ptr::addr_of!(EMPTY_USER_ROOT))
-        {
+        if pgtype == RootPageTableType::User && ttbr0_el1() == AddressSpace::empty().root {
             return Err(PageTableError::NoAddressSpace);
         }
         // Every index of the root's own window address is 511.
