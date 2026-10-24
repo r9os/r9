@@ -298,7 +298,7 @@ pub extern "C" fn init_vm(dtb_pa: u64) {
     TTBR0_EL1.set(physicalpt4_pa.addr());
 
     TCR_EL1.write(
-        TCR_EL1::IPS::Bits_44
+        TCR_EL1::IPS.val(tcr_ips())
             + TCR_EL1::TG1::KiB_4
             + TCR_EL1::SH1::Inner
             + TCR_EL1::ORGN1::WriteBack_ReadAlloc_WriteAlloc_Cacheable
@@ -328,6 +328,15 @@ pub extern "C" fn init_vm(dtb_pa: u64) {
     dsb(barrier::ISH);
 
     putstr("vminit:init_vm: complete\n");
+}
+
+/// Return the TCR_EL1.IPS encoding of the largest physical address size the
+/// CPU supports.  ID_AA64MMFR0_EL1.PARange uses the same encoding (0b100 is 44
+/// bits, 0b101 is 48 bits), so it's capped at 48 bits, the most a page table
+/// entry can hold (physical address bits [47:12]).  Linux's
+/// tcr_compute_pa_size does the same.
+fn tcr_ips() -> u64 {
+    ID_AA64MMFR0_EL1.read(ID_AA64MMFR0_EL1::PARange).min(0b101)
 }
 
 /// Map the physical range using the requested page size.
