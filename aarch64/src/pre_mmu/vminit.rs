@@ -9,7 +9,7 @@ use port::{
 };
 
 use crate::{
-    param::KZERO,
+    param::{KMAPBASE, KZERO, VA_BITS},
     pre_mmu::util::{putstr, putu64h},
     vm::{
         AccessPermission, Entry, Level, Mair, PageAllocator, PageSize, PageTableError, PhysPage4K,
@@ -174,6 +174,19 @@ pub extern "C" fn init_vm(dtb_pa: u64) {
         putu64h(mapped_virtrange.end as u64);
         putstr("\n");
     }
+
+    // Build the tables down to level 3 for the kmap region now, so that kmap
+    // only ever writes level 3 entries and never needs to allocate.  The
+    // entries start invalid.
+    if next_mut(root_page_table, &mut physpage_allocator, Level::Level0, KMAPBASE)
+        .and_then(|t1| next_mut(t1, &mut physpage_allocator, Level::Level1, KMAPBASE))
+        .and_then(|t2| next_mut(t2, &mut physpage_allocator, Level::Level2, KMAPBASE))
+        .is_err()
+    {
+        putstr("error:vminit:init_vm: failed to build kmap tables\n");
+        panic!();
+    }
+
     // puttable(&root_page_table);
     // let page_table1: &Table =
     //     unsafe { &*(root_page_table.entries[256].phys_addr().addr() as *const Table) };
@@ -296,12 +309,12 @@ pub extern "C" fn init_vm(dtb_pa: u64) {
             + TCR_EL1::ORGN1::WriteBack_ReadAlloc_WriteAlloc_Cacheable
             + TCR_EL1::IRGN1::WriteBack_ReadAlloc_WriteAlloc_Cacheable
             // + TCR_EL1::EPD1::SET
-            + TCR_EL1::T1SZ.val(16)
+            + TCR_EL1::T1SZ.val((64 - VA_BITS) as u64)
             + TCR_EL1::TG0::KiB_4
             + TCR_EL1::SH0::Inner
             + TCR_EL1::ORGN0::WriteBack_ReadAlloc_WriteAlloc_Cacheable
             + TCR_EL1::IRGN0::WriteBack_ReadAlloc_WriteAlloc_Cacheable
-            + TCR_EL1::T0SZ.val(16),
+            + TCR_EL1::T0SZ.val((64 - VA_BITS) as u64),
     );
 
     // Preset memory attributes.  This register stores 8 8-bit presets that are
@@ -357,12 +370,13 @@ fn map_phys_range<A: PageAllocator>(
             currva += page_size.size();
         }
         endva = currva + page_size.size();
-        if map_to(root_page_table, page_allocator, entry.with_phys_addr(pa), currva, page_size)
-            .is_err()
+        if let Err(err) =
+            map_to(root_page_table, page_allocator, entry.with_phys_addr(pa), currva, page_size)
         {
             putstr("error:vminit:map_phys_range:map_to failed: ");
             putstr(debug_name);
             putstr("\n");
+            return Err(err);
         }
     }
     startva.map(|startva| VirtRange::new(startva, endva)).ok_or(PageTableError::PhysRangeIsZero)

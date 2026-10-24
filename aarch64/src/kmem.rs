@@ -78,22 +78,18 @@ pub fn total_kernel_physrange() -> PhysRange {
     PhysRange::new(base_physaddr(), ebss_physaddr())
 }
 
-/// Transform the physical address to a virtual address, under the assumption that
-/// the virtual address is the physical address offset from KZERO.
-pub const fn physaddr_as_ptr_mut_offset_from_kzero<T>(pa: PhysAddr) -> *mut T {
+/// Return the kernel address of the physical address `pa`, at KZERO + `pa`.
+/// Only the kernel image, the DTB and pages the kernel maps for itself are
+/// mapped there.  Other pages are reached through kmap, or, for page tables,
+/// through the recursive window.
+pub const fn kaddr<T>(pa: PhysAddr) -> *mut T {
     (pa.addr() as usize).wrapping_add(KZERO) as *mut T
 }
 
-/// Given a virtual address, return the physical address.  Makes a massive assumption
-/// that the code is mapped offset to KZERO, so should be used with extreme care.
-/// TODO: Remove this altogether, otherwise it'll get used when it shouldn't.
-fn from_virt_to_physaddr(va: usize) -> PhysAddr {
-    debug_assert!(va >= KZERO, "from_virt_to_physaddr: va {va} must be >= KZERO ({KZERO})");
+/// Return the physical address of `a`, which must be mapped at KZERO + its
+/// physical address (see kaddr).
+pub fn paddr<T>(a: *const T) -> PhysAddr {
+    let va = a.addr();
+    debug_assert!(va >= KZERO, "paddr: va {va:#x} must be >= KZERO ({KZERO:#x})");
     PhysAddr::new((va - KZERO) as u64)
-}
-
-/// Given an address, return the physical address.  Makes a massive assumption
-/// that the code is mapped offset to KZERO, so should be used with extreme care.
-pub fn from_ptr_to_physaddr_offset_from_kzero<T>(a: *const T) -> PhysAddr {
-    from_virt_to_physaddr(a.addr())
 }

@@ -1,2 +1,58 @@
+use port::mem::PAGE_SIZE_4K;
+
+/// Virtual address bits in each half of the address space: ttbr0_el1
+/// translates [0, UVA_END) and ttbr1_el1 translates [KVA_BASE, 2^64).
+/// TCR_EL1.T0SZ and T1SZ are 64 - VA_BITS.
+pub const VA_BITS: usize = 48;
+
+/// End of the range ttbr0_el1 translates.
+pub const UVA_END: usize = 1 << VA_BITS;
+
+/// Start of the range ttbr1_el1 translates.
+pub const KVA_BASE: usize = !(UVA_END - 1);
+
 // This needs to match KZERO in l.S
 pub const KZERO: usize = 0xffff_8000_0000_0000;
+
+const _: () = assert!(KZERO >= KVA_BASE);
+
+/// Maximum number of CPUs (the Raspberry Pi 4 has four cores).
+pub const MAXMACH: usize = 4;
+
+/// Base of the kmap region: root entry 510, just below the recursive entry.
+/// Each CPU has KMAPSLOTS consecutive 4KiB slots, all in one level 3 table
+/// that vminit builds before the MMU is enabled.
+pub const KMAPBASE: usize = 0xffff_ff00_0000_0000;
+
+/// Number of kmap slots per CPU: how many pages one CPU can have kmapped at
+/// once.
+pub const KMAPSLOTS: usize = 8;
+
+// The pre-MMU vminit writes a self-referencing entry 511 into every new
+// table, so slot 511 of the kmap table isn't usable.
+const _: () = assert!(MAXMACH * KMAPSLOTS < 511);
+const _: () = assert!(KMAPBASE.is_multiple_of(2 << 20));
+
+// User address space layout.  User addresses are translated by ttbr0_el1.
+
+/// Start of user text.  The pages below are left unmapped to catch null
+/// pointer dereferences.
+pub const UTZERO: usize = 0x10000;
+
+/// Top of the user stack.
+pub const USTKTOP: usize = 0x0000_8000_0000_0000;
+
+/// Size of the user stack.  It's mapped up front, and nothing is mapped below
+/// it, so overflowing it faults.
+pub const USTKSIZE: usize = 64 * 1024;
+
+/// End of the user address space.  Above it, root entry 511 recursively maps
+/// the user page table.
+pub const UADDRTOP: usize = 0x0000_ff80_0000_0000;
+
+const _: () = assert!(UTZERO.is_multiple_of(PAGE_SIZE_4K));
+const _: () = assert!(USTKTOP.is_multiple_of(PAGE_SIZE_4K));
+const _: () = assert!(USTKSIZE.is_multiple_of(PAGE_SIZE_4K));
+const _: () = assert!(UTZERO < USTKTOP - USTKSIZE);
+const _: () = assert!(USTKTOP <= UADDRTOP);
+const _: () = assert!(UADDRTOP <= UVA_END);
