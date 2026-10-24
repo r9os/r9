@@ -441,11 +441,8 @@ fn next_mut<'a, A: PageAllocator>(
             }
         };
 
-        // Clear out the new page
-        let page = unsafe { &mut *(page_pa.addr() as *mut PhysPage4K) };
-        page.clear();
-
-        // Add the new table to the parent table
+        // Add the new table, already zeroed by the allocator, to the parent
+        // table
         entry = Entry::table(page_pa);
         table.entries[index] = entry;
 

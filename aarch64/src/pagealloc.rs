@@ -80,6 +80,17 @@ pub fn allocate_physpage() -> Result<PhysAddr, PageAllocError> {
     }
 }
 
+/// Try to allocate a physical page, zeroed through kmap.  Note that this is NOT
+/// mapped.
+pub fn allocate_zeroed_physpage() -> Result<PhysAddr, PageAllocError> {
+    let page_pa = allocate_physpage()?;
+    let k = kmap(page_pa);
+    // SAFETY: kmaps the whole of the newly allocated page, which nothing else
+    // refers to yet.
+    unsafe { core::ptr::write_bytes(k.va() as *mut u8, 0, PAGE_SIZE_4K) };
+    Ok(page_pa)
+}
+
 /// Try to allocate a physical page and map it into virtual memory at va.
 pub fn allocate_virtpage(
     page_table: &mut RootPageTable,
@@ -114,8 +125,8 @@ pub fn allocate_virtpage(
 }
 
 /// Allocate, zero and map a writable data page for each 4KiB page in `range`,
-/// in the user page table `page_table`.  The pages are zeroed through kmap
-/// before they're mapped.
+/// in the user page table `page_table`.  The pages are zeroed before they're
+/// mapped.
 pub fn map_zeroed_user_pages(
     page_table: &mut RootPageTable,
     debug_name: &str,
@@ -127,13 +138,7 @@ pub fn map_zeroed_user_pages(
     );
 
     for va in (range.start..range.end).step_by(PAGE_SIZE_4K) {
-        let page_pa = allocate_physpage()?;
-        {
-            let k = kmap(page_pa);
-            // SAFETY: k maps the whole of the newly allocated page, which
-            // nothing else refers to yet.
-            unsafe { core::ptr::write_bytes(k.va() as *mut u8, 0, PAGE_SIZE_4K) };
-        }
+        let page_pa = allocate_zeroed_physpage()?;
         page_table
             .map_phys_range(
                 &mut PhysPageAllocator {},
