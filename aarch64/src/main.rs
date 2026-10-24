@@ -117,6 +117,12 @@ fn print_stacks() {
 pub extern "C" fn main9(dtb_va: usize) {
     trap::init();
 
+    // Nothing needs the boot identity map in ttbr0_el1 any more.  Replace it
+    // with the empty user root, so low addresses, including null, fault.
+    // SAFETY: nothing refers to memory through the identity map, and the
+    // other CPUs are parked.
+    unsafe { vm::load_empty_user_root() };
+
     // Parse the DTB before we set up memory so we can correctly map it
     let dt = unsafe { DeviceTree::from_usize(dtb_va).unwrap() };
     let dtb_physrange = PhysRange::with_pa_len(kmem::paddr(dtb_va as *const u8), dt.size());
