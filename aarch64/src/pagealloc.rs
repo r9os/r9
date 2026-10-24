@@ -27,7 +27,8 @@ pub fn allocate_zeroed_physpage() -> Result<PhysAddr, PageAllocError> {
 
 /// Allocate, zero and map a writable data page for each 4KiB page in `range`,
 /// in the active user address space.  The pages are zeroed before they're
-/// mapped.
+/// mapped.  If it fails partway, the pages it mapped stay in the address space,
+/// and are freed when the address space is released.
 pub fn map_zeroed_user_pages(debug_name: &str, range: VirtRange) -> Result<(), PageAllocError> {
     assert!(
         range.start.is_multiple_of(PAGE_SIZE_4K) && range.end.is_multiple_of(PAGE_SIZE_4K),
@@ -36,7 +37,7 @@ pub fn map_zeroed_user_pages(debug_name: &str, range: VirtRange) -> Result<(), P
 
     for va in (range.start..range.end).step_by(PAGE_SIZE_4K) {
         let page_pa = allocate_zeroed_physpage()?;
-        vm::map_phys_range(
+        let mapped = vm::map_phys_range(
             &mut PhysPageAllocator {},
             &mut VmTraitImpl {},
             debug_name,
@@ -45,8 +46,11 @@ pub fn map_zeroed_user_pages(debug_name: &str, range: VirtRange) -> Result<(), P
             Entry::rw_user_data(),
             PageSize::Page4K,
             RootPageTableType::User,
-        )
-        .map_err(|_| PageAllocError::UnableToMap)?;
+        );
+        if mapped.is_err() {
+            port::pagealloc::free_physpage(page_pa).expect("couldn't free an unmapped page");
+            return Err(PageAllocError::UnableToMap);
+        }
     }
     Ok(())
 }

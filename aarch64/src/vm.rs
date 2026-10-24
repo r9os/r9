@@ -372,6 +372,7 @@ pub enum PageTableError {
     PhysRangeIsNotOnPageBoundary,
     MappingRecursiveIndex,
     NoAddressSpace,
+    EmptyAddressSpace,
     AlreadyMapped,
     VaOutOfRange,
 }
@@ -658,7 +659,8 @@ pub unsafe fn init_empty_user_root() {
 
 /// A user address space: the physical address of its root page table.  The
 /// root isn't mapped at KZERO, so before it's loaded it's only reached through
-/// kmap, and after that through the recursive window.
+/// kmap, and after that through the recursive window.  Dropping it without
+/// release leaks its page tables.
 pub struct AddressSpace {
     root: PhysAddr,
 }
@@ -680,6 +682,66 @@ impl AddressSpace {
         unsafe { write_volatile((k.va() as *mut Entry).add(511), Entry::table(root)) };
         Ok(Self { root })
     }
+}
+
+/// Release `space`: free its page tables, and pass each page or block mapped in
+/// it to `free_leaf`, which frees it if the caller owns it.  Not every page
+/// mapped in an address space belongs to it, so the caller decides, as Plan
+/// 9's mmurelease frees only the MMU's pages and segments free their own.
+///
+/// If `space` is loaded, the empty address space is loaded first.  Its switch
+/// flushes the TLB, and nothing can then walk `space`'s tables, so they're
+/// freed through kmap without invalidating anything.  The empty address space
+/// can't be released.
+///
+/// # Safety
+///
+/// Nothing may still refer to memory through `space`, and `space` may not be
+/// loaded on another CPU.
+pub unsafe fn release(
+    space: AddressSpace,
+    mut free_leaf: impl FnMut(PhysAddr),
+) -> Result<(), PageTableError> {
+    if space.root == AddressSpace::empty().root {
+        return Err(PageTableError::EmptyAddressSpace);
+    }
+    if ttbr0_el1() == space.root {
+        // SAFETY: the caller guarantees nothing uses space any more.
+        unsafe { switch(&AddressSpace::empty()) };
+    }
+    // If space wasn't loaded, nothing in the TLB can refer to it: without
+    // ASIDs, every switch flushes the whole TLB.  Once there are ASIDs,
+    // release must also invalidate space's ASID here.
+    free_tables(&VmTraitImpl {}, space.root, Level::Level0, &mut free_leaf, &mut |pa| {
+        port::pagealloc::free_physpage(pa).expect("vm: couldn't free a page table")
+    });
+    Ok(())
+}
+
+/// Walk the table at `table_pa`, at `level`, passing each page or block it
+/// maps to `free_leaf`, and each table, this one last, to `free_table`.  The
+/// root's entry 511 is its recursive entry, so it's skipped.
+fn free_tables<B: VmTrait>(
+    vmtrait_impl: &B,
+    table_pa: PhysAddr,
+    level: Level,
+    free_leaf: &mut impl FnMut(PhysAddr),
+    free_table: &mut impl FnMut(PhysAddr),
+) {
+    vmtrait_impl.with_table(table_pa, |table| {
+        for (i, entry) in table.entries.iter().enumerate() {
+            if !entry.valid() || (level == Level::Level0 && i == 511) {
+                continue;
+            }
+            if entry.is_table(level) {
+                let next = level.next().unwrap();
+                free_tables(vmtrait_impl, entry.phys_addr(), next, free_leaf, free_table);
+            } else {
+                free_leaf(entry.phys_addr());
+            }
+        }
+    });
+    free_table(table_pa);
 }
 
 /// Load `space` into ttbr0_el1, making it the user address space that
@@ -792,6 +854,10 @@ pub trait VmTrait {
     /// address in the recursive window.
     fn active_root(&self, pgtype: RootPageTableType) -> Result<*mut RootPageTable, PageTableError>;
 
+    /// Run `f` on the page table at `pa`, which isn't active.  In the kernel,
+    /// it's reached through kmap.
+    fn with_table<R>(&self, pa: PhysAddr, f: impl FnOnce(&Table) -> R) -> R;
+
     /// Resolve the next table or page from an entry.  In the kernel, this uses recursive
     /// page table addressing.  In tests, it uses the physical address directly
     /// from the entry (which is a valid virtual address in the test environment).
@@ -827,6 +893,13 @@ impl VmTrait for VmTraitImpl {
         }
         // Every index of the root's own window address is 511.
         Ok(recursive_table_addr(pgtype, 0, Level::Level0) as *mut RootPageTable)
+    }
+
+    fn with_table<R>(&self, pa: PhysAddr, f: impl FnOnce(&Table) -> R) -> R {
+        let k = kmap(pa);
+        // SAFETY: kmaps the whole of a page table that isn't active, which
+        // nothing else refers to while f runs.
+        f(unsafe { &*(k.va() as *const Table) })
     }
 
     fn resolve_entry_mut<T>(
@@ -949,6 +1022,11 @@ mod tests {
     impl VmTrait for TestVmTrait {
         fn write_entry(&self, dest_entry: &mut Entry, entry: Entry) {
             *dest_entry = entry;
+        }
+
+        fn with_table<R>(&self, pa: PhysAddr, f: impl FnOnce(&Table) -> R) -> R {
+            // In tests, the "physical" address is actually a valid virtual address
+            f(unsafe { &*(pa.addr() as *const Table) })
         }
 
         fn active_root(
@@ -1098,5 +1176,49 @@ mod tests {
                 assert!(matches!(result, Err(PageTableError::AlreadyMapped)));
             }
         }
+    }
+
+    #[test]
+    fn freeing_tables_finds_every_table_and_leaf() {
+        let mut root = RootPageTable::empty();
+        let root_pa = PhysAddr::new(&raw const root as u64);
+        let mut test_page_allocator = TestPageAllocator::new();
+        let mut test_vmtrait_impl = TestVmTrait::new(&mut root);
+
+        // Two pages that share their level 1, 2 and 3 tables.
+        for (i, pa) in [0x20_0000, 0x40_0000].into_iter().enumerate() {
+            map_phys_range(
+                &mut test_page_allocator,
+                &mut test_vmtrait_impl,
+                "release",
+                &PhysRange::with_len(pa, PAGE_SIZE_4K),
+                VaMapping::Addr(UTZERO + i * PAGE_SIZE_4K),
+                Entry::rw_user_data(),
+                PageSize::Page4K,
+                RootPageTableType::User,
+            )
+            .expect("couldn't map");
+        }
+
+        let mut leaves = Vec::new();
+        let mut tables = Vec::new();
+        free_tables(
+            &test_vmtrait_impl,
+            root_pa,
+            Level::Level0,
+            &mut |pa| leaves.push(pa),
+            &mut |pa| tables.push(pa),
+        );
+
+        assert_eq!(leaves, [PhysAddr::new(0x20_0000), PhysAddr::new(0x40_0000)]);
+        // The three allocated tables, deepest first, then the root.
+        let allocated: Vec<PhysAddr> = test_page_allocator.free_pages[..3]
+            .iter()
+            .rev()
+            .map(|p| PhysAddr::new(p as *const PhysPage4K as u64))
+            .collect();
+        assert_eq!(test_page_allocator.next_page_idx, 3);
+        assert_eq!(tables[..3], allocated[..]);
+        assert_eq!(tables[3], root_pa);
     }
 }
