@@ -145,7 +145,6 @@ fn trap(frame: &mut TrapFrame) {
 /// the result in x0, as Linux does on arm64.  The svc immediate is ignored.
 fn syscall(frame: &mut TrapFrame) {
     let nr = frame.x8;
-    println!("Syscall {nr} from EL{}: x0={:#x}", frame.exception_level(), frame.x0);
     let args = [frame.x0, frame.x1, frame.x2, frame.x3, frame.x4, frame.x5];
     frame.x0 = port::syscall::syscall::<Arm64>(nr, args);
 }
