@@ -151,8 +151,8 @@ pub trait MMU {
     fn user_page_ok(va: usize, access: Access) -> bool;
 
     /// Map the 4KiB page at `pa` at `va`, with `perm`, in the current user
-    /// address space.  Text is mapped without cache maintenance, so the caller
-    /// must first make the instructions it wrote visible to instruction fetch.
+    /// address space.  Text is first made visible to instruction fetch, as
+    /// Plan 9's putmmu does for pages marked PG_TXTFLUSH.
     fn put(va: usize, pa: PhysAddr, perm: Perm) -> Result<(), PutError>;
 
     /// Unmap the 4KiB page at `va` in the current user address space, and
