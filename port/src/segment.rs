@@ -1,9 +1,63 @@
 //! User memory, as Plan 9's port/segment.c.  There are no segments yet, only
 //! pages mapped in the current address space.
 
-use crate::dat::{MMU, Perm, PutError};
+use crate::dat::{MMU, Perm, ProcArch, PutError};
+use crate::error::{EBADARG, ENOVMEM, ESOVERLAP};
 use crate::mem::{PAGE_SIZE_4K, VirtRange};
-use crate::pagealloc::{allocate_physpage, free_physpage};
+use crate::pagealloc::{allocate_physpage, free_physpage, usage_bytes};
+
+/// Set the current process's bss to `bss`, whose pages, from its start rounded
+/// up to its end, the caller has mapped.
+pub fn set_bss<A: ProcArch>(bss: VirtRange) {
+    assert!(bss.start <= bss.end, "set_bss: {bss} is reversed");
+    assert!(bss.end.is_multiple_of(PAGE_SIZE_4K), "set_bss: {bss} doesn't end on a page");
+    let up = A::up();
+    assert!(!up.is_null(), "set_bss: no current process");
+    // SAFETY: up is the running process, which is setting itself up.
+    unsafe { (*up).bss = Some(bss) };
+}
+
+/// Move the end of `bss` to `addr`, rounded up to a page, as Plan 9's ibrk.
+/// Growing maps zeroed pages, and shrinking unmaps and frees them.  An `addr`
+/// of 0 returns the bss's start.  On failure, nothing changes.
+pub(crate) fn ibrk<A: MMU>(bss: &mut Option<VirtRange>, addr: usize) -> crate::Result<u64> {
+    let Some(bss) = bss else {
+        return Err(EBADARG);
+    };
+    if addr == 0 {
+        return Ok(bss.start as u64);
+    }
+    if addr < bss.start {
+        return Err(ENOVMEM);
+    }
+    let Some(newtop) = addr.checked_next_multiple_of(PAGE_SIZE_4K) else {
+        return Err(ENOVMEM);
+    };
+    // There's one fixed stack, so this is the only other region to collide
+    // with.  An unmapped guard page is kept below it, so the stack can't run
+    // into the bss.  It also keeps newtop below UADDRTOP.
+    if newtop > A::USTKTOP - A::USTKSIZE - PAGE_SIZE_4K {
+        return Err(ESOVERLAP);
+    }
+    if newtop < bss.end {
+        unmap_and_free::<A>(VirtRange::new(newtop, bss.end));
+        bss.end = newtop;
+        return Ok(0);
+    }
+    // Fail at once, rather than allocating every free page first.
+    let (used, total) = usage_bytes();
+    if newtop - bss.end > total - used {
+        return Err(ENOVMEM);
+    }
+    match map_zeroed::<A>(VirtRange::new(bss.end, newtop)) {
+        Ok(()) => {
+            bss.end = newtop;
+            Ok(0)
+        }
+        Err(PutError::AlreadyMapped) => Err(ESOVERLAP),
+        Err(PutError::NoMemory) => Err(ENOVMEM),
+    }
+}
 
 /// Allocate, zero and map a data page for each 4KiB page in `range`, in the
 /// current user address space.  Each page is zeroed before it's mapped, so a
@@ -44,7 +98,39 @@ pub fn unmap_and_free<A: MMU>(range: VirtRange) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fake::{Fake, mapped};
+    use crate::fake::{Fake, USTKTOP, mapped};
+
+    const BASE: usize = 0x20000;
+
+    #[test]
+    fn ibrk_errors() {
+        let mut none = None;
+        assert_eq!(ibrk::<Fake>(&mut none, BASE), Err(EBADARG), "no bss");
+
+        let bss = VirtRange::new(BASE, BASE + PAGE_SIZE_4K);
+        let mut b = Some(bss);
+        assert_eq!(ibrk::<Fake>(&mut b, 0), Ok(BASE as u64));
+        assert_eq!(ibrk::<Fake>(&mut b, BASE - 1), Err(ENOVMEM), "below the bss");
+        let stack = USTKTOP - <Fake as MMU>::USTKSIZE;
+        assert_eq!(ibrk::<Fake>(&mut b, stack + 1), Err(ESOVERLAP), "into the stack");
+        let guard = stack - PAGE_SIZE_4K;
+        assert_eq!(ibrk::<Fake>(&mut b, guard + 1), Err(ESOVERLAP), "into the guard page");
+        assert_eq!(ibrk::<Fake>(&mut b, usize::MAX), Err(ENOVMEM), "overflow");
+        // The host page allocator has nothing free.
+        assert_eq!(ibrk::<Fake>(&mut b, BASE + 2 * PAGE_SIZE_4K), Err(ENOVMEM), "no memory");
+        assert_eq!(b, Some(bss));
+        assert!(mapped().is_empty());
+    }
+
+    #[test]
+    fn ibrk_within_the_last_page_changes_nothing() {
+        let bss = VirtRange::new(BASE, BASE + PAGE_SIZE_4K);
+        let mut b = Some(bss);
+        assert_eq!(ibrk::<Fake>(&mut b, BASE + 10), Ok(0));
+        assert_eq!(ibrk::<Fake>(&mut b, BASE + PAGE_SIZE_4K), Ok(0));
+        assert_eq!(b, Some(bss));
+        assert!(mapped().is_empty());
+    }
 
     #[test]
     fn map_zeroed_without_memory_leaves_nothing_mapped() {
