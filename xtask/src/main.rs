@@ -303,8 +303,11 @@ impl BuildStep {
     }
 
     fn run(self) -> Result<()> {
+        let user_bin = build_user(self.arch, self.profile, self.verbose)?;
+
         let mut cmd = Command::new(cargo());
         cmd.arg("build");
+        set_user_bin(&mut cmd, &user_bin);
 
         apply_to_build_step(
             &mut cmd,
@@ -317,6 +320,9 @@ impl BuildStep {
         cmd.current_dir(workspace());
         cmd.arg("--workspace");
         cmd.arg("--exclude").arg("xtask");
+        // The user crates are built by build_user: the kernel's target spec
+        // and linker script aren't for them.
+        exclude_user(&mut cmd);
         exclude_other_arches(self.arch, &mut cmd);
         if self.profile == Profile::Release {
             cmd.arg("--release");
@@ -598,8 +604,10 @@ impl ExpandStep {
     }
 
     fn run(self) -> Result<()> {
+        let user_bin = build_user(self.arch, self.profile, self.verbose)?;
         let mut cmd = Command::new(cargo());
         cmd.current_dir(workspace());
+        set_user_bin(&mut cmd, &user_bin);
         cmd.arg("rustc");
         cmd.arg("-Z").arg("build-std=core,alloc");
         cmd.arg("-Z").arg("json-target-spec");
@@ -637,8 +645,10 @@ impl KasmStep {
     }
 
     fn run(self) -> Result<()> {
+        let user_bin = build_user(self.arch, self.profile, self.verbose)?;
         let mut cmd = Command::new(cargo());
         cmd.current_dir(workspace());
+        set_user_bin(&mut cmd, &user_bin);
         cmd.arg("rustc");
         cmd.arg("-Z").arg("build-std=core,alloc");
         cmd.arg("-Z").arg("json-target-spec");
@@ -674,6 +684,9 @@ impl TestStep {
     }
 
     fn run(self) -> Result<()> {
+        // port's ELF tests, and the aarch64 kernel, embed user programs.
+        let user_bin = build_user(Arch::Aarch64, Profile::Debug, self.verbose)?;
+
         let mut all_cmd_args = Vec::new();
 
         all_cmd_args.push(vec![
@@ -700,6 +713,7 @@ impl TestStep {
         for cmd_args in all_cmd_args {
             let mut cmd = Command::new(cargo());
             cmd.current_dir(workspace());
+            set_user_bin(&mut cmd, &user_bin);
 
             cmd.args(cmd_args);
             if self.json_output {
@@ -736,14 +750,22 @@ impl ClippyStep {
     }
 
     fn run(self) -> Result<()> {
+        // The aarch64 kernel embeds user programs, so they're built first.
+        let user_bin = build_user(self.arch, self.profile, self.verbose)?;
+
         let mut cmd = Command::new(cargo());
         cmd.arg("clippy");
+        set_user_bin(&mut cmd, &user_bin);
 
         apply_to_clippy_step(&mut cmd, &self.config);
 
         cmd.current_dir(workspace());
         cmd.arg("--workspace");
         exclude_other_arches(self.arch, &mut cmd);
+        // The user crates are aarch64 programs, linted with the aarch64 kernel.
+        if self.arch != Arch::Aarch64 {
+            exclude_user(&mut cmd);
+        }
         if self.profile == Profile::Release {
             cmd.arg("--release");
         }
@@ -806,7 +828,22 @@ impl CheckStep {
                 "--tests".to_string(),
                 "--benches".to_string(),
             ],
+            vec![
+                "check".to_string(),
+                "--package".to_string(),
+                "r9-sys".to_string(),
+                "--lib".to_string(),
+            ],
         ];
+        let user_lib_cmd_args = USER_LIBS.map(|p| {
+            vec!["check".to_string(), "--package".to_string(), p.to_string(), "--lib".to_string()]
+        });
+        let user_program_cmd_args = USER_PROGRAMS.map(|p| {
+            vec!["check".to_string(), "--package".to_string(), p.to_string(), "--bins".to_string()]
+        });
+
+        // port's ELF tests, and the aarch64 kernel, embed user programs.
+        let user_bin = build_user(Arch::Aarch64, Profile::Debug, self.verbose)?;
 
         let rustup_state = RustupState::new();
 
@@ -832,8 +869,15 @@ impl CheckStep {
             ]);
         }
 
-        for cmd_args in [bins_lib_package_cmd_args, benches_tests_package_cmd_args].concat() {
+        let all_cmd_args = [
+            bins_lib_package_cmd_args,
+            user_lib_cmd_args.to_vec(),
+            user_program_cmd_args.to_vec(),
+            benches_tests_package_cmd_args,
+        ];
+        for cmd_args in all_cmd_args.concat() {
             let mut cmd = Command::new(cargo());
+            set_user_bin(&mut cmd, &user_bin);
             cmd.args(cmd_args);
             if self.json_output {
                 cmd.arg("--message-format=json").arg("--quiet");
@@ -873,6 +917,62 @@ impl CleanStep {
 
 fn workspace() -> PathBuf {
     Path::new(&env!("CARGO_MANIFEST_DIR")).ancestors().nth(1).unwrap().to_path_buf()
+}
+
+/// The user libraries and programs, which are aarch64-only.  The programs are
+/// what the kernel and port's tests embed.
+const USER_LIBS: [&str; 1] = ["r9-libc"];
+const USER_PROGRAMS: [&str; 1] = ["elftest"];
+
+/// The target user programs are built for.
+const USER_TARGET: &str = "aarch64-unknown-none";
+
+/// Build the user programs for `arch`, and return the directory they're in,
+/// or None if `arch` has none.  This must run before anything that embeds
+/// them is compiled, which finds them through R9_USER_BIN.
+fn build_user(arch: Arch, profile: Profile, verbose: bool) -> Result<Option<PathBuf>> {
+    if arch != Arch::Aarch64 {
+        return Ok(None);
+    }
+    let ld = workspace().join("user/lib/user.ld");
+    let mut cmd = Command::new(cargo());
+    cmd.current_dir(workspace());
+    cmd.arg("build");
+    for p in USER_PROGRAMS {
+        cmd.arg("--package").arg(p);
+    }
+    cmd.arg("--target").arg(USER_TARGET);
+    if profile == Profile::Release {
+        cmd.arg("--release");
+    }
+    // A static ET_EXEC image, laid out by the user linker script, with 4KiB
+    // pages rather than lld's aarch64 default of 64KiB.
+    cmd.arg("--config").arg(format!(
+        "build.rustflags=['-C', 'relocation-model=static', '-C', 'link-arg=-T{}', '-C', \
+         'link-arg=-zmax-page-size=4096']",
+        ld.display()
+    ));
+    if verbose {
+        println!("Executing {cmd:?}");
+    }
+    let status = annotated_status(&mut cmd)?;
+    if !status.success() {
+        return Err("build user programs failed".into());
+    }
+    Ok(Some(workspace().join("target").join(USER_TARGET).join(profile.dir())))
+}
+
+/// Tell `cmd`'s compiles where the user programs are.
+fn set_user_bin(cmd: &mut Command, user_bin: &Option<PathBuf>) {
+    if let Some(dir) = user_bin {
+        cmd.env("R9_USER_BIN", dir);
+    }
+}
+
+fn exclude_user(cmd: &mut Command) {
+    for c in USER_LIBS.iter().chain(&USER_PROGRAMS) {
+        cmd.arg("--exclude").arg(c);
+    }
 }
 
 /// Exclude architectures other than the one being built
