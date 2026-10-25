@@ -14,6 +14,7 @@ use core::{fmt, ptr, sync::atomic::Ordering};
 use core::{ptr::write_volatile, sync::atomic::AtomicUsize};
 use num_enum::{FromPrimitive, IntoPrimitive};
 use port::{
+    dat::Access,
     mem::{PAGE_SIZE_1G, PAGE_SIZE_2M, PAGE_SIZE_4K, PhysAddr, PhysRange, VirtRange},
     pagealloc::PageAllocError,
 };
@@ -814,6 +815,57 @@ fn write_barrier() {
     unsafe {
         core::arch::asm!("dsb ishst");
     }
+}
+
+/// Whether EL0 could make `access` to the page containing `va`, through the
+/// current address space.  AT S1E0R and AT S1E0W translate `va` with EL0's
+/// permissions, so the hardware applies the same rules as an EL0 access,
+/// blocks and the kernel half included, and PAR_EL1.F is set if it would
+/// fault.  The isb orders reading PAR_EL1 after the AT.  IRQs and FIQs are
+/// masked across the pair, as in Linux's mm/fault.c, since a handler that ran
+/// its own AT would overwrite PAR_EL1.  See the Arm ARM (DDI 0487) on the AT
+/// instructions and PAR_EL1.
+///
+/// Callers then access `va` directly, which needs PSTATE.PAN clear.  The
+/// Cortex-A72 is Armv8.0, without PAN.  On a core with PAN (Armv8.1),
+/// SCTLR_EL1.SPAN must be 1, or every exception to EL1 sets PAN.
+#[allow(unused_variables)]
+pub fn user_page_ok(va: usize, access: Access) -> bool {
+    #[cfg(not(test))]
+    {
+        let par: u64;
+        // SAFETY: AT only translates, and only PAR_EL1 and the masks, which
+        // are restored, change.
+        unsafe {
+            match access {
+                Access::Read => core::arch::asm!(
+                    "mrs {daif}, daif",
+                    "msr daifset, #3",
+                    "at s1e0r, {va}",
+                    "isb",
+                    "mrs {par}, par_el1",
+                    "msr daif, {daif}",
+                    va = in(reg) va,
+                    daif = out(reg) _,
+                    par = out(reg) par,
+                ),
+                Access::Write => core::arch::asm!(
+                    "mrs {daif}, daif",
+                    "msr daifset, #3",
+                    "at s1e0w, {va}",
+                    "isb",
+                    "mrs {par}, par_el1",
+                    "msr daif, {daif}",
+                    va = in(reg) va,
+                    daif = out(reg) _,
+                    par = out(reg) par,
+                ),
+            }
+        }
+        par & 1 == 0
+    }
+    #[cfg(test)]
+    false
 }
 
 /// Make instructions written at `va` visible to instruction fetch, through

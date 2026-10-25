@@ -102,6 +102,13 @@ pub struct Walkqid {
     _qids: [Qid],
 }
 
+/// A kind of access to memory.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Access {
+    Read,
+    Write,
+}
+
 /// The architecture's MMU, for port code.  Operations take the architecture's
 /// per-process MMU state, rather than a Proc, so that the trait and Proc don't
 /// depend on each other.  put, flush and flushva are placeholders, with no

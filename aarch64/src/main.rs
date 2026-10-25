@@ -228,11 +228,28 @@ fn test_user_start() {
     pagealloc::map_zeroed_user_pages("userstack", stack_range)
         .expect("couldn't allocate user stack");
 
+    test_user_access();
+
     // SAFETY: up is this process, which is running, and its context started
     // below the space to_user uses at the top of its stack.
     let kstack_top = unsafe { (*Arm64::up()).kstack().top() };
     // SAFETY: as above, and the text and stack were just mapped.
     unsafe { trap::to_user(kstack_top, UTZERO as u64, USTKTOP as u64) }
+}
+
+/// Check user_page_ok against the test process's mappings, which are
+/// active: text is read-only, the stack is read-write, and everything else,
+/// including the kernel and the recursive window, is inaccessible.
+fn test_user_access() {
+    use port::dat::Access::{Read, Write};
+    let ok = vm::user_page_ok;
+    assert!(ok(UTZERO, Read) && !ok(UTZERO, Write), "user text");
+    assert!(ok(USTKTOP - 1, Read) && ok(USTKTOP - USTKSIZE, Write), "user stack");
+    assert!(!ok(USTKTOP - USTKSIZE - 1, Read), "below the user stack");
+    assert!(!ok(0, Read), "null");
+    assert!(!ok(param::UADDRTOP, Read), "user recursive window");
+    assert!(!ok(param::KZERO, Read), "kernel");
+    println!("user access test: ok");
 }
 
 /// Write a page that's mapped nowhere else through one kmap, and read it back
