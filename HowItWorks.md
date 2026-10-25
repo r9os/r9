@@ -183,6 +183,8 @@ User programs use FP/SIMD freely: EL0 may (`CPACR_EL1.FPEN`), and `to_user` zero
 
 xtask builds the user programs before anything that embeds them, and passes their directory to those compiles in `R9_USER_BIN`. The kernel and `port`'s tests embed them with `include_bytes!(concat!(env!("R9_USER_BIN"), "/elftest"))`, so compiling either without xtask fails, rather than embedding a stale program. For an editor's rust-analyzer, set `R9_USER_BIN` to the directory a `cargo xtask build --arch aarch64` leaves them in, `target/aarch64-unknown-none/debug`, as an absolute path. The kernel's build steps exclude the user crates, which aren't for its target spec or linker script.
 
+`cargo xtask smoke --arch aarch64` boots r9 under QEMU and checks that echo runs: the output must have the lines `hello world` and `echo: exited`, and no panic. The kernel doesn't exit QEMU, so the smoke test stops it once echo has exited or the kernel has panicked, or after 60 seconds.
+
 ## port
 
 `port` is where all the shared subsytems are defined.
