@@ -3,6 +3,7 @@ use core::mem::{offset_of, size_of};
 
 use crate::proc::Arm64;
 use crate::reg::esr_el1::EsrEl1;
+use port::exec::UserRegs;
 use port::println;
 
 #[cfg(not(test))]
@@ -149,8 +150,9 @@ fn syscall(frame: &mut TrapFrame) {
     frame.x0 = port::syscall::syscall::<Arm64>(nr, args);
 }
 
-/// Enter EL0 at `entry` with the user stack pointer set to `user_sp`, and the
-/// user FP/SIMD state zeroed.
+/// Enter EL0 with `regs`: at its pc, with its stack pointer, and with x0 = argc
+/// and x1 = argv.  Every other register, and the user FP/SIMD state, is
+/// zeroed.
 ///
 /// A TrapFrame is built just below `kstack_top` and restored by trap_return.
 /// This leaves SP_EL1 at `kstack_top` while in EL0, so that is the stack
@@ -159,13 +161,15 @@ fn syscall(frame: &mut TrapFrame) {
 /// # Safety
 ///
 /// `kstack_top` must be the 16-byte aligned top of a kernel stack, and the
-/// TrapFrame below it must not be in use.  `entry` and `user_sp` must be mapped
-/// in the current user page table.
-pub unsafe fn to_user(kstack_top: usize, entry: u64, user_sp: u64) -> ! {
+/// TrapFrame below it must not be in use.  The pc and stack must be mapped in
+/// the current user page table.
+pub unsafe fn to_user(kstack_top: usize, regs: &UserRegs) -> ! {
     let frame = (kstack_top - size_of::<TrapFrame>()) as *mut TrapFrame;
     let mut tf: TrapFrame = unsafe { core::mem::zeroed() };
-    tf.elr_el1 = entry;
-    tf.sp_el0 = user_sp;
+    tf.elr_el1 = regs.pc as u64;
+    tf.sp_el0 = regs.sp as u64;
+    tf.x0 = regs.argc as u64;
+    tf.x1 = regs.argv as u64;
     tf.spsr_el1 = SPSR_EL0T_MASKED;
     unsafe { frame.write(tf) };
 

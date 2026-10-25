@@ -37,6 +37,7 @@ use core::cell::SyncUnsafeCell;
 use core::hint::black_box;
 use param::{USTKSIZE, USTKTOP, UTZERO};
 use port::dat::{MMU, Perm, ProcArch, PutError};
+use port::exec::UserRegs;
 use port::fdt::DeviceTree;
 use port::mem::{PAGE_SIZE_4K, PhysAddr, PhysRange, VirtRange};
 use port::println;
@@ -283,6 +284,35 @@ core::arch::global_asm!(
     ".balign 8",
     "1: .quad {UNMAPPED}",
     "usertest_badbuf_end:",
+    // Started with argv ["argv", "ok\n"]: x0 is 2, argv[2] is null, and sp is
+    // 16-byte aligned and below argv.  pwrite argv[1], then exits(nil), or
+    // exits("argv") if any of that didn't happen.
+    ".balign 8",
+    "usertest_argv:",
+    "   cmp x0, #2",
+    "   b.ne 1f",
+    "   ldr x2, [x1, #16]",
+    "   cbnz x2, 1f",
+    "   mov x3, sp",
+    "   tst x3, #15",
+    "   b.ne 1f",
+    "   cmp x3, x1",
+    "   b.hi 1f",
+    "   ldr x1, [x1, #8]",
+    "   mov x0, #1",
+    "   mov x2, #3",
+    "   mov x3, #-1",
+    "   mov x8, #{PWRITE}",
+    "   svc #0",
+    "   cmp x0, #3",
+    "   b.ne 1f",
+    "   mov x0, #0",
+    "   b 2f",
+    "1: adr x0, 3f",
+    "2: mov x8, #{EXITS}",
+    "   svc #0",
+    "3: .asciz \"argv\"",
+    "usertest_argv_end:",
     // brk_(0) returns the bss's start.  brk_ to just past its second page
     // returns 0, and both pages keep what's stored in every word.  Shrinking
     // frees them, and growing again gets pages that read zero in every word,
@@ -490,6 +520,7 @@ fn test_user_processes() {
             start: || run_user(usertext!(usertest_brkmem, usertest_brkmem_end)),
             status: b"",
         },
+        UserTest { name: "argv", start: argv_start, status: b"" },
         UserTest { name: "elf", start: elf_start, status: b"" },
     ];
     let mut first_kstack_top = None;
@@ -510,25 +541,35 @@ fn test_user_processes() {
 fn sysr1_start() {
     load_user(usertext!(usertest_sysr1, usertest_sysr1_end));
     test_user_access();
-    enter_user(UTZERO)
+    enter_user(UserRegs { pc: UTZERO, sp: USTKTOP, argc: 0, argv: 0 })
 }
 
 fn run_user(text: &[u8]) -> ! {
     load_user(text);
-    enter_user(UTZERO)
+    enter_user(UserRegs { pc: UTZERO, sp: USTKTOP, argc: 0, argv: 0 })
+}
+
+/// The argv test program's start: its arguments are pushed onto its stack.
+fn argv_start() {
+    load_user(usertext!(usertest_argv, usertest_argv_end));
+    let regs = match port::exec::push_args::<Arm64>(UTZERO, USTKTOP, &[b"argv", b"ok\n"]) {
+        Ok(regs) => regs,
+        Err(err) => port::proc::pexit::<Arm64>(err.as_bytes()),
+    };
+    enter_user(regs)
 }
 
 /// The ELF loader's test program (see port/lib/test/elf).
 static HELLO_ELF: &[u8] = include_bytes!("../../port/lib/test/elf/hello.elf");
 
-/// Load HELLO_ELF, check its segments' permissions, and enter it.  Its
+/// Exec HELLO_ELF, check its segments' permissions, and enter it.  Its
 /// layout is set by hello.ld: a page of text, a page of rodata, then two
 /// pages of data, followed by a bss that runs onto a third.
 fn elf_start() {
     use port::dat::Access::{Read, Write};
     dirty_free_pages();
-    let entry = match port::exec::load::<Arm64>(HELLO_ELF) {
-        Ok(entry) => entry,
+    let regs = match port::exec::exec::<Arm64>(HELLO_ELF, &[b"hello"]) {
+        Ok(regs) => regs,
         Err(err) => port::proc::pexit::<Arm64>(err.as_bytes()),
     };
     let ok = vm::user_page_ok;
@@ -537,8 +578,8 @@ fn elf_start() {
     assert!(ok(0x12000, Write) && ok(0x13000, Write), "elf data");
     assert!(ok(0x14000, Write), "elf bss");
     assert!(!ok(0x15000, Read), "above the elf bss");
-    map_stack();
-    enter_user(entry)
+    assert!(ok(USTKTOP - 1, Write) && ok(USTKTOP - USTKSIZE, Write), "elf stack");
+    enter_user(regs)
 }
 
 /// The test processes' bss starts, empty, at the page after their text.
@@ -589,13 +630,13 @@ fn map_stack() {
     segment::map_zeroed::<Arm64>(stack_range).expect("couldn't allocate user stack");
 }
 
-/// Enter the current process at `entry`, with its stack at USTKTOP.
-fn enter_user(entry: usize) -> ! {
+/// Enter the current process with `regs`.
+fn enter_user(regs: UserRegs) -> ! {
     // SAFETY: up is this process, which is running, and its context started
     // below the space to_user uses at the top of its stack.
     let kstack_top = unsafe { (*Arm64::up()).kstack().top() };
     // SAFETY: as above, and the caller mapped the text and stack.
-    unsafe { trap::to_user(kstack_top, entry as u64, USTKTOP as u64) }
+    unsafe { trap::to_user(kstack_top, &regs) }
 }
 
 /// Check user_page_ok against the test process's mappings, which are
