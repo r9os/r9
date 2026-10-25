@@ -559,26 +559,33 @@ fn argv_start() {
     enter_user(regs)
 }
 
-/// The ELF loader's test program (see port/lib/test/elf).
-static HELLO_ELF: &[u8] = include_bytes!("../../port/lib/test/elf/hello.elf");
+/// The ELF loader's test program, built by xtask (user/elftest).
+static ELFTEST: &[u8] = include_bytes!(concat!(env!("R9_USER_BIN"), "/elftest"));
 
-/// Exec HELLO_ELF, check its segments' permissions, and enter it.  Its
-/// layout is set by hello.ld: a page of text, a page of rodata, then two
-/// pages of data, followed by a bss that runs onto a third.
+/// Exec ELFTEST with its expected arguments, check that every page of each
+/// of its segments has its permissions, and enter it.
 fn elf_start() {
-    use port::dat::Access::{Read, Write};
+    use port::dat::{
+        Access::{Read, Write},
+        Perm,
+    };
     dirty_free_pages();
-    let regs = match port::exec::exec::<Arm64>(HELLO_ELF, &[b"hello"]) {
+    let regs = match port::exec::exec::<Arm64>(ELFTEST, &[b"elftest", b"ok"]) {
         Ok(regs) => regs,
         Err(err) => port::proc::pexit::<Arm64>(err.as_bytes()),
     };
     let ok = vm::user_page_ok;
-    assert!(ok(0x10000, Read) && !ok(0x10000, Write), "elf text");
-    assert!(ok(0x11000, Read) && !ok(0x11000, Write), "elf rodata");
-    assert!(ok(0x12000, Write) && ok(0x13000, Write), "elf data");
-    assert!(ok(0x14000, Write), "elf bss");
-    assert!(!ok(0x15000, Read), "above the elf bss");
-    assert!(ok(USTKTOP - 1, Write) && ok(USTKTOP - USTKSIZE, Write), "elf stack");
+    let elf = port::elf::parse(ELFTEST).expect("elftest didn't parse");
+    let mut end = 0;
+    for seg in elf.segments() {
+        end = (seg.vaddr + seg.memsz).next_multiple_of(PAGE_SIZE_4K);
+        for va in (seg.vaddr & !(PAGE_SIZE_4K - 1)..end).step_by(PAGE_SIZE_4K) {
+            let writable = seg.perm == Perm::Data;
+            assert!(ok(va, Read) && ok(va, Write) == writable, "elftest {:?} at {va:#x}", seg.perm);
+        }
+    }
+    assert!(!ok(end, Read), "above elftest's bss");
+    assert!(ok(USTKTOP - 1, Write) && ok(USTKTOP - USTKSIZE, Write), "elftest's stack");
     enter_user(regs)
 }
 
@@ -604,12 +611,12 @@ fn load_user(text: &[u8]) {
 }
 
 /// Fill some free pages with ones, so a loader that doesn't zero what it maps
-/// is caught.  The page allocator is next fit, and freeing a page moves its
+/// is caught.  There are enough for every page and page table elftest needs.  The page allocator is next fit, and freeing a page moves its
 /// cursor there (BitmapPageAlloc::deallocate), so freeing these last first
 /// makes them the next it hands out.  That's checked here, so the test can't
 /// silently stop working if the allocator changes.
 fn dirty_free_pages() {
-    let mut pages = [PhysAddr::new(0); 8];
+    let mut pages = [PhysAddr::new(0); 32];
     for pa in &mut pages {
         *pa = port::pagealloc::allocate_physpage().expect("couldn't allocate a page");
         let k = kmap::kmap(*pa);
