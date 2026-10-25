@@ -1,0 +1,13 @@
+cargo-features = ["per-package-target"]
+
+[package]
+name = "r9-libc"
+version = "0.1.0"
+edition = "2024"
+default-target = "aarch64-unknown-none"
+
+[lib]
+name = "libc"
+
+[dependencies]
+r9-sys = { path = "../../sys" }

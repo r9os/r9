@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["aarch64", "x86_64", "port", "riscv64", "sys", "xtask"]
+members = ["aarch64", "x86_64", "port", "riscv64", "sys", "user/elftest", "user/libc", "xtask"]
 
 [profile.dev]
 panic = "abort"
