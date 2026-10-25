@@ -1,9 +1,10 @@
 //! A fake architecture for host tests.  It records the address spaces and
-//! kernel stacks it hands out and takes back, and has user memory with
-//! per-page permissions.  Tests run in parallel threads, so its state is per
-//! thread.
+//! kernel stacks it hands out and takes back, has user memory with per-page
+//! permissions, and a console that records what's written to it.  Tests run in
+//! parallel threads, so its state is per thread.
 
 use crate::dat::{Access, MMU, Proc, ProcArch};
+use crate::devcons::{Console, Uart};
 use crate::mem::{PAGE_SIZE_4K, PhysAddr};
 use crate::pagealloc::PageAllocError;
 use std::cell::{Cell, RefCell};
@@ -23,6 +24,28 @@ thread_local! {
     /// The user pages: each page's base, and the access it allows (Read
     /// allows reading only, Write allows both).
     static PAGES: RefCell<Vec<(usize, Access)>> = const { RefCell::new(Vec::new()) };
+    static CONS_OUT: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+}
+
+/// A UART that appends to the writing thread's CONS_OUT.
+struct FakeUart;
+
+impl Uart for FakeUart {
+    fn putb(&self, b: u8) {
+        CONS_OUT.with(|o| o.borrow_mut().push(b));
+    }
+}
+
+/// Make the console FakeUart, and clear this thread's output.  The console is
+/// shared by every thread, but each thread's output is its own.
+pub(crate) fn fake_cons() {
+    Console::set_uart(|| Ok(Box::leak(Box::new(FakeUart))));
+    CONS_OUT.with(|o| o.borrow_mut().clear());
+}
+
+/// What this thread has written to the console since the last call.
+pub(crate) fn cons_output() -> Vec<u8> {
+    CONS_OUT.with(|o| core::mem::take(&mut *o.borrow_mut()))
 }
 
 fn next() -> u32 {

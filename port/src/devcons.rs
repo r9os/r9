@@ -38,14 +38,18 @@ impl Console {
     }
 
     pub fn putstr(&mut self, s: &str) {
-        // XXX: Just for testing.
+        putstrn(s.as_bytes());
+    }
+}
 
-        let node = LockNode::new();
-        let mut uart_guard = CONS.lock(&node);
-        if let Some(uart) = uart_guard.as_deref_mut() {
-            for b in s.bytes() {
-                putb(uart, b);
-            }
+/// Write `s` to the console, as Plan 9's putstrn.  It's bytes rather than a
+/// str, since user output needn't be UTF-8.
+pub fn putstrn(s: &[u8]) {
+    let node = LockNode::new();
+    let mut uart_guard = CONS.lock(&node);
+    if let Some(uart) = uart_guard.as_deref_mut() {
+        for &b in s {
+            putb(uart, b);
         }
     }
 }
