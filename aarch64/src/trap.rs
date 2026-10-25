@@ -141,17 +141,13 @@ fn trap(frame: &mut TrapFrame) {
     panic!("Unhandled exception from EL{}", frame.exception_level());
 }
 
-/// Placeholder until there's a real syscall table.  Syscall 3 halts, and any
-/// other returns x0 + 1, so that the round trip through EL1 can be checked.
+/// Take the syscall number from x8 and its arguments from x0-x5, and return
+/// the result in x0, as Linux does on arm64.  The svc immediate is ignored.
 fn syscall(frame: &mut TrapFrame) {
-    let syscallid = frame.esr_el1.iss();
-    println!("Syscall {syscallid} from EL{}: x0={:#x}", frame.exception_level(), frame.x0);
-
-    if syscallid == 3 {
-        port::proc::pexit::<Arm64>(alloc::format!("{}", frame.x0).as_bytes());
-    }
-
-    frame.x0 += 1;
+    let nr = frame.x8;
+    println!("Syscall {nr} from EL{}: x0={:#x}", frame.exception_level(), frame.x0);
+    let args = [frame.x0, frame.x1, frame.x2, frame.x3, frame.x4, frame.x5];
+    frame.x0 = port::syscall::syscall::<Arm64>(nr, args);
 }
 
 /// Enter EL0 at `entry` with the user stack pointer set to `user_sp`, and the

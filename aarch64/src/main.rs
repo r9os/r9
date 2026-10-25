@@ -172,44 +172,95 @@ pub extern "C" fn main9(dtb_va: usize) {
     test_kmap();
     test_swtch();
     test_release();
-    test_user_process();
+    test_user_processes();
 }
 
 mod runtime;
 
-/// User text for test_user_process:
-///   20 05 80 D2    ; mov x0, #41
-///   01 00 00 D4    ; svc #0        (returns x0 + 1)
-///   61 00 00 D4    ; svc #3        (exit with x0)
-const TEST_USER_TEXT: [u32; 3] = [0xd280_0520, 0xd400_0001, 0xd400_0061];
+// Test programs for test_user_processes.  Each is copied to UTZERO from
+// between its start and end labels, so it must be position-independent, and
+// starts 8-byte aligned so its literals stay aligned.  The syscall ABI is
+// svc #0, with the number in x8, arguments in x0-x5, and the result in x0.
+#[cfg(not(test))]
+core::arch::global_asm!(
+    ".section .rodata.usertest, \"a\"",
+    // SYSR1 returns 0, then exits(nil), or exits("sysr1") if it didn't.
+    ".balign 8",
+    "usertest_sysr1:",
+    "   mov x0, #41",
+    "   mov x8, #{SYSR1}",
+    "   svc #0",
+    "   cbnz x0, 1f",
+    "   mov x0, #0",
+    "   b 2f",
+    "1: adr x0, 3f",
+    "2: mov x8, #{EXITS}",
+    "   svc #0",
+    "3: .asciz \"sysr1\"",
+    "usertest_sysr1_end:",
+    SYSR1 = const port::syscall::SYSR1,
+    EXITS = const port::syscall::EXITS,
+);
 
-/// Run a process that makes a syscall and exits with its result, twice,
-/// checking that each run frees everything it allocated, so the second reuses
-/// the first's kernel stack.
-fn test_user_process() {
+/// The text of the test program between labels `$start` and `$end`.
+macro_rules! usertext {
+    ($start:ident, $end:ident) => {{
+        unsafe extern "C" {
+            static $start: [u8; 0];
+            static $end: [u8; 0];
+        }
+        // SAFETY: the labels bound one program in .rodata.usertest.
+        unsafe {
+            let start = $start.as_ptr();
+            core::slice::from_raw_parts(start, $end.as_ptr().addr() - start.addr())
+        }
+    }};
+}
+
+/// A test process: its start function, and the status it should exit with.
+struct UserTest {
+    name: &'static str,
+    start: fn(),
+    status: &'static [u8],
+}
+
+/// Run each test process, checking its exit status, that it freed everything
+/// it allocated, and that it reused the first's kernel stack.
+fn test_user_processes() {
+    let tests = [UserTest { name: "sysr1", start: sysr1_start, status: b"" }];
     let mut first_kstack_top = None;
-    for i in 0..2 {
+    for UserTest { name, start, status } in tests {
         let (used_before, _) = port::pagealloc::usage_bytes();
-        let p = port::proc::newproc::<Arm64>(test_user_start).expect("couldn't create process");
+        let p = port::proc::newproc::<Arm64>(start).expect("couldn't create process");
         let kstack_top = p.kstack().top();
         assert_eq!(*first_kstack_top.get_or_insert(kstack_top), kstack_top);
-        println!("Executing user process {i}");
-        assert_eq!(port::proc::run(p), b"42");
-        assert_eq!(port::pagealloc::usage_bytes().0, used_before);
+        println!("Executing user process: {name}");
+        assert_eq!(port::proc::run(p), status, "{name}");
+        assert_eq!(port::pagealloc::usage_bytes().0, used_before, "{name}");
     }
     println!("user process test: ok");
 }
 
-/// The test process's start: load TEST_USER_TEXT and enter it.
-fn test_user_start() {
+/// The first test program's start, which also checks the user access checks
+/// against its mappings.
+fn sysr1_start() {
+    load_user(usertext!(usertest_sysr1, usertest_sysr1_end));
+    test_user_access();
+    enter_user()
+}
+
+/// Map `text` at UTZERO, and a zeroed stack below USTKTOP, in the current
+/// process.
+fn load_user(text: &[u8]) {
+    assert!(text.len() <= PAGE_SIZE_4K, "user text too big");
     let text_pa = port::pagealloc::allocate_physpage().expect("couldn't allocate user text");
     {
         let k = kmap::kmap(text_pa);
         // SAFETY: kmaps the whole of the newly allocated page, which nothing
         // else refers to.
-        let page = unsafe { core::slice::from_raw_parts_mut(k.va() as *mut u32, PAGE_SIZE_4K / 4) };
+        let page = unsafe { core::slice::from_raw_parts_mut(k.va() as *mut u8, PAGE_SIZE_4K) };
         page.fill(0);
-        page[..TEST_USER_TEXT.len()].copy_from_slice(&TEST_USER_TEXT);
+        page[..text.len()].copy_from_slice(text);
         vm::sync_icache(k.va(), PAGE_SIZE_4K);
     }
     vm::map_phys_range(
@@ -227,13 +278,15 @@ fn test_user_start() {
     let stack_range = VirtRange::new(USTKTOP - USTKSIZE, USTKTOP);
     pagealloc::map_zeroed_user_pages("userstack", stack_range)
         .expect("couldn't allocate user stack");
+}
 
-    test_user_access();
-
+/// Enter the current process's user text at UTZERO, with its stack at
+/// USTKTOP.
+fn enter_user() -> ! {
     // SAFETY: up is this process, which is running, and its context started
     // below the space to_user uses at the top of its stack.
     let kstack_top = unsafe { (*Arm64::up()).kstack().top() };
-    // SAFETY: as above, and the text and stack were just mapped.
+    // SAFETY: as above, and load_user mapped the text and stack.
     unsafe { trap::to_user(kstack_top, UTZERO as u64, USTKTOP as u64) }
 }
 
