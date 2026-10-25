@@ -194,7 +194,7 @@ fn test_user_process() {
         let kstack_top = p.kstack().top();
         assert_eq!(*first_kstack_top.get_or_insert(kstack_top), kstack_top);
         println!("Executing user process {i}");
-        assert_eq!(port::proc::run(p), 42);
+        assert_eq!(port::proc::run(p), b"42");
         assert_eq!(port::pagealloc::usage_bytes().0, used_before);
     }
     println!("user process test: ok");

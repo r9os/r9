@@ -2,6 +2,7 @@
 //! process is run to completion from the scheduler context, and reaped there
 //! when it exits.
 
+use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::dat::{Proc, ProcArch};
@@ -32,11 +33,11 @@ pub fn newproc<A: ProcArch>(start: fn()) -> Result<Proc<A>, NewprocError> {
     };
     let label = A::new_context(proc_start::<A>, &kstack);
     let pid = NEXT_PID.fetch_add(1, Ordering::Relaxed);
-    Ok(Proc { pid, start, pmmu, kstack, label, exit_status: None })
+    Ok(Proc { pid, start, pmmu, kstack, label, exit_status: Vec::new() })
 }
 
 /// Run `p` until it exits, then reap it and return its exit status.
-pub fn run<A: ProcArch>(mut p: Proc<A>) -> u64 {
+pub fn run<A: ProcArch>(mut p: Proc<A>) -> Vec<u8> {
     let up: *mut Proc<A> = &mut p;
     A::set_up(up);
     // SAFETY: the scheduler context is this CPU's, and p's label was made by
@@ -51,12 +52,12 @@ pub fn run<A: ProcArch>(mut p: Proc<A>) -> u64 {
 
 /// Exit the current process with `status`, switching back to the scheduler
 /// context, which reaps it.
-pub fn pexit<A: ProcArch>(status: u64) -> ! {
+pub fn pexit<A: ProcArch>(status: &[u8]) -> ! {
     let up = A::up();
     assert!(!up.is_null(), "pexit: no current process");
     // SAFETY: up is the running process, set by run.
     unsafe {
-        (*up).exit_status = Some(status);
+        (*up).exit_status = status.to_vec();
         A::swtch(&mut (*up).label, A::sched());
     }
     unreachable!("pexit: an exited process was resumed")
@@ -73,7 +74,7 @@ extern "C" fn proc_start<A: ProcArch>() -> ! {
         (*up).start
     };
     start();
-    pexit::<A>(u64::MAX)
+    pexit::<A>(b"start returned")
 }
 
 /// Free everything an exited process holds, and return its exit status.  A
@@ -84,7 +85,7 @@ extern "C" fn proc_start<A: ProcArch>() -> ! {
 ///
 /// Nothing may still run on `p`'s kernel stack, or refer to memory through its
 /// address space.
-pub(crate) unsafe fn reap<A: ProcArch>(p: Proc<A>) -> u64 {
+pub(crate) unsafe fn reap<A: ProcArch>(p: Proc<A>) -> Vec<u8> {
     let Proc { pmmu, kstack, exit_status, .. } = p;
     // SAFETY: the caller guarantees nothing uses the address space or the
     // stack.
@@ -92,7 +93,7 @@ pub(crate) unsafe fn reap<A: ProcArch>(p: Proc<A>) -> u64 {
         A::release(pmmu, |pa| free_physpage(pa).expect("reap: couldn't free a process page"));
         A::kstack_free(kstack);
     }
-    exit_status.unwrap_or(u64::MAX)
+    exit_status
 }
 
 #[cfg(test)]
@@ -190,9 +191,9 @@ mod tests {
         assert_eq!(held(), (2, 2));
 
         let mut p = p;
-        p.exit_status = Some(7);
+        p.exit_status = b"bye".to_vec();
         // SAFETY: nothing runs in the fake process.
-        assert_eq!(unsafe { reap(p) }, 7);
+        assert_eq!(unsafe { reap(p) }, b"bye");
         // SAFETY: as above.
         unsafe { reap(q) };
         assert_eq!(held(), (0, 0));

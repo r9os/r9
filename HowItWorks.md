@@ -44,7 +44,7 @@ We're now in rust, in `main9`, and at a high level we:
 
 The kernel is built softfloat (see `lib/aarch64-unknown-none-elf.json`), so it never uses the FP/SIMD registers and exception entry doesn't need to save them. `to_user` zeroes the user FP/SIMD state, so one process can't read another's. It will need saving once processes are switched between.
 
-IRQs, FIQs, SErrors and debug exceptions are masked in both EL1 and EL0 until we have a use for them. Syscalls are currently placeholders: the `svc` immediate is the syscall number, syscall 3 exits the process with status x0 (`pexit`), and any other returns x0 + 1.
+IRQs, FIQs, SErrors and debug exceptions are masked in both EL1 and EL0 until we have a use for them. Syscalls are currently placeholders: the `svc` immediate is the syscall number, syscall 3 exits the process (`pexit`) with x0, in decimal, as its status, and any other returns x0 + 1. A status is a byte string, and empty means success, as in Plan 9.
 
 ### Kernel context switching
 
