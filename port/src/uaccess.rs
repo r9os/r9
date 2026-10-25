@@ -46,6 +46,15 @@ pub fn copy_from_user<A: ProcArch>(dst: &mut [u8], src: usize) {
     unsafe { core::ptr::copy_nonoverlapping(src as *const u8, dst.as_mut_ptr(), dst.len()) };
 }
 
+/// Copy `src` to user address `dst`, or kill the current process if it can't
+/// all be written.
+pub fn copy_to_user<A: ProcArch>(dst: usize, src: &[u8]) {
+    validate_user_range::<A>(dst, src.len(), Access::Write);
+    // SAFETY: the whole range is mapped writable, and stays so until the
+    // caller returns.  src is kernel memory, so they don't overlap.
+    unsafe { core::ptr::copy_nonoverlapping(src.as_ptr(), dst as *mut u8, src.len()) };
+}
+
 /// Copy the NUL-terminated string at user address `src` into `dst`, without
 /// its NUL, as Linux's strncpy_from_user.  Return its length, or `dst.len()` if
 /// there's no NUL within `dst.len()` bytes, in which case it's truncated.
@@ -107,6 +116,17 @@ mod tests {
         let mut buf = [0; 4];
         copy_from_user::<Fake>(&mut buf, base + PAGE_SIZE_4K - 2);
         assert_eq!(&buf, b"abcd");
+    }
+
+    #[test]
+    fn copy_to_user_copies() {
+        let mut mem = user_mem();
+        let base = mem.0.as_mut_ptr() as usize;
+        copy_to_user::<Fake>(base + 8, b"abcd");
+        copy_to_user::<Fake>(base + PAGE_SIZE_4K - 2, b"ef");
+        copy_to_user::<Fake>(base, b"");
+        assert_eq!(&mem.0[8..12], b"abcd");
+        assert_eq!(&mem.0[PAGE_SIZE_4K - 2..PAGE_SIZE_4K], b"ef", "up to a read-only page");
     }
 
     #[test]
