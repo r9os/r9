@@ -38,7 +38,7 @@ use core::hint::black_box;
 use param::{USTKSIZE, USTKTOP, UTZERO};
 use port::dat::{MMU, Perm, ProcArch, PutError};
 use port::fdt::DeviceTree;
-use port::mem::{PAGE_SIZE_4K, PhysRange, VirtRange};
+use port::mem::{PAGE_SIZE_4K, PhysAddr, PhysRange, VirtRange};
 use port::println;
 use port::segment;
 use proc::Arm64;
@@ -490,6 +490,7 @@ fn test_user_processes() {
             start: || run_user(usertext!(usertest_brkmem, usertest_brkmem_end)),
             status: b"",
         },
+        UserTest { name: "elf", start: elf_start, status: b"" },
     ];
     let mut first_kstack_top = None;
     for UserTest { name, start, status } in tests {
@@ -509,12 +510,35 @@ fn test_user_processes() {
 fn sysr1_start() {
     load_user(usertext!(usertest_sysr1, usertest_sysr1_end));
     test_user_access();
-    enter_user()
+    enter_user(UTZERO)
 }
 
 fn run_user(text: &[u8]) -> ! {
     load_user(text);
-    enter_user()
+    enter_user(UTZERO)
+}
+
+/// The ELF loader's test program (see port/lib/test/elf).
+static HELLO_ELF: &[u8] = include_bytes!("../../port/lib/test/elf/hello.elf");
+
+/// Load HELLO_ELF, check its segments' permissions, and enter it.  Its
+/// layout is set by hello.ld: a page of text, a page of rodata, then two
+/// pages of data, followed by a bss that runs onto a third.
+fn elf_start() {
+    use port::dat::Access::{Read, Write};
+    dirty_free_pages();
+    let entry = match port::exec::load::<Arm64>(HELLO_ELF) {
+        Ok(entry) => entry,
+        Err(err) => port::proc::pexit::<Arm64>(err.as_bytes()),
+    };
+    let ok = vm::user_page_ok;
+    assert!(ok(0x10000, Read) && !ok(0x10000, Write), "elf text");
+    assert!(ok(0x11000, Read) && !ok(0x11000, Write), "elf rodata");
+    assert!(ok(0x12000, Write) && ok(0x13000, Write), "elf data");
+    assert!(ok(0x14000, Write), "elf bss");
+    assert!(!ok(0x15000, Read), "above the elf bss");
+    map_stack();
+    enter_user(entry)
 }
 
 /// The test processes' bss starts, empty, at the page after their text.
@@ -534,20 +558,44 @@ fn load_user(text: &[u8]) {
         page[..text.len()].copy_from_slice(text);
     }
     Arm64::put(UTZERO, text_pa, Perm::Text).expect("couldn't map user text");
-
-    let stack_range = VirtRange::new(USTKTOP - USTKSIZE, USTKTOP);
-    segment::map_zeroed::<Arm64>(stack_range).expect("couldn't allocate user stack");
+    map_stack();
     segment::set_bss::<Arm64>(VirtRange::new(BSS, BSS));
 }
 
-/// Enter the current process's user text at UTZERO, with its stack at
-/// USTKTOP.
-fn enter_user() -> ! {
+/// Fill some free pages with ones, so a loader that doesn't zero what it maps
+/// is caught.  The page allocator is next fit, and freeing a page moves its
+/// cursor there (BitmapPageAlloc::deallocate), so freeing these last first
+/// makes them the next it hands out.  That's checked here, so the test can't
+/// silently stop working if the allocator changes.
+fn dirty_free_pages() {
+    let mut pages = [PhysAddr::new(0); 8];
+    for pa in &mut pages {
+        *pa = port::pagealloc::allocate_physpage().expect("couldn't allocate a page");
+        let k = kmap::kmap(*pa);
+        // SAFETY: kmaps the whole of the newly allocated page.
+        unsafe { core::ptr::write_bytes(k.va() as *mut u8, 0xff, PAGE_SIZE_4K) };
+    }
+    for pa in pages.into_iter().rev() {
+        port::pagealloc::free_physpage(pa).expect("couldn't free a page");
+    }
+    let next = port::pagealloc::allocate_physpage().expect("couldn't allocate a page");
+    assert_eq!(next, pages[0], "the next page allocated isn't a dirtied one");
+    port::pagealloc::free_physpage(next).expect("couldn't free a page");
+}
+
+/// Map a zeroed stack below USTKTOP in the current process.
+fn map_stack() {
+    let stack_range = VirtRange::new(USTKTOP - USTKSIZE, USTKTOP);
+    segment::map_zeroed::<Arm64>(stack_range).expect("couldn't allocate user stack");
+}
+
+/// Enter the current process at `entry`, with its stack at USTKTOP.
+fn enter_user(entry: usize) -> ! {
     // SAFETY: up is this process, which is running, and its context started
     // below the space to_user uses at the top of its stack.
     let kstack_top = unsafe { (*Arm64::up()).kstack().top() };
-    // SAFETY: as above, and load_user mapped the text and stack.
-    unsafe { trap::to_user(kstack_top, UTZERO as u64, USTKTOP as u64) }
+    // SAFETY: as above, and the caller mapped the text and stack.
+    unsafe { trap::to_user(kstack_top, entry as u64, USTKTOP as u64) }
 }
 
 /// Check user_page_ok against the test process's mappings, which are
