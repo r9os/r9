@@ -32,6 +32,10 @@ impl MMU for Arm64 {
     }
 
     fn put(va: usize, pa: PhysAddr, perm: Perm) -> Result<(), PutError> {
+        if perm == Perm::Text {
+            let k = kmap(pa);
+            vm::sync_icache(k.va(), PAGE_SIZE_4K);
+        }
         let entry = match perm {
             Perm::Text => Entry::ro_user_text(),
             Perm::Rodata => Entry::ro_user_data(),

@@ -532,7 +532,6 @@ fn load_user(text: &[u8]) {
         let page = unsafe { core::slice::from_raw_parts_mut(k.va() as *mut u8, PAGE_SIZE_4K) };
         page.fill(0);
         page[..text.len()].copy_from_slice(text);
-        vm::sync_icache(k.va(), PAGE_SIZE_4K);
     }
     Arm64::put(UTZERO, text_pa, Perm::Text).expect("couldn't map user text");
 
