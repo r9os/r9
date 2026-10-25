@@ -34,6 +34,7 @@ impl MMU for Arm64 {
     fn put(va: usize, pa: PhysAddr, perm: Perm) -> Result<(), PutError> {
         let entry = match perm {
             Perm::Text => Entry::ro_user_text(),
+            Perm::Rodata => Entry::ro_user_data(),
             Perm::Data => Entry::rw_user_data(),
         };
         let mapped = vm::map_phys_range(
