@@ -198,8 +198,42 @@ core::arch::global_asm!(
     "   svc #0",
     "3: .asciz \"sysr1\"",
     "usertest_sysr1_end:",
+    // exits("bye")
+    ".balign 8",
+    "usertest_bye:",
+    "   adr x0, 1f",
+    "   mov x8, #{EXITS}",
+    "   svc #0",
+    "1: .asciz \"bye\"",
+    "usertest_bye_end:",
+    // An unknown syscall.
+    ".balign 8",
+    "usertest_badsys:",
+    "   mov x8, #9999",
+    "   svc #0",
+    "usertest_badsys_end:",
+    // exits with an unmapped user address, the page after the text.
+    ".balign 8",
+    "usertest_unmapped:",
+    "   ldr x0, 1f",
+    "   mov x8, #{EXITS}",
+    "   svc #0",
+    ".balign 8",
+    "1: .quad {UNMAPPED}",
+    "usertest_unmapped_end:",
+    // exits with a kernel address.
+    ".balign 8",
+    "usertest_kernel:",
+    "   ldr x0, 1f",
+    "   mov x8, #{EXITS}",
+    "   svc #0",
+    ".balign 8",
+    "1: .quad {KZERO}",
+    "usertest_kernel_end:",
     SYSR1 = const port::syscall::SYSR1,
     EXITS = const port::syscall::EXITS,
+    UNMAPPED = const UTZERO + PAGE_SIZE_4K,
+    KZERO = const param::KZERO,
 );
 
 /// The text of the test program between labels `$start` and `$end`.
@@ -227,7 +261,29 @@ struct UserTest {
 /// Run each test process, checking its exit status, that it freed everything
 /// it allocated, and that it reused the first's kernel stack.
 fn test_user_processes() {
-    let tests = [UserTest { name: "sysr1", start: sysr1_start, status: b"" }];
+    let tests = [
+        UserTest { name: "sysr1", start: sysr1_start, status: b"" },
+        UserTest {
+            name: "exits",
+            start: || run_user(usertext!(usertest_bye, usertest_bye_end)),
+            status: b"bye",
+        },
+        UserTest {
+            name: "bad sys call",
+            start: || run_user(usertext!(usertest_badsys, usertest_badsys_end)),
+            status: b"sys: bad sys call",
+        },
+        UserTest {
+            name: "unmapped address",
+            start: || run_user(usertext!(usertest_unmapped, usertest_unmapped_end)),
+            status: b"sys: bad address in syscall",
+        },
+        UserTest {
+            name: "kernel address",
+            start: || run_user(usertext!(usertest_kernel, usertest_kernel_end)),
+            status: b"sys: bad address in syscall",
+        },
+    ];
     let mut first_kstack_top = None;
     for UserTest { name, start, status } in tests {
         let (used_before, _) = port::pagealloc::usage_bytes();
@@ -246,6 +302,11 @@ fn test_user_processes() {
 fn sysr1_start() {
     load_user(usertext!(usertest_sysr1, usertest_sysr1_end));
     test_user_access();
+    enter_user()
+}
+
+fn run_user(text: &[u8]) -> ! {
+    load_user(text);
     enter_user()
 }
 
