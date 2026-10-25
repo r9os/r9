@@ -1,0 +1,13 @@
+//! What the kernel and user programs must agree on, as Plan 9's
+//! libc/9syscall/sys.h: the system call numbers, and the longest error or exit
+//! string.
+
+#![no_std]
+
+pub const SYSR1: u64 = 0;
+pub const EXITS: u64 = 8;
+pub const BRK_: u64 = 24;
+pub const PWRITE: u64 = 51;
+
+/// The longest error or exit string, with its NUL, as Plan 9's ERRMAX.
+pub const ERRMAX: usize = 128;

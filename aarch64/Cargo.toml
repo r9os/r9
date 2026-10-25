@@ -10,4 +10,5 @@ default-target = "aarch64-unknown-none"
 aarch64-cpu = "11.2"
 bitstruct = "0.1"
 port = { path = "../port" }
+r9-sys = { path = "../sys" }
 num_enum = { version = "0.7", default-features = false }
