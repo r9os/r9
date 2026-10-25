@@ -175,6 +175,8 @@ pub extern "C" fn main9(dtb_va: usize) {
     test_swtch();
     test_release();
     test_user_processes();
+
+    run_echo();
 }
 
 mod runtime;
@@ -629,6 +631,37 @@ fn elf_start() {
     }
     assert!(!ok(end, Read), "above elftest's bss");
     assert!(ok(USTKTOP - 1, Write) && ok(USTKTOP - USTKSIZE, Write), "elftest's stack");
+    enter_user(regs)
+}
+
+/// echo, built by xtask (user/echo).
+static ECHO: &[u8] = include_bytes!(concat!(env!("R9_USER_BIN"), "/echo"));
+
+/// Run echo with argv ["echo", "hello", "world"], as the system's one
+/// program, and print how it exited.  A failure is reported rather than
+/// asserted: this is the system running its program, not a test.
+fn run_echo() {
+    let p = match port::proc::newproc::<Arm64>(echo_start) {
+        Ok(p) => p,
+        Err(err) => {
+            println!("echo: couldn't create a process: {err:?}");
+            return;
+        }
+    };
+    let status = port::proc::run(p);
+    if status.is_empty() {
+        println!("echo: exited");
+    } else {
+        println!("echo: exited with status {}", alloc::string::String::from_utf8_lossy(&status));
+    }
+}
+
+/// echo's start: exec it with its arguments, and enter it.
+fn echo_start() {
+    let regs = match port::exec::exec::<Arm64>(ECHO, &[b"echo", b"hello", b"world"]) {
+        Ok(regs) => regs,
+        Err(err) => port::proc::pexit::<Arm64>(err.as_bytes()),
+    };
     enter_user(regs)
 }
 

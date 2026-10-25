@@ -34,6 +34,7 @@ We're now in rust, in `main9`, and at a high level we:
 7. Write out the kernel page tables.
 8. Switch back and forth between `main9` and a second kernel context to test `swtch`.
 9. Run a [process](#processes) for each of a set of small assembled test programs, which make syscalls, write to the console and exit, and check each one's exit status and that everything it allocated is freed.
+10. Run [echo](#userspace) as a process, with argv `["echo", "hello", "world"]`, and print how it exited: `echo: exited` if it succeeded.
 
 ### Exceptions
 
