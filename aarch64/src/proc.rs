@@ -20,6 +20,7 @@ impl MMU for Arm64 {
     type Pmmu = AddressSpace;
 
     const UADDRTOP: usize = param::UADDRTOP;
+    const UTZERO: usize = param::UTZERO;
     const USTKTOP: usize = param::USTKTOP;
     const USTKSIZE: usize = param::USTKSIZE;
 
