@@ -11,12 +11,15 @@ pub mod allocator;
 pub mod bitmapalloc;
 pub mod dat;
 pub mod devcons;
+#[cfg(test)]
+mod fake;
 pub mod fdt;
 pub mod maths;
 pub mod mcslock;
 pub mod mem;
 pub mod pagealloc;
 pub mod proc;
+pub mod syscall;
 pub mod uaccess;
 
 pub type Result<T> = core::result::Result<T, &'static str>;

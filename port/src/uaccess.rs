@@ -73,48 +73,14 @@ pub fn copy_str_from_user<A: ProcArch>(dst: &mut [u8], src: usize) -> usize {
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use super::*;
-    use crate::proc::tests::Fake;
-    use std::cell::RefCell;
-
-    /// The fake architecture's user address space ends here, above any
-    /// address the host's heap uses.
-    pub(crate) const UADDRTOP: usize = 1 << 47;
-
-    thread_local! {
-        /// The fake's user pages: each page's base, and the access it allows
-        /// (Read allows reading only, Write allows both).
-        static PAGES: RefCell<Vec<(usize, Access)>> = const { RefCell::new(Vec::new()) };
-    }
-
-    pub(crate) fn user_page_ok(va: usize, access: Access) -> bool {
-        let base = va & !(PAGE_SIZE_4K - 1);
-        PAGES.with(|p| {
-            p.borrow()
-                .iter()
-                .any(|&(b, a)| b == base && (access == Access::Read || a == Access::Write))
-        })
-    }
-
-    #[repr(C, align(4096))]
-    struct Mem([u8; 3 * PAGE_SIZE_4K]);
-
-    /// Three pages of fake user memory: read-write, read-only, then unmapped.
-    fn user_mem() -> Box<Mem> {
-        let mem = Box::new(Mem([0; 3 * PAGE_SIZE_4K]));
-        let base = mem.0.as_ptr().addr();
-        assert!(base + mem.0.len() <= UADDRTOP);
-        PAGES.with(|p| {
-            *p.borrow_mut() = vec![(base, Access::Write), (base + PAGE_SIZE_4K, Access::Read)]
-        });
-        mem
-    }
+    use crate::fake::{Fake, UADDRTOP, user_mem};
 
     #[test]
     fn user_range_ok_ranges() {
         let mem = user_mem();
-        let base = mem.0.as_ptr().addr();
+        let base = mem.base();
         let ok = user_range_ok::<Fake>;
         assert!(ok(base, 2 * PAGE_SIZE_4K, Access::Read));
         assert!(ok(base + 10, PAGE_SIZE_4K, Access::Read), "a range spanning pages");
@@ -136,7 +102,7 @@ pub(crate) mod tests {
     #[test]
     fn copy_from_user_copies() {
         let mut mem = user_mem();
-        let base = mem.0.as_ptr().addr();
+        let base = mem.base();
         mem.0[PAGE_SIZE_4K - 2..PAGE_SIZE_4K + 2].copy_from_slice(b"abcd");
         let mut buf = [0; 4];
         copy_from_user::<Fake>(&mut buf, base + PAGE_SIZE_4K - 2);
@@ -146,7 +112,7 @@ pub(crate) mod tests {
     #[test]
     fn copy_str_from_user_strings() {
         let mut mem = user_mem();
-        let base = mem.0.as_ptr().addr();
+        let base = mem.base();
         let mut buf = [0; 8];
 
         mem.0[..4].copy_from_slice(b"bye\0");

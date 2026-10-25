@@ -97,96 +97,11 @@ pub(crate) unsafe fn reap<A: ProcArch>(p: Proc<A>) -> Vec<u8> {
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use super::*;
-    use crate::dat::MMU;
-    use crate::mem::PhysAddr;
-    use std::cell::{Cell, RefCell};
-
-    /// A fake architecture that records what it hands out and takes back.
-    /// Tests run in parallel threads, so its state is per thread.
-    pub(crate) struct Fake;
-
-    thread_local! {
-        static SPACES: RefCell<Vec<u32>> = const { RefCell::new(Vec::new()) };
-        static STACKS: RefCell<Vec<u32>> = const { RefCell::new(Vec::new()) };
-        static NEXT: Cell<u32> = const { Cell::new(1) };
-        static NO_STACKS: Cell<bool> = const { Cell::new(false) };
-    }
-
-    fn next() -> u32 {
-        NEXT.with(|n| {
-            let id = n.get();
-            n.set(id + 1);
-            id
-        })
-    }
-
-    impl MMU for Fake {
-        type Pmmu = u32;
-
-        fn newpmmu() -> Result<u32, PageAllocError> {
-            let id = next();
-            SPACES.with(|s| s.borrow_mut().push(id));
-            Ok(id)
-        }
-
-        const UADDRTOP: usize = crate::uaccess::tests::UADDRTOP;
-
-        fn user_page_ok(va: usize, access: crate::dat::Access) -> bool {
-            crate::uaccess::tests::user_page_ok(va, access)
-        }
-
-        fn put() {}
-        fn flush() {}
-        fn flushva(_ptr: *const ()) {}
-
-        unsafe fn switch(_pmmu: &u32) {}
-
-        unsafe fn release(pmmu: u32, _free_leaf: impl FnMut(PhysAddr)) {
-            SPACES.with(|s| s.borrow_mut().retain(|&id| id != pmmu));
-        }
-    }
-
-    impl ProcArch for Fake {
-        type Label = ();
-        type KStack = u32;
-
-        fn kstack_alloc() -> Result<u32, PageAllocError> {
-            if NO_STACKS.with(Cell::get) {
-                return Err(PageAllocError::OutOfSpace);
-            }
-            let id = next();
-            STACKS.with(|s| s.borrow_mut().push(id));
-            Ok(id)
-        }
-
-        unsafe fn kstack_free(stack: u32) {
-            STACKS.with(|s| s.borrow_mut().retain(|&id| id != stack));
-        }
-
-        fn new_context(_entry: extern "C" fn() -> !, _stack: &u32) {}
-
-        unsafe fn swtch(_save: *mut (), _next: *const ()) {
-            unreachable!("host tests don't switch contexts")
-        }
-
-        fn up() -> *mut Proc<Fake> {
-            core::ptr::null_mut()
-        }
-
-        fn set_up(_p: *mut Proc<Fake>) {}
-
-        fn sched() -> *mut () {
-            core::ptr::null_mut()
-        }
-    }
+    use crate::fake::{Fake, NO_STACKS, held};
 
     fn start() {}
-
-    fn held() -> (usize, usize) {
-        (SPACES.with(|s| s.borrow().len()), STACKS.with(|s| s.borrow().len()))
-    }
 
     #[test]
     fn reaping_frees_what_newproc_took() {
