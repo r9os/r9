@@ -5,12 +5,13 @@ use crate::kstack::{self, KStack};
 use crate::mach::mach;
 use crate::param;
 use crate::swtch::{self, Label};
-use crate::trap::TrapFrame;
+use crate::trap::{self, TrapFrame};
 use crate::vm::{
     self, AddressSpace, Entry, PageSize, PageTableError, PhysPageAllocator, RootPageTableType,
     VaMapping, VmTraitImpl,
 };
 use port::dat::{Access, MMU, Perm, Proc, ProcArch, PutError};
+use port::exec::UserRegs;
 use port::mem::{PAGE_SIZE_4K, PhysAddr, PhysRange};
 use port::pagealloc::PageAllocError;
 
@@ -127,4 +128,14 @@ impl ProcArch for Arm64 {
         // SAFETY: as above.
         unsafe { &raw mut (*mach()).sched }
     }
+}
+
+/// Enter the current process with `regs`.  Call it only from a process's start
+/// function, after its text and stack are mapped.
+pub fn enter_user(regs: UserRegs) -> ! {
+    // SAFETY: up is this process, which is running, and its context started
+    // below the space to_user uses at the top of its stack.
+    let kstack_top = unsafe { (*Arm64::up()).kstack().top() };
+    // SAFETY: as above, and the caller mapped the text and stack.
+    unsafe { trap::to_user(kstack_top, &regs) }
 }
