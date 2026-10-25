@@ -192,16 +192,23 @@ fn u64_at(b: &[u8], off: usize) -> u64 {
 mod tests {
     use super::*;
 
-    static HELLO: &[u8] = include_bytes!("../lib/test/elf/hello.elf");
+    /// The ELF loader's test program, built by xtask (user/elftest).
+    static ELFTEST: &[u8] = include_bytes!(concat!(env!("R9_USER_BIN"), "/elftest"));
 
-    /// The offset of program header `i`'s field at `off`.
+    /// The offset of program header `i`'s field at `off`.  The user linker
+    /// script puts text, rodata and data in program headers 0, 1 and 2.
     fn ph(i: usize, off: usize) -> usize {
-        u64_at(HELLO, 32) as usize + i * PHDR_SIZE + off
+        u64_at(ELFTEST, 32) as usize + i * PHDR_SIZE + off
     }
 
-    /// HELLO with the bytes at `off` replaced by `bytes`.
+    /// The 64-bit field at `off` in program header `i`.
+    fn field(i: usize, off: usize) -> u64 {
+        u64_at(ELFTEST, ph(i, off))
+    }
+
+    /// ELFTEST with the bytes at `off` replaced by `bytes`.
     fn patched(off: usize, bytes: &[u8]) -> Vec<u8> {
-        let mut image = HELLO.to_vec();
+        let mut image = ELFTEST.to_vec();
         image[off..off + bytes.len()].copy_from_slice(bytes);
         image
     }
@@ -211,26 +218,24 @@ mod tests {
     }
 
     #[test]
-    fn hello_parses() {
-        let elf = parse(HELLO).expect("hello.elf didn't parse");
-        assert_eq!(elf.entry(), 0x10000);
-        let segs: Vec<_> =
-            elf.segments().map(|s| (s.vaddr, s.memsz, s.file.len(), s.perm)).collect();
-        assert_eq!(
-            segs,
-            [
-                (0x10000, 156, 156, Perm::Text),
-                (0x11000, 15, 15, Perm::Rodata),
-                (0x12000, 9224, 4104, Perm::Data)
-            ]
-        );
-        let rodata = elf.segments().nth(1).unwrap();
-        assert_eq!(rodata.file, b"hello from elf\n");
+    fn elftest_parses() {
+        let elf = parse(ELFTEST).expect("elftest didn't parse");
+        let segs: Vec<_> = elf.segments().collect();
+        let perms: Vec<_> = segs.iter().map(|s| s.perm).collect();
+        assert_eq!(perms, [Perm::Text, Perm::Rodata, Perm::Data]);
+        assert_eq!(segs[0].vaddr, 0x10000, "text at UTZERO");
+        assert!(segs.iter().all(|s| s.vaddr.is_multiple_of(PAGE_SIZE_4K)), "on pages");
+        let text = &segs[0];
+        assert!((text.vaddr..text.vaddr + text.file.len()).contains(&elf.entry()));
+        let data = &segs[2];
+        assert!(data.file.len() > PAGE_SIZE_4K, "the data's file bytes span two pages");
+        let pages = |n: usize| n.div_ceil(PAGE_SIZE_4K);
+        assert!(pages(data.memsz) > pages(data.file.len()), "the bss runs onto another page");
     }
 
     #[test]
     fn bad_headers() {
-        assert_eq!(err(&HELLO[..EHDR_SIZE - 1]), ElfError::Truncated);
+        assert_eq!(err(&ELFTEST[..EHDR_SIZE - 1]), ElfError::Truncated);
         assert_eq!(err(&patched(0, b"\x7fELG")), ElfError::BadMagic);
         assert_eq!(err(&patched(4, &[1])), ElfError::NotElf64);
         assert_eq!(err(&patched(5, &[2])), ElfError::NotLittleEndian);
@@ -240,10 +245,10 @@ mod tests {
         assert_eq!(err(&patched(18, &62u16.to_le_bytes())), ElfError::NotAarch64, "x86-64");
         assert_eq!(err(&patched(54, &55u16.to_le_bytes())), ElfError::BadPhentsize);
         assert_eq!(err(&patched(32, &u64::MAX.to_le_bytes())), ElfError::PhdrsOutOfRange);
-        assert_eq!(err(&HELLO[..ph(2, 0)]), ElfError::PhdrsOutOfRange, "truncated phdrs");
-        let entry = 0x11000u64.to_le_bytes();
-        assert_eq!(err(&patched(24, &entry)), ElfError::EntryNotInText, "entry in rodata");
-        let entry = 0x10002u64.to_le_bytes();
+        assert_eq!(err(&ELFTEST[..ph(2, 0)]), ElfError::PhdrsOutOfRange, "truncated phdrs");
+        let rodata = field(1, 16).to_le_bytes();
+        assert_eq!(err(&patched(24, &rodata)), ElfError::EntryNotInText, "entry in rodata");
+        let entry = (u64_at(ELFTEST, 24) + 2).to_le_bytes();
         assert_eq!(err(&patched(24, &entry)), ElfError::MisalignedEntry);
     }
 
@@ -251,17 +256,21 @@ mod tests {
     fn bad_segments() {
         let big = u64::MAX.to_le_bytes();
         assert_eq!(err(&patched(ph(2, 8), &big)), ElfError::SegmentOutOfRange, "offset");
-        assert_eq!(err(&HELLO[..HELLO.len() - 3000]), ElfError::SegmentOutOfRange, "truncated");
-        assert_eq!(err(&patched(ph(2, 32), &10000u64.to_le_bytes())), ElfError::FileszOverMemsz);
-        assert_eq!(err(&patched(ph(1, 16), &0x11008u64.to_le_bytes())), ElfError::Misaligned);
+        let data_end = (field(2, 8) + field(2, 32)) as usize;
+        let short = &ELFTEST[..data_end - 1];
+        assert_eq!(err(short), ElfError::SegmentOutOfRange, "truncated");
+        let filesz = (field(2, 40) + 1).to_le_bytes();
+        assert_eq!(err(&patched(ph(2, 32), &filesz)), ElfError::FileszOverMemsz);
+        let off_page = (field(1, 16) + 8).to_le_bytes();
+        assert_eq!(err(&patched(ph(1, 16), &off_page)), ElfError::Misaligned);
         let top = (u64::MAX & !0xfff).to_le_bytes();
         assert_eq!(err(&patched(ph(2, 16), &top)), ElfError::Overflow);
         let rwx = (PF_R | PF_W | PF_X).to_le_bytes();
         assert_eq!(err(&patched(ph(0, 4), &rwx)), ElfError::BadFlags, "W+X");
         assert_eq!(err(&patched(ph(0, 4), &PF_X.to_le_bytes())), ElfError::BadFlags, "X only");
-        let shared = 0x10000u64.to_le_bytes();
+        let shared = field(0, 16).to_le_bytes();
         assert_eq!(err(&patched(ph(1, 16), &shared)), ElfError::Unordered, "sharing a page");
-        let below = 0xf000u64.to_le_bytes();
+        let below = (field(0, 16) - 0x1000).to_le_bytes();
         assert_eq!(err(&patched(ph(1, 16), &below)), ElfError::Unordered, "descending");
     }
 
