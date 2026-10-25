@@ -3,7 +3,7 @@
 //! permissions, and a console that records what's written to it.  Tests run in
 //! parallel threads, so its state is per thread.
 
-use crate::dat::{Access, MMU, Proc, ProcArch};
+use crate::dat::{Access, MMU, Perm, Proc, ProcArch, PutError};
 use crate::devcons::{Console, Uart};
 use crate::mem::{PAGE_SIZE_4K, PhysAddr};
 use crate::pagealloc::PageAllocError;
@@ -15,6 +15,9 @@ pub(crate) struct Fake;
 /// heap uses.
 pub(crate) const UADDRTOP: usize = 1 << 47;
 
+/// The fake's user stack is just below UADDRTOP.
+pub(crate) const USTKTOP: usize = UADDRTOP;
+
 thread_local! {
     static SPACES: RefCell<Vec<u32>> = const { RefCell::new(Vec::new()) };
     static STACKS: RefCell<Vec<u32>> = const { RefCell::new(Vec::new()) };
@@ -25,6 +28,14 @@ thread_local! {
     /// allows reading only, Write allows both).
     static PAGES: RefCell<Vec<(usize, Access)>> = const { RefCell::new(Vec::new()) };
     static CONS_OUT: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+    /// What put has mapped and unput hasn't unmapped: each page's address,
+    /// physical page and permission.
+    static MAPPED: RefCell<Vec<(usize, PhysAddr, Perm)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// The pages put has mapped, in the order it mapped them.
+pub(crate) fn mapped() -> Vec<(usize, PhysAddr, Perm)> {
+    MAPPED.with(|m| m.borrow().clone())
 }
 
 /// A UART that appends to the writing thread's CONS_OUT.
@@ -85,6 +96,8 @@ impl MMU for Fake {
     type Pmmu = u32;
 
     const UADDRTOP: usize = UADDRTOP;
+    const USTKTOP: usize = USTKTOP;
+    const USTKSIZE: usize = 64 * 1024;
 
     fn newpmmu() -> Result<u32, PageAllocError> {
         let id = next();
@@ -101,7 +114,29 @@ impl MMU for Fake {
         })
     }
 
-    fn put() {}
+    fn put(va: usize, pa: PhysAddr, perm: Perm) -> Result<(), PutError> {
+        MAPPED.with(|m| {
+            let mut m = m.borrow_mut();
+            if m.iter().any(|&(v, _, _)| v == va) {
+                return Err(PutError::AlreadyMapped);
+            }
+            m.push((va, pa, perm));
+            Ok(())
+        })
+    }
+
+    fn unput(va: usize) -> Option<PhysAddr> {
+        MAPPED.with(|m| {
+            let mut m = m.borrow_mut();
+            let i = m.iter().position(|&(v, _, _)| v == va)?;
+            Some(m.remove(i).1)
+        })
+    }
+
+    fn kmap<R>(_pa: PhysAddr, _f: impl FnOnce(*mut u8) -> R) -> R {
+        unreachable!("host tests have no physical pages to map")
+    }
+
     fn flush() {}
     fn flushva(_ptr: *const ()) {}
 

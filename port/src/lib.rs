@@ -19,6 +19,7 @@ pub mod mcslock;
 pub mod mem;
 pub mod pagealloc;
 pub mod proc;
+pub mod segment;
 pub mod syscall;
 pub mod uaccess;
 
