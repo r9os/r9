@@ -108,11 +108,11 @@ fn print_board_info() {
 fn print_stacks() {
     unsafe extern "C" {
         static interruptstackbase: [u64; 0];
-        static interruptstacksz: [u64; 0];
+        static interruptstacktop: [u64; 0];
     }
 
     let interrupt_stack_base = unsafe { interruptstackbase.as_ptr().addr() };
-    let interrupt_stack_max = interrupt_stack_base + unsafe { interruptstacksz.as_ptr().addr() };
+    let interrupt_stack_max = unsafe { interruptstacktop.as_ptr().addr() };
     let range = VirtRange::new(interrupt_stack_base, interrupt_stack_max);
     let range_size = range.size();
     println!("Interrupt stack:\t {range} ({range_size:#x})");

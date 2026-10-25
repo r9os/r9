@@ -11,8 +11,11 @@ INTERRUPTSTACKSZ = 4096*16
 .balign	4096
 .globl	interruptstackbase
 interruptstackbase:	.space INTERRUPTSTACKSZ
-.globl	interruptstacksz
-.equ	interruptstacksz,	INTERRUPTSTACKSZ
+// A label rather than an absolute symbol for the size: Rust reaches extern
+// statics through the GOT, which can't hold an absolute value when this and
+// the code using it are assembled into one object.
+.globl	interruptstacktop
+interruptstacktop:
 
 .section .text
 
