@@ -283,9 +283,127 @@ core::arch::global_asm!(
     ".balign 8",
     "1: .quad {UNMAPPED}",
     "usertest_badbuf_end:",
+    // brk_(0) returns the bss's start.  brk_ to just past its second page
+    // returns 0, and both pages keep what's stored in every word.  Shrinking
+    // frees them, and growing again gets pages that read zero in every word,
+    // though they were likely the pages just freed.  Then exits(nil), or
+    // exits("brk") if any of that didn't happen.
+    ".balign 8",
+    "usertest_brk:",
+    "   ldr x19, 9f",
+    "   add x20, x19, #2, lsl #12",
+    "   mov x0, #0",
+    "   mov x8, #{BRK}",
+    "   svc #0",
+    "   cmp x0, x19",
+    "   b.ne 1f",
+    "   ldr x0, 8f",
+    "   mov x8, #{BRK}",
+    "   svc #0",
+    "   cbnz x0, 1f",
+    "   mov x1, x19",
+    "3: str x19, [x1], #8",
+    "   cmp x1, x20",
+    "   b.ne 3b",
+    "   mov x1, x19",
+    "4: ldr x2, [x1], #8",
+    "   cmp x2, x19",
+    "   b.ne 1f",
+    "   cmp x1, x20",
+    "   b.ne 4b",
+    "   mov x0, x19",
+    "   mov x8, #{BRK}",
+    "   svc #0",
+    "   cbnz x0, 1f",
+    "   ldr x0, 8f",
+    "   mov x8, #{BRK}",
+    "   svc #0",
+    "   cbnz x0, 1f",
+    "   mov x1, x19",
+    "5: ldr x2, [x1], #8",
+    "   cbnz x2, 1f",
+    "   cmp x1, x20",
+    "   b.ne 5b",
+    "   mov x0, #0",
+    "   b 2f",
+    "1: adr x0, 7f",
+    "2: mov x8, #{EXITS}",
+    "   svc #0",
+    "7: .asciz \"brk\"",
+    ".balign 8",
+    "8: .quad {BSS} + 2 * {PAGE} - 1",
+    "9: .quad {BSS}",
+    "usertest_brk_end:",
+    // Grow the bss by a page and use it, shrink it back, then pwrite from the
+    // freed page, which kills the process.  exits("brk shrink") if it
+    // doesn't.
+    ".balign 8",
+    "usertest_brkshrink:",
+    "   ldr x19, 9f",
+    "   add x0, x19, #1",
+    "   mov x8, #{BRK}",
+    "   svc #0",
+    "   cbnz x0, 1f",
+    "   str x19, [x19]",
+    "   mov x0, x19",
+    "   mov x8, #{BRK}",
+    "   svc #0",
+    "   cbnz x0, 1f",
+    "   mov x0, #1",
+    "   mov x1, x19",
+    "   mov x2, #1",
+    "   mov x3, #-1",
+    "   mov x8, #{PWRITE}",
+    "   svc #0",
+    "1: adr x0, 7f",
+    "   mov x8, #{EXITS}",
+    "   svc #0",
+    "7: .asciz \"brk shrink\"",
+    ".balign 8",
+    "9: .quad {BSS}",
+    "usertest_brkshrink_end:",
+    // brk_ into the guard page below the stack, and past all memory, return
+    // -1, then exits(nil), or exits(...) if they didn't.
+    ".balign 8",
+    "usertest_brkstack:",
+    "   ldr x0, 8f",
+    "   mov x8, #{BRK}",
+    "   svc #0",
+    "   cmn x0, #1",
+    "   b.ne 1f",
+    "   mov x0, #0",
+    "   b 2f",
+    "1: adr x0, 7f",
+    "2: mov x8, #{EXITS}",
+    "   svc #0",
+    "7: .asciz \"brk stack\"",
+    ".balign 8",
+    "8: .quad {GUARD}",
+    "usertest_brkstack_end:",
+    ".balign 8",
+    "usertest_brkmem:",
+    "   ldr x0, 8f",
+    "   mov x8, #{BRK}",
+    "   svc #0",
+    "   cmn x0, #1",
+    "   b.ne 1f",
+    "   mov x0, #0",
+    "   b 2f",
+    "1: adr x0, 7f",
+    "2: mov x8, #{EXITS}",
+    "   svc #0",
+    "7: .asciz \"brk memory\"",
+    ".balign 8",
+    "8: .quad {HUGE}",
+    "usertest_brkmem_end:",
     SYSR1 = const port::syscall::SYSR1,
     EXITS = const port::syscall::EXITS,
     PWRITE = const port::syscall::PWRITE,
+    BRK = const port::syscall::BRK_,
+    PAGE = const PAGE_SIZE_4K,
+    BSS = const BSS,
+    GUARD = const USTKTOP - USTKSIZE - PAGE_SIZE_4K + 1,
+    HUGE = const BSS + (64 << 30),
     UNMAPPED = const UTZERO + PAGE_SIZE_4K,
     KZERO = const param::KZERO,
 );
@@ -352,6 +470,26 @@ fn test_user_processes() {
             start: || run_user(usertext!(usertest_badbuf, usertest_badbuf_end)),
             status: b"sys: bad address in syscall",
         },
+        UserTest {
+            name: "brk",
+            start: || run_user(usertext!(usertest_brk, usertest_brk_end)),
+            status: b"",
+        },
+        UserTest {
+            name: "brk shrink",
+            start: || run_user(usertext!(usertest_brkshrink, usertest_brkshrink_end)),
+            status: b"sys: bad address in syscall",
+        },
+        UserTest {
+            name: "brk into the stack",
+            start: || run_user(usertext!(usertest_brkstack, usertest_brkstack_end)),
+            status: b"",
+        },
+        UserTest {
+            name: "brk past memory",
+            start: || run_user(usertext!(usertest_brkmem, usertest_brkmem_end)),
+            status: b"",
+        },
     ];
     let mut first_kstack_top = None;
     for UserTest { name, start, status } in tests {
@@ -379,8 +517,11 @@ fn run_user(text: &[u8]) -> ! {
     enter_user()
 }
 
+/// The test processes' bss starts, empty, at the page after their text.
+const BSS: usize = UTZERO + PAGE_SIZE_4K;
+
 /// Map `text` at UTZERO, and a zeroed stack below USTKTOP, in the current
-/// process.
+/// process, and give it an empty bss at BSS.
 fn load_user(text: &[u8]) {
     assert!(text.len() <= PAGE_SIZE_4K, "user text too big");
     let text_pa = port::pagealloc::allocate_physpage().expect("couldn't allocate user text");
@@ -397,6 +538,7 @@ fn load_user(text: &[u8]) {
 
     let stack_range = VirtRange::new(USTKTOP - USTKSIZE, USTKTOP);
     segment::map_zeroed::<Arm64>(stack_range).expect("couldn't allocate user stack");
+    segment::set_bss::<Arm64>(VirtRange::new(BSS, BSS));
 }
 
 /// Enter the current process's user text at UTZERO, with its stack at
