@@ -25,16 +25,15 @@ The code in `l.S` exists to bring us to a state where we can run kernel code in 
 
 We're now in rust, in `main9`, and at a high level we:
 
-1. Point `TPIDR_EL1` at this CPU's `Mach` (`mach.rs`), then set up interrupt handlers early so that we get a bit of feedback if things go wrong.
-2. Parse the device tree, enabling more informed initialisation.
-3. Set up the mailbox (rpi-specific, but allows us to extract more information from the hardware, and interact directly in certain ways).
-4. Initialise the [console](#devcons), ensuring we can use `port::println` to write to the UART.
-5. Write out some useful system information.
-6. Set up [virtual memory](#virtual-memory) in rust. (After switching we no longer need the pagetables set up in early initialisation.)
-7. Write out the kernel page tables.
-8. Switch back and forth between `main9` and a second kernel context to test `swtch`.
-9. Run a [process](#processes) for each of a set of small assembled test programs, which make syscalls, write to the console and exit, and check each one's exit status and that everything it allocated is freed.
-10. Run [echo](#userspace) as a process, with argv `["echo", "hello", "world"]`, and print how it exited: `echo: exited` if it succeeded.
+1. Point `TPIDR_EL1` at this CPU's `Mach` (`mach.rs`), then set up the exception handlers early so that we get a bit of feedback if things go wrong.
+2. Replace the boot identity map in `ttbr0_el1` with the empty user root, so low addresses, including null, fault. The kernel's own page tables were built before the MMU was enabled (see above).
+3. Parse the device tree, enabling more informed initialisation.
+4. Set up the page allocator, with every page not used by the kernel image or the DTB.
+5. Initialise the [console](#devcons), ensuring we can use `port::println` to write to the UART.
+6. Set up the mailbox (rpi-specific, but allows us to extract more information from the hardware, and interact directly in certain ways).
+7. Write out some useful system information, and the kernel page tables.
+8. Run the boot tests in `boottest.rs`, panicking if one fails: `kmap`, switching between kernel contexts with `swtch`, releasing an address space, and a [process](#processes) for each of a set of small assembled test programs and `user/elftest`. These make syscalls, write to the console and exit, and the tests check each one's exit status and that everything it allocated is freed.
+9. Run [echo](#userspace) as a process, with argv `["echo", "hello", "world"]`, and print how it exited: `echo: exited` if it succeeded.
 
 ### Exceptions
 
@@ -61,7 +60,7 @@ A process is a `port::dat::Proc<A>`, and its lifecycle is in `port/src/proc.rs`,
 
 - `newproc(start)` allocates an address space and a kernel stack, and a context that starts in `proc_start`.
 - `run(p)` makes `p` the current process (`up`), and switches to it from the scheduler context. There's no scheduler yet, so a process runs until it exits.
-- `proc_start` switches to the process's address space and calls `start`, as Plan 9's `kproc` runs a function in a new process. `start` loads the program and enters EL0 with `to_user`.
+- `proc_start` switches to the process's address space and calls `start`, as Plan 9's `kproc` runs a function in a new process. `start` loads the program and enters EL0 with `enter_user` (`proc.rs`), which calls `to_user` on the process's kernel stack.
 - `pexit(status)` records the exit status and switches back to the scheduler context, where `run` reaps the process: its address space is released, every page mapped in it is freed, and its kernel stack is freed.
 
 ### User Address Space
@@ -69,7 +68,7 @@ A process is a `port::dat::Proc<A>`, and its lifecycle is in `port/src/proc.rs`,
 User addresses are translated through `ttbr0_el1`. The layout is defined in `param.rs`:
 
 - `UTZERO` (0x10000): start of user text. The pages below are unmapped to catch null pointers.
-- The bss follows the text, and `brk_` grows it towards the stack. The test processes' bss starts, empty, at the page after their text.
+- The bss follows the text, and `brk_` grows it towards the stack. The assembled test programs in `boottest.rs` start with an empty bss at the page after their text.
 - `USTKTOP` (2^47): top of the user stack, which is `USTKSIZE` (64KiB), mapped up front, with nothing mapped below it.
 - `UADDRTOP` (0x0000_ff80_0000_0000): end of the user address space. Root entry 511 above it recursively maps the user page table. `map_to` refuses addresses in the recursive range, or outside the half of the address space its table translates.
 
@@ -77,7 +76,7 @@ No user page is ever both writable and executable: `port` maps user pages with `
 
 `brk_` follows Plan 9's `ibrk`: it moves the end of the process's bss, rounded up to a page. Growing maps zeroed pages straight away, as there's no demand paging. Shrinking unmaps and frees them. It fails without changing anything if it would grow into the stack or the unmapped guard page below it, or needs more pages than are free. Text is written through kmap but executed through its user address, so `put` with `Text` first cleans the data cache and invalidates the instruction cache (`vm::sync_icache`), as Plan 9's `putmmu` does for text pages, so the instructions fetched are the ones written. A process owns every page mapped in its address space, until there are segments.
 
-Programs are static aarch64 ELF executables. `port::elf` validates an image without allocating, treating it as untrusted: every read is bounds-checked, and each loadable segment must be text (R+X), rodata (R) or data (R+W), never writable and executable, in ascending order with no two sharing a page. `port::exec::load` then checks the layout, before mapping anything: segments lie between `UTZERO` and the guard page below the stack, with at most one data segment, at the top. It maps each segment page by page, zeroed, with its file bytes copied in through `kmap`, and sets the bss to run from the end of the data's file bytes, as Plan 9's exec does. A failure partway isn't undone: the caller exits the process. `port::exec::exec` loads a program this way, maps its stack, and pushes its arguments: from `USTKTOP` down, the argument strings, each NUL-terminated, then the argv array of pointers to them, ending in a null pointer, with `sp` 16-byte aligned below it, as AAPCS64 needs. The arguments may use at most a quarter of the stack, as in Linux. It returns the registers the program starts with, which `to_user` loads: the pc, `sp`, and x0 = argc and x1 = argv. There's no `Tos`, environment or auxiliary vector. The kernel's test runs [`user/elftest`](#userspace).
+Programs are static aarch64 ELF executables. `port::elf` validates an image without allocating, treating it as untrusted: every read is bounds-checked, and each loadable segment must be text (R+X), rodata (R) or data (R+W), never writable and executable, in ascending order with no two sharing a page. `port::exec::load` then checks the layout, before mapping anything: segments lie between `UTZERO` and the guard page below the stack, with at most one data segment, at the top. It maps each segment page by page, zeroed, with its file bytes copied in through `kmap`, and sets the bss to run from the end of the data's file bytes, as Plan 9's exec does. A failure partway isn't undone: the caller exits the process. `port::exec::exec` loads a program this way, maps its stack, and pushes its arguments: from `USTKTOP` down, the argument strings, each NUL-terminated, then the argv array of pointers to them, ending in a null pointer, with `sp` 16-byte aligned below it, as AAPCS64 needs. The arguments may use at most a quarter of the stack, as in Linux. It returns the registers the program starts with, which `to_user` loads: the pc, `sp`, and x0 = argc and x1 = argv. There's no `Tos`, environment or auxiliary vector. The boot tests run [`user/elftest`](#userspace) through it.
 
 Syscalls reach user memory through `port/src/uaccess.rs`, after Plan 9's `validaddr`. `validate_user_range` checks that a range is below `UADDRTOP`, then checks each page with `MMU::user_page_ok`. On aarch64 that's `AT S1E0R` or `AT S1E0W` (`vm::user_page_ok`), which asks the MMU whether EL0 could make the access. `copy_from_user` and `copy_str_from_user` then use the user address directly. That's only correct while nothing can change the mapping between the check and the access: one CPU, no preemption, one thread per process, and PAN off. A bad address kills the process with the status `sys: bad address in syscall`.
 
