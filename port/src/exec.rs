@@ -146,11 +146,12 @@ mod tests {
     use super::*;
     use crate::fake::{Fake, USTKTOP, mapped, user_mem};
 
-    static HELLO: &[u8] = include_bytes!("../lib/test/elf/hello.elf");
+    /// The ELF loader's test program, built by xtask (user/elftest).
+    static ELFTEST: &[u8] = include_bytes!(concat!(env!("R9_USER_BIN"), "/elftest"));
 
-    /// HELLO with program header `i`'s field at `off` replaced by `value`.
+    /// ELFTEST with program header `i`'s field at `off` replaced by `value`.
     fn patched(i: usize, off: usize, value: u64) -> Vec<u8> {
-        let mut image = HELLO.to_vec();
+        let mut image = ELFTEST.to_vec();
         let at = 64 + i * 56 + off;
         image[at..at + 8].copy_from_slice(&value.to_le_bytes());
         image
@@ -161,20 +162,26 @@ mod tests {
     }
 
     #[test]
-    fn hello_layout() {
+    fn elftest_layout() {
         // The bss starts after the data's file bytes, and ends on a page.
-        assert_eq!(layout_of(HELLO), Ok(VirtRange::new(0x13008, 0x15000)));
+        let elf = elf::parse(ELFTEST).expect("didn't parse");
+        let data = elf.segments().find(|s| s.perm == Perm::Data).expect("no data");
+        let end = (data.vaddr + data.memsz).next_multiple_of(PAGE_SIZE_4K);
+        let bss = VirtRange::new(data.vaddr + data.file.len(), end);
+        assert_eq!(layout_of(ELFTEST), Ok(bss));
     }
 
     #[test]
     fn bad_layouts() {
-        let mut low = patched(0, 16, 0x1000);
-        low[24..32].copy_from_slice(&0x1000u64.to_le_bytes());
+        // Text moved down a page from UTZERO, and its entry with it.
+        let entry = u64::from_le_bytes(ELFTEST[24..32].try_into().unwrap());
+        let mut low = patched(0, 16, 0xf000);
+        low[24..32].copy_from_slice(&(entry - 0x1000).to_le_bytes());
         assert_eq!(layout_of(&low), Err(EBADEXEC), "text below UTZERO");
         let guard = (USTKTOP - <Fake as MMU>::USTKSIZE - PAGE_SIZE_4K) as u64;
         assert_eq!(layout_of(&patched(2, 16, guard)), Err(EBADEXEC), "data in the guard page");
         // Rodata made writable: a second data segment.
-        let mut two = HELLO.to_vec();
+        let mut two = ELFTEST.to_vec();
         two[64 + 56 + 4] = 6;
         assert_eq!(layout_of(&two), Err(EBADEXEC), "a segment above the data");
     }
@@ -228,14 +235,14 @@ mod tests {
     fn exec_checks_args_before_loading() {
         // A bad argument is refused before load, which would fail for want of
         // memory on the host.
-        assert_eq!(exec::<Fake>(HELLO, &[b"a\0b"]), Err(EBADARG));
+        assert_eq!(exec::<Fake>(ELFTEST, &[b"a\0b"]), Err(EBADARG));
         assert!(mapped().is_empty());
     }
 
     #[test]
     fn load_maps_nothing_without_memory() {
         // The host page allocator has nothing free.
-        assert_eq!(load::<Fake>(HELLO), Err(ENOVMEM));
+        assert_eq!(load::<Fake>(ELFTEST), Err(ENOVMEM));
         assert!(mapped().is_empty());
     }
 }
