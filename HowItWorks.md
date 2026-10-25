@@ -33,7 +33,7 @@ We're now in rust, in `main9`, and at a high level we:
 6. Set up [virtual memory](#virtual-memory) in rust. (After switching we no longer need the pagetables set up in early initialisation.)
 7. Write out the kernel page tables.
 8. Switch back and forth between `main9` and a second kernel context to test `swtch`.
-9. Run a [process](#processes) whose hand-assembled program makes a syscall and exits with its result, and check that everything it allocated is freed.
+9. Run a [process](#processes) for each of a set of small assembled test programs, which make syscalls and exit, and check each one's exit status and that everything it allocated is freed.
 
 ### Exceptions
 
@@ -44,7 +44,9 @@ We're now in rust, in `main9`, and at a high level we:
 
 The kernel is built softfloat (see `lib/aarch64-unknown-none-elf.json`), so it never uses the FP/SIMD registers and exception entry doesn't need to save them. `to_user` zeroes the user FP/SIMD state, so one process can't read another's. It will need saving once processes are switched between.
 
-IRQs, FIQs, SErrors and debug exceptions are masked in both EL1 and EL0 until we have a use for them. Syscalls are currently placeholders: the `svc` immediate is the syscall number, syscall 3 exits the process (`pexit`) with x0, in decimal, as its status, and any other returns x0 + 1. A status is a byte string, and empty means success, as in Plan 9.
+IRQs, FIQs, SErrors and debug exceptions are masked in both EL1 and EL0 until we have a use for them.
+
+A syscall is `svc #0`, with the number in x8 and the arguments in x0–x5, and the result comes back in x0, as on Linux. The `svc` immediate is ignored. Every other register is preserved, since `trap_return` restores the whole frame. The numbers are Plan 9's (`port/src/syscall.rs`), and `port::syscall::syscall` dispatches them. So far there's `SYSR1`, which returns 0, and `EXITS`. A syscall that fails returns -1, and an unknown number kills the process with the status `sys: bad sys call`. An exit status is a byte string of at most `ERRMAX - 1` bytes, and empty means success, as in Plan 9.
 
 ### Kernel context switching
 
