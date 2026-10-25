@@ -109,12 +109,13 @@ pub enum Access {
     Write,
 }
 
-/// What a user page may be used for.  Text is read-only and executable, and
-/// data is read-write and never executable, so no page is both writable and
-/// executable.
+/// What a user page may be used for.  Text is read-only and executable,
+/// rodata is read-only, and data is read-write, and neither is ever
+/// executable, so no page is both writable and executable.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Perm {
     Text,
+    Rodata,
     Data,
 }
 

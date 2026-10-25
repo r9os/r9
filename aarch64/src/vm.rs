@@ -174,6 +174,17 @@ impl Entry {
             .with_valid(true)
     }
 
+    pub fn ro_user_data() -> Self {
+        Entry(0)
+            .with_access_permission(AccessPermission::AllRo)
+            .with_shareable(Shareable::Inner)
+            .with_accessed(true)
+            .with_uxn(true)
+            .with_pxn(true)
+            .with_mair_index(Mair::Normal)
+            .with_valid(true)
+    }
+
     pub fn rw_user_data() -> Self {
         Entry(0)
             .with_access_permission(AccessPermission::AllRw)
@@ -1250,6 +1261,17 @@ mod tests {
         assert!(e.pxn() && e.uxn() && e.accessed());
         assert_eq!(u8::from(e.shareable()), u8::from(Shareable::Inner));
         assert_eq!(u8::from(e.mair_index()), u8::from(Mair::Normal));
+    }
+
+    #[test]
+    fn user_entries_are_never_writable_and_executable() {
+        let ap = |e: Entry| u8::from(e.access_permission());
+        let text = Entry::ro_user_text();
+        assert!(ap(text) == u8::from(AccessPermission::AllRo) && !text.uxn() && text.pxn());
+        let rodata = Entry::ro_user_data();
+        assert!(ap(rodata) == u8::from(AccessPermission::AllRo) && rodata.uxn() && rodata.pxn());
+        let data = Entry::rw_user_data();
+        assert!(ap(data) == u8::from(AccessPermission::AllRw) && data.uxn() && data.pxn());
     }
 
     #[test]
