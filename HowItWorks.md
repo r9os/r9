@@ -33,7 +33,7 @@ We're now in rust, in `main9`, and at a high level we:
 6. Set up [virtual memory](#virtual-memory) in rust. (After switching we no longer need the pagetables set up in early initialisation.)
 7. Write out the kernel page tables.
 8. Switch back and forth between `main9` and a second kernel context to test `swtch`.
-9. Run a [process](#processes) for each of a set of small assembled test programs, which make syscalls and exit, and check each one's exit status and that everything it allocated is freed.
+9. Run a [process](#processes) for each of a set of small assembled test programs, which make syscalls, write to the console and exit, and check each one's exit status and that everything it allocated is freed.
 
 ### Exceptions
 
@@ -46,7 +46,9 @@ The kernel is built softfloat (see `lib/aarch64-unknown-none-elf.json`), so it n
 
 IRQs, FIQs, SErrors and debug exceptions are masked in both EL1 and EL0 until we have a use for them.
 
-A syscall is `svc #0`, with the number in x8 and the arguments in x0–x5, and the result comes back in x0, as on Linux. The `svc` immediate is ignored. Every other register is preserved, since `trap_return` restores the whole frame. The numbers are Plan 9's (`port/src/syscall.rs`), and `port::syscall::syscall` dispatches them. So far there's `SYSR1`, which returns 0, and `EXITS`. A syscall that fails returns -1, and an unknown number kills the process with the status `sys: bad sys call`. An exit status is a byte string of at most `ERRMAX - 1` bytes, and empty means success, as in Plan 9.
+A syscall is `svc #0`, with the number in x8 and the arguments in x0–x5, and the result comes back in x0, as on Linux. The `svc` immediate is ignored. Every other register is preserved, since `trap_return` restores the whole frame. The numbers are Plan 9's (`port/src/syscall.rs`), and `port::syscall::syscall` dispatches them. So far there's `SYSR1`, which returns 0, `EXITS` and `PWRITE`. A syscall that fails returns -1, and an unknown number kills the process with the status `sys: bad sys call`. An exit status is a byte string of at most `ERRMAX - 1` bytes, and empty means success, as in Plan 9.
+
+There are no file descriptors yet: `pwrite` to fd 1 or 2 writes to the console, ignoring the offset, as Plan 9's `conswrite` does, and any other fd fails. The buffer is copied through a 256-byte stack buffer, so the console lock is never held while touching user memory. Console output is polled, with IRQs masked, so a long write holds the CPU until the UART has sent it all.
 
 ### Kernel context switching
 
