@@ -28,6 +28,8 @@ thread_local! {
     /// allows reading only, Write allows both).
     static PAGES: RefCell<Vec<(usize, Access)>> = const { RefCell::new(Vec::new()) };
     static CONS_OUT: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+    /// The current process, set by set_up.
+    static UP: Cell<*mut Proc<Fake>> = const { Cell::new(core::ptr::null_mut()) };
     /// What put has mapped and unput hasn't unmapped: each page's address,
     /// physical page and permission.
     static MAPPED: RefCell<Vec<(usize, PhysAddr, Perm)>> = const { RefCell::new(Vec::new()) };
@@ -172,10 +174,12 @@ impl ProcArch for Fake {
     }
 
     fn up() -> *mut Proc<Fake> {
-        core::ptr::null_mut()
+        UP.with(Cell::get)
     }
 
-    fn set_up(_p: *mut Proc<Fake>) {}
+    fn set_up(p: *mut Proc<Fake>) {
+        UP.with(|up| up.set(p));
+    }
 
     fn sched() -> *mut () {
         core::ptr::null_mut()

@@ -240,6 +240,9 @@ pub struct Proc<A: ProcArch> {
     pub(crate) bss: Option<VirtRange>,
     /// Set by pexit.  Empty means success, as in Plan 9.
     pub(crate) exit_status: Vec<u8>,
+    /// The error string of the last syscall that failed, NUL-terminated, as
+    /// Plan 9's syserrstr.  errstr swaps it with the caller's buffer.
+    pub(crate) errstr: [u8; sys::ERRMAX],
 }
 
 impl<A: ProcArch> Proc<A> {
