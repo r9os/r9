@@ -33,7 +33,7 @@ pub fn newproc<A: ProcArch>(start: fn()) -> Result<Proc<A>, NewprocError> {
     };
     let label = A::new_context(proc_start::<A>, &kstack);
     let pid = NEXT_PID.fetch_add(1, Ordering::Relaxed);
-    Ok(Proc { pid, start, pmmu, kstack, label, exit_status: Vec::new() })
+    Ok(Proc { pid, start, pmmu, kstack, label, bss: None, exit_status: Vec::new() })
 }
 
 /// Run `p` until it exits, then reap it and return its exit status.

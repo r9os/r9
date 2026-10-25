@@ -11,6 +11,7 @@ pub mod allocator;
 pub mod bitmapalloc;
 pub mod dat;
 pub mod devcons;
+pub mod error;
 #[cfg(test)]
 mod fake;
 pub mod fdt;

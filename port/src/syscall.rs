@@ -6,16 +6,16 @@ use alloc::vec::Vec;
 
 use crate::dat::{Access, ProcArch};
 use crate::devcons::putstrn;
+use crate::error::EBADFD;
 use crate::println;
 use crate::proc::pexit;
+use crate::segment::ibrk;
 use crate::uaccess::{copy_from_user, copy_str_from_user, validate_user_range};
 
 pub const SYSR1: u64 = 0;
 pub const EXITS: u64 = 8;
+pub const BRK_: u64 = 24;
 pub const PWRITE: u64 = 51;
-
-/// Plan 9's Ebadfd.
-const EBADFD: &str = "fd out of range or not open";
 
 /// The longest error or exit string, with its NUL, as Plan 9's ERRMAX.
 pub const ERRMAX: usize = 128;
@@ -28,6 +28,7 @@ pub fn syscall<A: ProcArch>(nr: u64, args: [u64; 6]) -> u64 {
     let r = match nr {
         SYSR1 => sysr1(&args),
         EXITS => sysexits::<A>(&args),
+        BRK_ => sysbrk_::<A>(&args),
         PWRITE => syspwrite::<A>(&args),
         _ => {
             println!("bad sys call number {nr}");
@@ -43,6 +44,14 @@ fn sysr1(_args: &[u64; 6]) -> crate::Result<u64> {
 
 fn sysexits<A: ProcArch>(args: &[u64; 6]) -> ! {
     pexit::<A>(&exits_status::<A>(args[0] as usize))
+}
+
+fn sysbrk_<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
+    let up = A::up();
+    assert!(!up.is_null(), "sysbrk_: no current process");
+    // SAFETY: up is the running process, and nothing else refers to its bss
+    // while it's in a syscall.
+    ibrk::<A>(unsafe { &mut (*up).bss }, args[0] as usize)
 }
 
 /// pwrite(fd, buf, len, offset).  Only fds 1 and 2 are open, and both are the
