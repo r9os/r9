@@ -2,9 +2,13 @@ use crate::config::Configuration;
 use config::{apply_to_build_step, apply_to_clippy_step, apply_to_qemu_step};
 use std::{
     env, fmt,
+    io::{BufRead, BufReader},
     path::{Path, PathBuf},
-    process::{self, Command},
+    process::{self, Command, Stdio},
     str::FromStr,
+    sync::mpsc::{self, RecvTimeoutError},
+    thread,
+    time::{Duration, Instant},
 };
 use target_lexicon::Triple;
 
@@ -205,6 +209,20 @@ fn main() {
                     .value_parser(clap::value_parser!(String)),
             ]),
         )
+        .subcommand(
+            clap::Command::new("smoke").about("Boot r9 under QEMU, and check that echo runs").args(
+                &[
+                    clap::arg!(--release "Build a release version").conflicts_with("debug"),
+                    clap::arg!(--debug "Build a debug version").conflicts_with("release"),
+                    clap::arg!(--arch <arch> "Target architecture")
+                        .value_parser(clap::builder::EnumValueParser::<Arch>::new()),
+                    clap::arg!(--config <name> "Configuration")
+                        .value_parser(clap::builder::NonEmptyStringValueParser::new())
+                        .default_value("default"),
+                    clap::arg!(--verbose "Print commands"),
+                ],
+            ),
+        )
         .subcommand(clap::Command::new("clean").about("Cargo clean"))
         .get_matches();
 
@@ -224,6 +242,12 @@ fn main() {
             let s1 = BuildStep::new(m);
             let s2 = DistStep::new(m);
             let s3 = QemuStep::new(m);
+            s1.run().and_then(|_| s2.run()).and_then(|_| s3.run())
+        }
+        Some(("smoke", m)) => {
+            let s1 = BuildStep::new(m);
+            let s2 = DistStep::new(m);
+            let s3 = SmokeStep::new(m);
             s1.run().and_then(|_| s2.run()).and_then(|_| s3.run())
         }
         Some(("clean", _)) => CleanStep::new().run(),
@@ -465,6 +489,16 @@ impl QemuStep {
     }
 
     fn run(self) -> Result<()> {
+        let mut cmd = self.command()?;
+        let status = annotated_status(&mut cmd)?;
+        if !status.success() {
+            return Err("qemu failed".into());
+        }
+        Ok(())
+    }
+
+    /// The QEMU command to run r9 with, with its serial console on stdio.
+    fn command(&self) -> Result<Command> {
         let target = self.arch.target();
         let dir = self.profile.dir();
         let qemu_system = self.arch.qemu_system();
@@ -473,7 +507,7 @@ impl QemuStep {
             return Err("KVM only supported under x86-64".into());
         }
 
-        match self.arch {
+        let cmd = match self.arch {
             Arch::Aarch64 => {
                 let mut cmd = Command::new(qemu_system);
 
@@ -502,10 +536,7 @@ impl QemuStep {
 
                     println!("Executing {cmd:?}");
                 }
-                let status = annotated_status(&mut cmd)?;
-                if !status.success() {
-                    return Err("qemu failed".into());
-                }
+                cmd
             }
             Arch::Riscv64 => {
                 let mut cmd = Command::new(qemu_system);
@@ -540,10 +571,7 @@ impl QemuStep {
                 if self.verbose {
                     println!("Executing {cmd:?}");
                 }
-                let status = annotated_status(&mut cmd)?;
-                if !status.success() {
-                    return Err("qemu failed".into());
-                }
+                cmd
             }
             Arch::X86_64 => {
                 let mut cmd = Command::new(qemu_system);
@@ -577,14 +605,125 @@ impl QemuStep {
                 if self.verbose {
                     println!("Executing {cmd:?}");
                 }
-                let status = annotated_status(&mut cmd)?;
-                if !status.success() {
-                    return Err("qemu failed".into());
-                }
+                cmd
             }
         };
 
-        Ok(())
+        Ok(cmd)
+    }
+}
+
+/// How long the smoke test waits for echo to exit.
+const SMOKE_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Boot r9 under QEMU, and check that echo runs: the output must have the
+/// lines "hello world" and "echo: exited", and no panic.  QEMU doesn't exit by
+/// itself, so it's killed once echo has exited, the kernel has panicked, or
+/// SMOKE_TIMEOUT has passed.
+struct SmokeStep {
+    qemu: QemuStep,
+}
+
+impl SmokeStep {
+    fn new(matches: &clap::ArgMatches) -> Self {
+        let arch = Arch::from(matches);
+        let qemu = QemuStep {
+            arch,
+            config: load_config(arch, matches),
+            profile: Profile::from(matches),
+            wait_for_gdb: false,
+            kvm: false,
+            dump_dtb: String::new(),
+            verbose: verbose(matches),
+        };
+        Self { qemu }
+    }
+
+    fn run(self) -> Result<()> {
+        if self.qemu.arch != Arch::Aarch64 {
+            return Err("smoke test: only aarch64 runs user programs".into());
+        }
+        let mut cmd = self.qemu.command()?;
+        cmd.stdin(Stdio::null()).stdout(Stdio::piped());
+        let mut child = cmd.spawn().map_err(|e| format!("{}: {e}", cmd.get_program().display()))?;
+        let stdout = child.stdout.take().ok_or("smoke test: no stdout from QEMU")?;
+
+        // Read QEMU's output on another thread, so the wait can time out.
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            // Lossily, so a byte that isn't UTF-8 doesn't end the capture.
+            let mut r = BufReader::new(stdout);
+            let mut buf = Vec::new();
+            while matches!(r.read_until(b'\n', &mut buf), Ok(n) if n > 0) {
+                let line = String::from_utf8_lossy(&buf).trim_end_matches(['\n', '\r']).to_string();
+                if tx.send(line).is_err() {
+                    break;
+                }
+                buf.clear();
+            }
+        });
+
+        let deadline = Instant::now() + SMOKE_TIMEOUT;
+        let mut lines: Vec<String> = Vec::new();
+        let mut timed_out = false;
+        let mut exited = false;
+        loop {
+            match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+                Ok(line) => {
+                    // echo has exited, successfully or not, or the kernel
+                    // has panicked: there's nothing more to wait for.
+                    let done = line.starts_with("echo: exited") || line.contains("panicked");
+                    lines.push(line);
+                    if done {
+                        break;
+                    }
+                }
+                Err(RecvTimeoutError::Timeout) => {
+                    timed_out = true;
+                    break;
+                }
+                // QEMU exited.
+                Err(RecvTimeoutError::Disconnected) => {
+                    exited = true;
+                    break;
+                }
+            }
+        }
+        // Errors are ignored: QEMU may already have exited.
+        let _ = child.kill();
+        let status = child.wait();
+
+        let has = |want: &str| lines.iter().any(|l| l == want);
+        let failure = if exited {
+            Some(match status {
+                Ok(s) => format!("QEMU exited with {s}"),
+                Err(e) => format!("QEMU exited: {e}"),
+            })
+        } else if lines.iter().any(|l| l.contains("panicked")) {
+            Some("the kernel panicked".to_string())
+        } else if !has("hello world") {
+            Some("echo didn't print \"hello world\"".to_string())
+        } else if !has("echo: exited") {
+            Some(if timed_out {
+                "timed out before echo exited".to_string()
+            } else {
+                "echo didn't exit successfully".to_string()
+            })
+        } else {
+            None
+        };
+        match failure {
+            None => {
+                println!("smoke test: ok");
+                Ok(())
+            }
+            Some(why) => {
+                for l in &lines {
+                    println!("{l}");
+                }
+                Err(format!("smoke test failed: {why}").into())
+            }
+        }
     }
 }
 

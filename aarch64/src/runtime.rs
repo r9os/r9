@@ -8,8 +8,6 @@ use core::panic::PanicInfo;
 #[cfg(not(test))]
 use port::println;
 
-// TODO
-//  - Add qemu integration test
 #[panic_handler]
 pub fn panic(info: &PanicInfo) -> ! {
     println!("{}\n", info);
