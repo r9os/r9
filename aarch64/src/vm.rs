@@ -339,21 +339,53 @@ pub unsafe fn unmap_kernel_page(va: usize) -> PhysAddr {
     // SAFETY: the caller guarantees the entry is one map_kernel_page wrote.
     let pa = unsafe { (*pte).phys_addr() };
     unsafe { write_volatile(pte, Entry::empty()) };
-    invalidate_kernel_va(va);
+    invalidate_va(va);
     pa
 }
 
-/// Remove any TLB entry for the kernel address `va` on every CPU.
+/// Unmap the 4KiB page at `va` in the active user address space, and return
+/// the page it mapped, or None if nothing is mapped there.  Its page tables
+/// stay until the address space is released.
+pub fn unmap_user_page(va: usize) -> Option<PhysAddr> {
+    check_mappable_va(va, RootPageTableType::User).ok()?;
+    let mut table = VmTraitImpl {}.active_root(RootPageTableType::User).ok()?;
+    // Follow the walk only through tables that exist: the recursive window
+    // address of a missing table faults.
+    for level in [Level::Level0, Level::Level1, Level::Level2] {
+        // SAFETY: table is an existing table, reached through the recursive
+        // window.
+        let entry = unsafe { (*table).entries[va_index(va, level)] };
+        if !entry.valid() || !entry.is_table(level) {
+            return None;
+        }
+        table =
+            recursive_table_addr(RootPageTableType::User, va, level.next().unwrap()) as *mut Table;
+    }
+    // SAFETY: table is va's existing level 3 table, as above.
+    let pte = unsafe { &raw mut (*table).entries[va_index(va, Level::Level3)] };
+    // SAFETY: as above.
+    let entry = unsafe { pte.read_volatile() };
+    if !entry.valid() {
+        return None;
+    }
+    // SAFETY: as above.
+    unsafe { pte.write_volatile(Entry::empty()) };
+    invalidate_va(va);
+    Some(entry.phys_addr())
+}
+
+/// Remove any TLB entry for `va` on every CPU.
 #[allow(unused_variables)]
-fn invalidate_kernel_va(va: usize) {
+fn invalidate_va(va: usize) {
     #[cfg(not(test))]
     // SAFETY: TLB maintenance and barriers only.
     unsafe {
         // Make the cleared entry visible to the table walker, then remove the
-        // old translation.  Kernel entries are global, so invalidate for all
-        // ASIDs (vaae1is).  The operand's bits [43:0] are VA[55:12]; the bits
-        // above must be clear, as bits [47:44] are the TTL hint (Arm ARM,
-        // TLBI VAAE1IS; Linux __TLBI_VADDR masks the same way).
+        // old translation.  Kernel entries, and user entries until there are
+        // ASIDs, are global, so invalidate for all ASIDs (vaae1is).  The
+        // operand's bits [43:0] are VA[55:12]; the bits above must be clear,
+        // as bits [47:44] are the TTL hint (Arm ARM, TLBI VAAE1IS; Linux
+        // __TLBI_VADDR masks the same way).
         core::arch::asm!(
             "dsb ishst",
             "tlbi vaae1is, {page}",
@@ -532,8 +564,8 @@ impl RootPageTable {
             }
         };
 
+        // Callers handle this, so it isn't printed.
         if dest_entry.valid() {
-            println!("error:vm:map_to:va:{va:#x} is already mapped");
             return Err(PageTableError::AlreadyMapped);
         }
 

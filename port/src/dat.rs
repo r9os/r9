@@ -109,16 +109,38 @@ pub enum Access {
     Write,
 }
 
+/// What a user page may be used for.  Text is read-only and executable, and
+/// data is read-write and never executable, so no page is both writable and
+/// executable.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Perm {
+    Text,
+    Data,
+}
+
+/// Why MMU::put couldn't map a page.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PutError {
+    /// Something is already mapped at the address.
+    AlreadyMapped,
+    /// Memory for the page or its page tables couldn't be allocated.
+    NoMemory,
+}
+
 /// The architecture's MMU, for port code.  Operations take the architecture's
 /// per-process MMU state, rather than a Proc, so that the trait and Proc don't
-/// depend on each other.  put, flush and flushva are placeholders, with no
-/// callers yet.
+/// depend on each other.  flush and flushva are placeholders, with no callers
+/// yet.
 pub trait MMU {
     /// Per-process MMU state (Plan 9's PMMU): a user address space.
     type Pmmu;
 
     /// The end of the user address space.
     const UADDRTOP: usize;
+
+    /// The top of the user stack, and its size.
+    const USTKTOP: usize;
+    const USTKSIZE: usize;
 
     /// Create a new user address space, with nothing mapped.
     fn newpmmu() -> Result<Self::Pmmu, PageAllocError>;
@@ -127,7 +149,19 @@ pub trait MMU {
     /// the current address space.
     fn user_page_ok(va: usize, access: Access) -> bool;
 
-    fn put();
+    /// Map the 4KiB page at `pa` at `va`, with `perm`, in the current user
+    /// address space.  Text is mapped without cache maintenance, so the caller
+    /// must first make the instructions it wrote visible to instruction fetch.
+    fn put(va: usize, pa: PhysAddr, perm: Perm) -> Result<(), PutError>;
+
+    /// Unmap the 4KiB page at `va` in the current user address space, and
+    /// return it, or None if nothing was mapped there.  The caller now owns
+    /// the page.
+    fn unput(va: usize) -> Option<PhysAddr>;
+
+    /// Run `f` with the 4KiB page at `pa` mapped at the address it's given.
+    fn kmap<R>(pa: PhysAddr, f: impl FnOnce(*mut u8) -> R) -> R;
+
     fn flush();
     fn flushva(ptr: *const ());
 

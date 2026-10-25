@@ -36,14 +36,15 @@ use alloc::boxed::Box;
 use core::cell::SyncUnsafeCell;
 use core::hint::black_box;
 use param::{USTKSIZE, USTKTOP, UTZERO};
-use port::dat::ProcArch;
+use port::dat::{MMU, Perm, ProcArch, PutError};
 use port::fdt::DeviceTree;
 use port::mem::{PAGE_SIZE_4K, PhysRange, VirtRange};
 use port::println;
+use port::segment;
 use proc::Arm64;
 use reg::midr_el1::MidrEl1;
 use swtch::Label;
-use vm::{Entry, PhysPageAllocator, RootPageTableType, VaMapping, VmTraitImpl};
+use vm::RootPageTableType;
 
 use crate::kmem::{
     boottext_physrange, bss_physrange, data_physrange, rodata_physrange, text_physrange,
@@ -392,21 +393,10 @@ fn load_user(text: &[u8]) {
         page[..text.len()].copy_from_slice(text);
         vm::sync_icache(k.va(), PAGE_SIZE_4K);
     }
-    vm::map_phys_range(
-        &mut PhysPageAllocator {},
-        &mut VmTraitImpl {},
-        "usertext",
-        &PhysRange::with_pa_len(text_pa, PAGE_SIZE_4K),
-        VaMapping::Addr(UTZERO),
-        Entry::ro_user_text(),
-        PageSize::Page4K,
-        RootPageTableType::User,
-    )
-    .expect("couldn't map user text");
+    Arm64::put(UTZERO, text_pa, Perm::Text).expect("couldn't map user text");
 
     let stack_range = VirtRange::new(USTKTOP - USTKSIZE, USTKTOP);
-    pagealloc::map_zeroed_user_pages("userstack", stack_range)
-        .expect("couldn't allocate user stack");
+    segment::map_zeroed::<Arm64>(stack_range).expect("couldn't allocate user stack");
 }
 
 /// Enter the current process's user text at UTZERO, with its stack at
@@ -455,15 +445,30 @@ fn test_kmap() {
     println!("kmap test: ok");
 }
 
-/// Map some pages into a new address space, then release it, checking that
-/// every page comes back.
+/// Map some pages into a new address space, unmap one, then release it,
+/// checking that every page comes back.  A map_zeroed that fails partway
+/// leaves nothing behind.
 fn test_release() {
+    use port::dat::Access::Read;
     let (used_before, _) = port::pagealloc::usage_bytes();
     let space = vm::AddressSpace::new().expect("couldn't allocate address space");
     // SAFETY: nothing refers to memory through the empty address space.
     unsafe { vm::switch(&space) };
-    let range = VirtRange::new(UTZERO, UTZERO + 4 * PAGE_SIZE_4K);
-    pagealloc::map_zeroed_user_pages("releasetest", range).expect("couldn't map pages");
+    let page = |i| UTZERO + i * PAGE_SIZE_4K;
+
+    segment::map_zeroed::<Arm64>(VirtRange::new(page(4), page(5))).expect("couldn't map a page");
+    let (used_mid, _) = port::pagealloc::usage_bytes();
+    let overlapping = segment::map_zeroed::<Arm64>(VirtRange::new(page(0), page(5)));
+    assert_eq!(overlapping, Err(PutError::AlreadyMapped));
+    assert_eq!(port::pagealloc::usage_bytes().0, used_mid, "a failed map_zeroed leaked");
+    assert!(!vm::user_page_ok(page(0), Read), "a failed map_zeroed left a page mapped");
+    assert!(vm::user_page_ok(page(4), Read));
+
+    segment::map_zeroed::<Arm64>(VirtRange::new(page(0), page(4))).expect("couldn't map pages");
+    let pa = Arm64::unput(page(1)).expect("unput found nothing");
+    assert!(!vm::user_page_ok(page(1), Read), "unput left the page mapped");
+    assert_eq!(Arm64::unput(page(1)), None);
+    port::pagealloc::free_physpage(pa).expect("couldn't free the unput page");
 
     let mut freed = 0;
     // SAFETY: nothing refers to memory through space after this.
