@@ -602,6 +602,7 @@ impl ExpandStep {
         cmd.current_dir(workspace());
         cmd.arg("rustc");
         cmd.arg("-Z").arg("build-std=core,alloc");
+        cmd.arg("-Z").arg("json-target-spec");
         cmd.arg("-p").arg(self.arch.to_string().to_lowercase());
         cmd.arg("--target").arg(format!("lib/{}.json", self.arch.target()));
         cmd.arg("--");
@@ -640,6 +641,7 @@ impl KasmStep {
         cmd.current_dir(workspace());
         cmd.arg("rustc");
         cmd.arg("-Z").arg("build-std=core,alloc");
+        cmd.arg("-Z").arg("json-target-spec");
         cmd.arg("-p").arg(self.arch.to_string().to_lowercase());
         cmd.arg("--target").arg(format!("lib/{}.json", self.arch.target()));
         cmd.arg("--").arg("--emit").arg("asm");
