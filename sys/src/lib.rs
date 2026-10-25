@@ -7,6 +7,7 @@
 pub const SYSR1: u64 = 0;
 pub const EXITS: u64 = 8;
 pub const BRK_: u64 = 24;
+pub const ERRSTR: u64 = 41;
 pub const PWRITE: u64 = 51;
 
 /// The longest error or exit string, with its NUL, as Plan 9's ERRMAX.

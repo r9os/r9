@@ -6,30 +6,75 @@ use alloc::vec::Vec;
 
 use crate::dat::{Access, ProcArch};
 use crate::devcons::putstrn;
-use crate::error::EBADFD;
+use crate::error::{EBADARG, EBADFD};
 use crate::println;
 use crate::proc::pexit;
 use crate::segment::ibrk;
-use crate::uaccess::{copy_from_user, copy_str_from_user, validate_user_range};
+use crate::uaccess::{copy_from_user, copy_str_from_user, copy_to_user, validate_user_range};
 
-use sys::{BRK_, ERRMAX, EXITS, PWRITE, SYSR1};
+use sys::{BRK_, ERRMAX, ERRSTR, EXITS, PWRITE, SYSR1};
 
-/// Run syscall `nr` with `args`, and return its result, or -1 if it failed.
-/// The error string is dropped until there's errstr.  An unknown number kills
-/// the current process with "sys: bad sys call", which is the effect of Plan
-/// 9's note.
+/// Run syscall `nr` with `args`, and return its result, or -1 if it failed,
+/// with its error string recorded in the current process for errstr, as Plan
+/// 9's syscall does.  An unknown number kills the current process with "sys:
+/// bad sys call", which is the effect of Plan 9's note.
 pub fn syscall<A: ProcArch>(nr: u64, args: [u64; 6]) -> u64 {
     let r = match nr {
         SYSR1 => sysr1(&args),
         EXITS => sysexits::<A>(&args),
         BRK_ => sysbrk_::<A>(&args),
+        ERRSTR => syserrstr::<A>(&args),
         PWRITE => syspwrite::<A>(&args),
         _ => {
             println!("bad sys call number {nr}");
             pexit::<A>(b"sys: bad sys call")
         }
     };
-    r.unwrap_or(u64::MAX)
+    r.unwrap_or_else(|err| {
+        set_errstr::<A>(err);
+        u64::MAX
+    })
+}
+
+/// Run `f` on the current process's error string.
+fn with_errstr<A: ProcArch, R>(f: impl FnOnce(&mut [u8; ERRMAX]) -> R) -> R {
+    let up = A::up();
+    assert!(!up.is_null(), "syscall: no current process");
+    // SAFETY: up is the running process, and only its own syscalls, one at a
+    // time, use its error string.
+    f(unsafe { &mut (*up).errstr })
+}
+
+/// Record `err` as the current process's error string, truncated to ERRMAX - 1
+/// bytes.
+fn set_errstr<A: ProcArch>(err: &str) {
+    with_errstr::<A, _>(|errstr| {
+        let n = err.len().min(ERRMAX - 1);
+        errstr[..n].copy_from_slice(&err.as_bytes()[..n]);
+        errstr[n] = 0;
+    });
+}
+
+/// errstr(buf, nbuf): swap the current process's error string with the
+/// NUL-terminated string in `buf`, as Plan 9's generrstr.  Both are truncated
+/// to fit, and NUL-terminated, in min(nbuf, ERRMAX) bytes.
+fn syserrstr<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
+    let (buf, nbuf) = (args[0] as usize, args[1] as usize);
+    if nbuf == 0 {
+        return Err(EBADARG);
+    }
+    validate_user_range::<A>(buf, nbuf, Access::Write);
+    let n = nbuf.min(ERRMAX);
+    let mut tmp = [0; ERRMAX];
+    copy_from_user::<A>(&mut tmp[..n], buf);
+    tmp[n - 1] = 0;
+    // The whole buffer was checked, so these copies can't kill the process.
+    with_errstr::<A, _>(|errstr| {
+        copy_to_user::<A>(buf, &errstr[..n - 1]);
+        copy_to_user::<A>(buf + n - 1, &[0]);
+        errstr[..n].copy_from_slice(&tmp[..n]);
+    });
+    Ok(0)
 }
 
 fn sysr1(_args: &[u64; 6]) -> crate::Result<u64> {
@@ -81,8 +126,28 @@ fn exits_status<A: ProcArch>(ptr: usize) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dat::ProcArch;
     use crate::fake::{Fake, cons_output, fake_cons, user_mem};
     use crate::mem::PAGE_SIZE_4K;
+    use crate::proc::{newproc, reap};
+
+    /// Run `f` as a new process, which is then reaped.
+    fn as_proc<R>(f: impl FnOnce() -> R) -> R {
+        let mut p = newproc::<Fake>(|| {}).expect("newproc failed");
+        Fake::set_up(&mut p);
+        let r = f();
+        Fake::set_up(core::ptr::null_mut());
+        // SAFETY: nothing runs in the fake process.
+        unsafe { reap(p) };
+        r
+    }
+
+    /// The current process's error string, up to its NUL.
+    fn current_errstr() -> Vec<u8> {
+        // SAFETY: as_proc set up the current process.
+        let e = unsafe { (*Fake::up()).errstr };
+        e[..e.iter().position(|&b| b == 0).unwrap()].to_vec()
+    }
 
     #[test]
     fn sysr1_returns_0() {
@@ -91,6 +156,10 @@ mod tests {
 
     #[test]
     fn pwrite_to_the_console() {
+        as_proc(pwrite_to_the_console_as_proc);
+    }
+
+    fn pwrite_to_the_console_as_proc() {
         let mut mem = user_mem();
         let base = mem.base();
         fake_cons();
@@ -111,6 +180,38 @@ mod tests {
         mem.0[at..at + text.len()].copy_from_slice(&text);
         assert_eq!(pwrite(1, base + at, 300), 300);
         assert_eq!(cons_output(), text);
+    }
+
+    #[test]
+    fn errstr_swaps() {
+        as_proc(|| {
+            let mut mem = user_mem();
+            let base = mem.0.as_mut_ptr() as usize;
+            let errstr = |buf: usize, n: u64| syscall::<Fake>(ERRSTR, [buf as u64, n, 0, 0, 0, 0]);
+            assert_eq!(current_errstr(), b"", "a new process's");
+
+            // A failed syscall records its error, and a successful one keeps it.
+            assert_eq!(syscall::<Fake>(PWRITE, [3, base as u64, 0, u64::MAX, 0, 0]), u64::MAX);
+            assert_eq!(syscall::<Fake>(SYSR1, [0; 6]), 0);
+            assert_eq!(current_errstr(), EBADFD.as_bytes());
+
+            // errstr swaps it with the buffer's string.
+            mem.0[..4].copy_from_slice(b"old\0");
+            assert_eq!(errstr(base, ERRMAX as u64), 0);
+            let n = EBADFD.len();
+            assert_eq!(&mem.0[..=n], [EBADFD.as_bytes(), b"\0"].concat());
+            assert_eq!(current_errstr(), b"old");
+
+            // A short buffer truncates both, and NUL-terminates them.
+            mem.0[..6].copy_from_slice(b"abcdef");
+            assert_eq!(errstr(base, 3), 0);
+            assert_eq!(&mem.0[..3], b"ol\0");
+            assert_eq!(current_errstr(), b"ab");
+
+            // A zero-length buffer is a bad argument.
+            assert_eq!(errstr(base, 0), u64::MAX);
+            assert_eq!(current_errstr(), EBADARG.as_bytes());
+        });
     }
 
     #[test]
