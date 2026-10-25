@@ -97,7 +97,7 @@ pub(crate) unsafe fn reap<A: ProcArch>(p: Proc<A>) -> Vec<u8> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::dat::MMU;
     use crate::mem::PhysAddr;
@@ -105,7 +105,7 @@ mod tests {
 
     /// A fake architecture that records what it hands out and takes back.
     /// Tests run in parallel threads, so its state is per thread.
-    struct Fake;
+    pub(crate) struct Fake;
 
     thread_local! {
         static SPACES: RefCell<Vec<u32>> = const { RefCell::new(Vec::new()) };
@@ -129,6 +129,12 @@ mod tests {
             let id = next();
             SPACES.with(|s| s.borrow_mut().push(id));
             Ok(id)
+        }
+
+        const UADDRTOP: usize = crate::uaccess::tests::UADDRTOP;
+
+        fn user_page_ok(va: usize, access: crate::dat::Access) -> bool {
+            crate::uaccess::tests::user_page_ok(va, access)
         }
 
         fn put() {}

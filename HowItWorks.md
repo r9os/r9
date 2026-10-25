@@ -69,6 +69,8 @@ User addresses are translated through `ttbr0_el1`. The layout is defined in `par
 
 No user page is ever both writable and executable. AArch64 has no "kernel read-write, user read-only" permission, so the kernel fills user pages through [`kmap`](#virtual-address-map), never through their user address. `map_zeroed_user_pages` zeroes each page this way before mapping it. The test process copies its text into a page it allocates, through kmap, then cleans the data cache and invalidates the instruction cache (`vm::sync_icache`), so the instructions it fetches at `UTZERO` are the ones written. A process owns every page mapped in its address space, until there are segments.
 
+Syscalls reach user memory through `port/src/uaccess.rs`, after Plan 9's `validaddr`. `validate_user_range` checks that a range is below `UADDRTOP`, then checks each page with `MMU::user_page_ok`. On aarch64 that's `AT S1E0R` or `AT S1E0W` (`vm::user_page_ok`), which asks the MMU whether EL0 could make the access. `copy_from_user` and `copy_str_from_user` then use the user address directly. That's only correct while nothing can change the mapping between the check and the access: one CPU, no preemption, one thread per process, and PAN off. A bad address kills the process with the status `sys: bad address in syscall`.
+
 ### Virtual Memory
 
 #### Virtual address map

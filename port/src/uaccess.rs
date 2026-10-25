@@ -1,0 +1,174 @@
+//! Access to user memory from syscalls, as Plan 9's validaddr in
+//! port/fault.c.
+//!
+//! Each page is checked with MMU::user_page_ok, then the user address is used
+//! directly.  That's correct only while nothing can change the mapping between
+//! the check and the access: one CPU, no preemption, and one thread per
+//! process.
+//!
+//! A bad address kills the process with "sys: bad address in syscall", which
+//! is the effect of Plan 9's validaddr, so these functions don't return on
+//! failure.  Callers must hold nothing that needs releasing, such as a KMap.
+
+use crate::dat::{Access, ProcArch};
+use crate::mem::PAGE_SIZE_4K;
+use crate::proc::pexit;
+
+/// Whether user mode could make `access` to every byte of [addr, addr + len).
+/// A range of no bytes is fine if it's within the user address space.
+pub(crate) fn user_range_ok<A: ProcArch>(addr: usize, len: usize, access: Access) -> bool {
+    let Some(end) = addr.checked_add(len) else {
+        return false;
+    };
+    if end > A::UADDRTOP {
+        return false;
+    }
+    if len == 0 {
+        return true;
+    }
+    (addr & !(PAGE_SIZE_4K - 1)..end).step_by(PAGE_SIZE_4K).all(|va| A::user_page_ok(va, access))
+}
+
+/// Kill the current process unless user mode could make `access` to every
+/// byte of [addr, addr + len).
+pub fn validate_user_range<A: ProcArch>(addr: usize, len: usize, access: Access) {
+    if !user_range_ok::<A>(addr, len, access) {
+        pexit::<A>(b"sys: bad address in syscall");
+    }
+}
+
+/// Copy `dst.len()` bytes from user address `src` into `dst`, or kill the
+/// current process if they can't all be read.
+pub fn copy_from_user<A: ProcArch>(dst: &mut [u8], src: usize) {
+    validate_user_range::<A>(src, dst.len(), Access::Read);
+    // SAFETY: the whole range is mapped readable, and stays so until the
+    // syscall returns.  dst is kernel memory, so they don't overlap.
+    unsafe { core::ptr::copy_nonoverlapping(src as *const u8, dst.as_mut_ptr(), dst.len()) };
+}
+
+/// Copy the NUL-terminated string at user address `src` into `dst`, without
+/// its NUL, as Linux's strncpy_from_user.  Return its length, or `dst.len()` if
+/// there's no NUL within `dst.len()` bytes, in which case it's truncated.
+/// Each page is checked before it's read, so a string may end just before an
+/// unmapped page.  Kill the current process if a byte it needs can't be read.
+pub fn copy_str_from_user<A: ProcArch>(dst: &mut [u8], src: usize) -> usize {
+    let mut n = 0;
+    while n < dst.len() {
+        // The first check puts src below UADDRTOP, so this can't overflow.
+        let va = src + n;
+        validate_user_range::<A>(va, 1, Access::Read);
+        let page_end = (va & !(PAGE_SIZE_4K - 1)) + PAGE_SIZE_4K;
+        let chunk = (page_end - va).min(dst.len() - n);
+        for i in 0..chunk {
+            // SAFETY: the page containing va..va + chunk is mapped readable.
+            let b = unsafe { core::ptr::read((va + i) as *const u8) };
+            if b == 0 {
+                return n + i;
+            }
+            dst[n + i] = b;
+        }
+        n += chunk;
+    }
+    n
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+    use crate::proc::tests::Fake;
+    use std::cell::RefCell;
+
+    /// The fake architecture's user address space ends here, above any
+    /// address the host's heap uses.
+    pub(crate) const UADDRTOP: usize = 1 << 47;
+
+    thread_local! {
+        /// The fake's user pages: each page's base, and the access it allows
+        /// (Read allows reading only, Write allows both).
+        static PAGES: RefCell<Vec<(usize, Access)>> = const { RefCell::new(Vec::new()) };
+    }
+
+    pub(crate) fn user_page_ok(va: usize, access: Access) -> bool {
+        let base = va & !(PAGE_SIZE_4K - 1);
+        PAGES.with(|p| {
+            p.borrow()
+                .iter()
+                .any(|&(b, a)| b == base && (access == Access::Read || a == Access::Write))
+        })
+    }
+
+    #[repr(C, align(4096))]
+    struct Mem([u8; 3 * PAGE_SIZE_4K]);
+
+    /// Three pages of fake user memory: read-write, read-only, then unmapped.
+    fn user_mem() -> Box<Mem> {
+        let mem = Box::new(Mem([0; 3 * PAGE_SIZE_4K]));
+        let base = mem.0.as_ptr().addr();
+        assert!(base + mem.0.len() <= UADDRTOP);
+        PAGES.with(|p| {
+            *p.borrow_mut() = vec![(base, Access::Write), (base + PAGE_SIZE_4K, Access::Read)]
+        });
+        mem
+    }
+
+    #[test]
+    fn user_range_ok_ranges() {
+        let mem = user_mem();
+        let base = mem.0.as_ptr().addr();
+        let ok = user_range_ok::<Fake>;
+        assert!(ok(base, 2 * PAGE_SIZE_4K, Access::Read));
+        assert!(ok(base + 10, PAGE_SIZE_4K, Access::Read), "a range spanning pages");
+        assert!(
+            !ok(base + PAGE_SIZE_4K - 1, 2, Access::Write),
+            "a write reaching a read-only page"
+        );
+        assert!(
+            !ok(base + PAGE_SIZE_4K, 2 * PAGE_SIZE_4K, Access::Read),
+            "reaching an unmapped page"
+        );
+        assert!(ok(base + 2 * PAGE_SIZE_4K + 1, 0, Access::Read), "an empty range");
+        assert!(ok(UADDRTOP, 0, Access::Read), "an empty range at the top");
+        assert!(!ok(UADDRTOP, 1, Access::Read), "past the top");
+        assert!(!ok(UADDRTOP - 1, 2, Access::Read), "crossing the top");
+        assert!(!ok(usize::MAX, 2, Access::Read), "overflow");
+    }
+
+    #[test]
+    fn copy_from_user_copies() {
+        let mut mem = user_mem();
+        let base = mem.0.as_ptr().addr();
+        mem.0[PAGE_SIZE_4K - 2..PAGE_SIZE_4K + 2].copy_from_slice(b"abcd");
+        let mut buf = [0; 4];
+        copy_from_user::<Fake>(&mut buf, base + PAGE_SIZE_4K - 2);
+        assert_eq!(&buf, b"abcd");
+    }
+
+    #[test]
+    fn copy_str_from_user_strings() {
+        let mut mem = user_mem();
+        let base = mem.0.as_ptr().addr();
+        let mut buf = [0; 8];
+
+        mem.0[..4].copy_from_slice(b"bye\0");
+        assert_eq!(copy_str_from_user::<Fake>(&mut buf, base), 3);
+        assert_eq!(&buf[..3], b"bye");
+
+        let at = PAGE_SIZE_4K - 2;
+        mem.0[at..at + 5].copy_from_slice(b"span\0");
+        assert_eq!(copy_str_from_user::<Fake>(&mut buf, base + at), 4, "a string spanning pages");
+        assert_eq!(&buf[..4], b"span");
+
+        mem.0[..8].copy_from_slice(b"too long");
+        assert_eq!(copy_str_from_user::<Fake>(&mut buf, base), 8, "no NUL, so truncated");
+        assert_eq!(&buf, b"too long");
+
+        let at = 2 * PAGE_SIZE_4K - 3;
+        mem.0[at..at + 3].copy_from_slice(b"ro\0");
+        assert_eq!(
+            copy_str_from_user::<Fake>(&mut buf, base + at),
+            2,
+            "ending just before an unmapped page"
+        );
+        assert_eq!(&buf[..2], b"ro");
+    }
+}

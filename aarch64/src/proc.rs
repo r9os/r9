@@ -2,10 +2,11 @@
 
 use crate::kstack::{self, KStack};
 use crate::mach::mach;
+use crate::param;
 use crate::swtch::{self, Label};
 use crate::trap::TrapFrame;
 use crate::vm::{self, AddressSpace};
-use port::dat::{MMU, Proc, ProcArch};
+use port::dat::{Access, MMU, Proc, ProcArch};
 use port::mem::PhysAddr;
 use port::pagealloc::PageAllocError;
 
@@ -14,8 +15,14 @@ pub struct Arm64;
 impl MMU for Arm64 {
     type Pmmu = AddressSpace;
 
+    const UADDRTOP: usize = param::UADDRTOP;
+
     fn newpmmu() -> Result<AddressSpace, PageAllocError> {
         AddressSpace::new()
+    }
+
+    fn user_page_ok(va: usize, access: Access) -> bool {
+        vm::user_page_ok(va, access)
     }
 
     fn put() {

@@ -117,8 +117,15 @@ pub trait MMU {
     /// Per-process MMU state (Plan 9's PMMU): a user address space.
     type Pmmu;
 
+    /// The end of the user address space.
+    const UADDRTOP: usize;
+
     /// Create a new user address space, with nothing mapped.
     fn newpmmu() -> Result<Self::Pmmu, PageAllocError>;
+
+    /// Whether user mode could make `access` to the page containing `va`, in
+    /// the current address space.
+    fn user_page_ok(va: usize, access: Access) -> bool;
 
     fn put();
     fn flush();

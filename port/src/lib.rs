@@ -17,5 +17,6 @@ pub mod mcslock;
 pub mod mem;
 pub mod pagealloc;
 pub mod proc;
+pub mod uaccess;
 
 pub type Result<T> = core::result::Result<T, &'static str>;
