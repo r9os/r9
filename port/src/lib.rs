@@ -13,6 +13,7 @@ pub mod dat;
 pub mod devcons;
 pub mod elf;
 pub mod error;
+pub mod exec;
 #[cfg(test)]
 mod fake;
 pub mod fdt;

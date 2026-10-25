@@ -139,6 +139,9 @@ pub trait MMU {
     /// The end of the user address space.
     const UADDRTOP: usize;
 
+    /// The start of user text.
+    const UTZERO: usize;
+
     /// The top of the user stack, and its size.
     const USTKTOP: usize;
     const USTKSIZE: usize;

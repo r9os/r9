@@ -96,6 +96,7 @@ impl MMU for Fake {
     type Pmmu = u32;
 
     const UADDRTOP: usize = UADDRTOP;
+    const UTZERO: usize = 0x10000;
     const USTKTOP: usize = USTKTOP;
     const USTKSIZE: usize = 64 * 1024;
 
