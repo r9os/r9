@@ -2,14 +2,18 @@
 //! a heap and formatted output.  A program is a `no_main` binary that defines
 //! `#[unsafe(no_mangle)] extern "C" fn main(argc: usize, argv: *const *const
 //! u8)`, and calls exits.
+//!
+//! It's only for r9, so on any other target it's empty: a crate that uses it
+//! can still build its library, and test it, on the host.
 
+#![cfg(target_os = "none")]
 #![no_std]
 
 use core::alloc::{GlobalAlloc, Layout};
 use core::fmt::{self, Write};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use sys::{BRK_, EXITS, PWRITE};
+use sys::{BRK_, ERRSTR, EXITS, PWRITE};
 
 pub use sys::ERRMAX;
 
@@ -74,6 +78,44 @@ pub fn pwrite(fd: i32, buf: &[u8], off: i64) -> isize {
 /// Write `buf` to `fd`, as Plan 9's write: pwrite at the current offset.
 pub fn write(fd: i32, buf: &[u8]) -> isize {
     pwrite(fd, buf, -1)
+}
+
+/// Swap the process's error string with the NUL-terminated string in `buf`,
+/// as Plan 9's errstr.  Both are truncated to fit `buf`.  Return 0, or -1.
+pub fn errstr(buf: &mut [u8]) -> i32 {
+    syscall(ERRSTR, buf.as_mut_ptr().addr() as u64, buf.len() as u64, 0, 0) as i32
+}
+
+/// Copy the process's error string into `buf`, NUL-terminated and truncated
+/// to fit, leaving it unchanged, as Plan 9's rerrstr: errstr twice.
+pub fn rerrstr(buf: &mut [u8]) {
+    let mut tmp = [0; ERRMAX];
+    errstr(&mut tmp);
+    let n = tmp.iter().position(|&b| b == 0).unwrap_or(0).min(buf.len().saturating_sub(1));
+    if let Some(dst) = buf.get_mut(..=n) {
+        dst[..n].copy_from_slice(&tmp[..n]);
+        dst[n] = 0;
+    }
+    errstr(&mut tmp);
+}
+
+/// The process's error string, formatted as Plan 9's %r: it's read with
+/// rerrstr, so it's unchanged.
+pub struct Errstr;
+
+impl fmt::Display for Errstr {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut buf = [0; ERRMAX];
+        rerrstr(&mut buf);
+        let n = buf.iter().position(|&b| b == 0).unwrap_or(0);
+        for chunk in buf[..n].utf8_chunks() {
+            f.write_str(chunk.valid())?;
+            if !chunk.invalid().is_empty() {
+                f.write_str("\u{fffd}")?;
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Move the end of the bss to `addr`, or return its start if `addr` is 0.
