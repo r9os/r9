@@ -12,13 +12,7 @@ use crate::proc::pexit;
 use crate::segment::ibrk;
 use crate::uaccess::{copy_from_user, copy_str_from_user, validate_user_range};
 
-pub const SYSR1: u64 = 0;
-pub const EXITS: u64 = 8;
-pub const BRK_: u64 = 24;
-pub const PWRITE: u64 = 51;
-
-/// The longest error or exit string, with its NUL, as Plan 9's ERRMAX.
-pub const ERRMAX: usize = 128;
+use sys::{BRK_, ERRMAX, EXITS, PWRITE, SYSR1};
 
 /// Run syscall `nr` with `args`, and return its result, or -1 if it failed.
 /// The error string is dropped until there's errstr.  An unknown number kills

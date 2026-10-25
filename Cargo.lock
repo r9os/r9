@@ -10,6 +10,7 @@ dependencies = [
  "bitstruct",
  "num_enum",
  "port",
+ "r9-sys",
 ]
 
 [[package]]
@@ -221,6 +222,7 @@ name = "port"
 version = "0.1.0"
 dependencies = [
  "bitflags 2.9.4",
+ "r9-sys",
 ]
 
 [[package]]
@@ -240,6 +242,10 @@ checksum = "1885c039570dc00dcb4ff087a89e185fd56bae234ddc7f056a945bf36467248d"
 dependencies = [
  "proc-macro2",
 ]
+
+[[package]]
+name = "r9-sys"
+version = "0.1.0"
 
 [[package]]
 name = "raw-cpuid"
