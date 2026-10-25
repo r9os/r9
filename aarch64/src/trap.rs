@@ -148,7 +148,7 @@ fn syscall(frame: &mut TrapFrame) {
     println!("Syscall {syscallid} from EL{}: x0={:#x}", frame.exception_level(), frame.x0);
 
     if syscallid == 3 {
-        port::proc::pexit::<Arm64>(frame.x0);
+        port::proc::pexit::<Arm64>(alloc::format!("{}", frame.x0).as_bytes());
     }
 
     frame.x0 += 1;

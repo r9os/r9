@@ -1,6 +1,7 @@
 extern crate alloc;
 
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 use bitflags::bitflags;
 use core::ptr::NonNull;
 use core::result::Result;
@@ -182,7 +183,8 @@ pub struct Proc<A: ProcArch> {
     pub(crate) pmmu: A::Pmmu,
     pub(crate) kstack: A::KStack,
     pub(crate) label: A::Label,
-    pub(crate) exit_status: Option<u64>,
+    /// Set by pexit.  Empty means success, as in Plan 9.
+    pub(crate) exit_status: Vec<u8>,
 }
 
 impl<A: ProcArch> Proc<A> {
