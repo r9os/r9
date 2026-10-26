@@ -42,6 +42,7 @@ pub enum ExceptionClass {
     Ls64 = 10,
     BranchTargetException = 13,
     IllegalExecutionState = 14,
+    Svc64 = 21,
     MsrMrsSystem = 24,
     Sve = 25,
     Tstart = 27,

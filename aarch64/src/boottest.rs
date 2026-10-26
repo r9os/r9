@@ -77,6 +77,38 @@ core::arch::global_asm!(
     ".balign 8",
     "1: .quad {KZERO}",
     "usertest_kernel_end:",
+    // Read, then write, the unmapped page after the text.  Each is killed
+    // by the fault.
+    ".balign 8",
+    "usertest_faultread:",
+    "   ldr x0, 1f",
+    "   ldr x1, [x0]",
+    ".balign 8",
+    "1: .quad {UNMAPPED}",
+    "usertest_faultread_end:",
+    ".balign 8",
+    "usertest_faultwrite:",
+    "   ldr x0, 1f",
+    "   str xzr, [x0]",
+    ".balign 8",
+    "1: .quad {UNMAPPED}",
+    "usertest_faultwrite_end:",
+    // Write to the text, which is read-only.
+    ".balign 8",
+    "usertest_textwrite:",
+    "   adr x0, usertest_textwrite",
+    "   str xzr, [x0]",
+    "usertest_textwrite_end:",
+    // An undefined instruction.
+    ".balign 8",
+    "usertest_udf:",
+    "   udf #0",
+    "usertest_udf_end:",
+    // wfi, which SCTLR_EL1.nTWI traps at EL0.
+    ".balign 8",
+    "usertest_wfi:",
+    "   wfi",
+    "usertest_wfi_end:",
     // pwrite(1, "hello\n", 6, -1) returns 6, then exits(nil), or
     // exits("pwrite") if it didn't.
     ".balign 8",
@@ -243,9 +275,8 @@ core::arch::global_asm!(
     "8: .quad {BSS} + 2 * {PAGE} - 1",
     "9: .quad {BSS}",
     "usertest_brk_end:",
-    // Grow the bss by a page and use it, shrink it back, then pwrite from the
-    // freed page, which kills the process.  exits("brk shrink") if it
-    // doesn't.
+    // Grow the bss by a page and use it, shrink it back, then read the freed
+    // page, which kills the process.  exits("brk shrink") if it doesn't.
     ".balign 8",
     "usertest_brkshrink:",
     "   ldr x19, 9f",
@@ -258,12 +289,7 @@ core::arch::global_asm!(
     "   mov x8, #{BRK}",
     "   svc #0",
     "   cbnz x0, 1f",
-    "   mov x0, #1",
-    "   mov x1, x19",
-    "   mov x2, #1",
-    "   mov x3, #-1",
-    "   mov x8, #{PWRITE}",
-    "   svc #0",
+    "   ldr x0, [x19]",
     "1: adr x0, 7f",
     "   mov x8, #{EXITS}",
     "   svc #0",
@@ -336,6 +362,9 @@ macro_rules! usertext {
     }};
 }
 
+// The fault tests' statuses spell out these addresses.
+const _: () = assert!(UTZERO == 0x10000 && BSS == 0x11000);
+
 /// A test process: its start function, and the status it should exit with.
 struct UserTest {
     name: &'static str,
@@ -369,6 +398,31 @@ fn test_user_processes() {
             status: b"sys: bad address in syscall",
         },
         UserTest {
+            name: "read an unmapped page",
+            start: || run_user(usertext!(usertest_faultread, usertest_faultread_end)),
+            status: b"sys: trap: fault read va=0x11000",
+        },
+        UserTest {
+            name: "write an unmapped page",
+            start: || run_user(usertext!(usertest_faultwrite, usertest_faultwrite_end)),
+            status: b"sys: trap: fault write va=0x11000",
+        },
+        UserTest {
+            name: "write to text",
+            start: || run_user(usertext!(usertest_textwrite, usertest_textwrite_end)),
+            status: b"sys: trap: fault write va=0x10000",
+        },
+        UserTest {
+            name: "undefined instruction",
+            start: || run_user(usertext!(usertest_udf, usertest_udf_end)),
+            status: b"sys: trap: undefined instruction pc=0x10000",
+        },
+        UserTest {
+            name: "wfi",
+            start: || run_user(usertext!(usertest_wfi, usertest_wfi_end)),
+            status: b"sys: trap: wfi or wfe pc=0x10000",
+        },
+        UserTest {
             name: "pwrite",
             start: || run_user(usertext!(usertest_hello, usertest_hello_end)),
             status: b"",
@@ -396,7 +450,7 @@ fn test_user_processes() {
         UserTest {
             name: "brk shrink",
             start: || run_user(usertext!(usertest_brkshrink, usertest_brkshrink_end)),
-            status: b"sys: bad address in syscall",
+            status: b"sys: trap: fault read va=0x11000",
         },
         UserTest {
             name: "brk into the stack",

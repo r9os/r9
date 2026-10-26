@@ -1,8 +1,10 @@
+use alloc::format;
+use alloc::string::{String, ToString};
 use core::fmt;
 use core::mem::{offset_of, size_of};
 
 use crate::proc::Arm64;
-use crate::reg::esr_el1::EsrEl1;
+use crate::reg::esr_el1::{EsrEl1, ExceptionClass};
 use port::exec::UserRegs;
 use port::println;
 
@@ -132,14 +134,52 @@ pub extern "C" fn trap_unsafe(frame: *mut TrapFrame) {
     unsafe { trap(frame.as_mut().unwrap()) }
 }
 
+/// trap.S's interrupt_type for a synchronous exception from 64-bit EL0.
+const SYNC_INVALID_EL0_64: u64 = 8;
+
 fn trap(frame: &mut TrapFrame) {
-    if frame.esr_el1.ec() == 0x15 {
-        syscall(frame);
-        return;
+    // Only synchronous exceptions and SErrors write ESR_EL1 (Arm ARM DDI 0487
+    // M.d, D1.4.2), so an IRQ or FIQ from EL0 isn't taken as a fault.
+    if frame.interrupt_type == SYNC_INVALID_EL0_64 {
+        if frame.esr_el1.exception_class_enum() == Ok(ExceptionClass::Svc64) {
+            syscall(frame);
+            return;
+        }
+        port::proc::pexit::<Arm64>(user_fault(frame).as_bytes());
     }
 
     println!("{:#?}", frame);
     panic!("Unhandled exception from EL{}", frame.exception_level());
+}
+
+/// The status a process exits with when it takes an exception other than a
+/// syscall.  Faults and breakpoints use Plan 9's words (bcm/trap.c), and
+/// other exceptions follow its `sys: trap:` form.  FAR_EL1 holds an abort's
+/// address (Arm ARM DDI 0487 M.d, D24.2.47).
+fn user_fault(frame: &TrapFrame) -> String {
+    use ExceptionClass::*;
+    let class = frame.esr_el1.exception_class_enum();
+    let pc = frame.elr_el1;
+    match class {
+        Ok(DataAbortLowerEl | InstructionAbortLowerEl) => {
+            // A data abort's ISS has WnR at bit 6: whether the access was a
+            // write (D24.2.44).
+            let write = class == Ok(DataAbortLowerEl) && frame.esr_el1.iss() & (1 << 6) != 0;
+            let rw = if write { "write" } else { "read" };
+            format!("sys: trap: fault {rw} va={:#x}", frame.far_el1)
+        }
+        Ok(Brk) => "sys: breakpoint".to_string(),
+        _ => {
+            let what = match class {
+                Ok(Unknown) => "undefined instruction".to_string(),
+                Ok(WaitFor) => "wfi or wfe".to_string(),
+                Ok(PcAlignmentFault) => "misaligned pc".to_string(),
+                Ok(SpAlignmentFault) => "misaligned sp".to_string(),
+                _ => format!("exception class {:#x}", frame.esr_el1.ec()),
+            };
+            format!("sys: trap: {what} pc={pc:#x}")
+        }
+    }
 }
 
 /// Take the syscall number from x8 and its arguments from x0-x5, and return
