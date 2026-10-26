@@ -35,11 +35,13 @@ mod vmdebug;
 
 extern crate alloc;
 
+use core::cell::SyncUnsafeCell;
 use port::fdt::DeviceTree;
 use port::mem::{PhysAddr, PhysRange, VirtRange};
 use port::println;
 use proc::{Arm64, enter_user};
 use reg::midr_el1::MidrEl1;
+use swtch::Label;
 use vm::RootPageTableType;
 
 use crate::kmem::{
@@ -149,15 +151,15 @@ fn print_board_info() {
 
 fn print_stacks() {
     unsafe extern "C" {
-        static interruptstackbase: [u64; 0];
-        static interruptstacktop: [u64; 0];
+        static overflowstackbase: [u64; 0];
+        static overflowstacktop: [u64; 0];
     }
 
-    let interrupt_stack_base = unsafe { interruptstackbase.as_ptr().addr() };
-    let interrupt_stack_max = unsafe { interruptstacktop.as_ptr().addr() };
-    let range = VirtRange::new(interrupt_stack_base, interrupt_stack_max);
+    let base = unsafe { overflowstackbase.as_ptr().addr() };
+    let top = unsafe { overflowstacktop.as_ptr().addr() };
+    let range = VirtRange::new(base, top);
     let range_size = range.size();
-    println!("Interrupt stack:\t {range} ({range_size:#x})");
+    println!("Overflow stack:\t {range} ({range_size:#x})");
 }
 
 /// dtb_pa is the physical address of the DTB structure, which is mapped at
@@ -214,9 +216,30 @@ pub extern "C" fn main9(dtb_pa: usize) {
 
     vmdebug::print_recursive_tables(RootPageTableType::Kernel);
 
+    // The rest of boot runs on a kernel stack: unlike the boot stack, it has an
+    // unmapped guard below it, so an overflow faults, and trap.S reports it.
+    on_kernel_stack(main9_rest);
+}
+
+/// The rest of main9, on a kernel stack: the boot tests, then echo.
+extern "C" fn main9_rest() -> ! {
     boottest::run();
 
     shutdown(run_echo())
+}
+
+/// Run `f` on a newly allocated kernel stack.  The boot context isn't resumed.
+fn on_kernel_stack(f: extern "C" fn() -> !) -> ! {
+    static BOOT: SyncUnsafeCell<Label> = SyncUnsafeCell::new(Label::new());
+    static NEXT: SyncUnsafeCell<Label> = SyncUnsafeCell::new(Label::new());
+    let stack = kstack::alloc().expect("couldn't allocate main9's kernel stack");
+    // SAFETY: NEXT is a new context on a stack nothing else uses, and BOOT is
+    // only written to.
+    unsafe {
+        *NEXT.get() = Label::new_context(f, stack.top());
+        swtch::swtch(BOOT.get(), NEXT.get());
+    }
+    unreachable!("the boot context was resumed")
 }
 
 /// Stop this CPU once the system has run, or has panicked.  Built for the smoke

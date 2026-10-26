@@ -2,6 +2,7 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use core::fmt;
 use core::mem::{offset_of, size_of};
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::proc::Arm64;
 use crate::reg::esr_el1::{EsrEl1, ExceptionClass};
@@ -9,7 +10,12 @@ use port::exec::UserRegs;
 use port::println;
 
 #[cfg(not(test))]
-core::arch::global_asm!(include_str!("trap.S"));
+core::arch::global_asm!(
+    include_str!("trap.S"),
+    KSTACK_SHIFT = const crate::param::KSTACKSIZE.trailing_zeros(),
+);
+
+const _: () = assert!(crate::param::KSTACKSIZE.is_power_of_two());
 
 pub fn init() {
     #[cfg(not(test))]
@@ -132,6 +138,23 @@ impl fmt::Debug for TrapFrame {
 #[unsafe(no_mangle)]
 pub extern "C" fn trap_unsafe(frame: *mut TrapFrame) {
     unsafe { trap(frame.as_mut().unwrap()) }
+}
+
+/// Called from trap.S, on the overflow stack, when an exception found a kernel
+/// stack overflowed.  `sp` is the overflowed stack pointer, less the TrapFrame
+/// trap.S reserved before it noticed.
+#[unsafe(no_mangle)]
+pub extern "C" fn stack_overflow_unsafe(frame: *const TrapFrame, sp: u64) -> ! {
+    // The overflow stack is reused from its top, so a second overflow would
+    // overwrite the first's report: park instead.
+    static REPORTED: AtomicBool = AtomicBool::new(false);
+    if REPORTED.swap(true, Ordering::Relaxed) {
+        crate::halt();
+    }
+    // SAFETY: trap.S saved the frame on the overflow stack, and passes it.
+    let frame = unsafe { &*frame };
+    println!("{:#?}", frame);
+    panic!("kernel stack overflow: sp={:#x}", sp + size_of::<TrapFrame>() as u64);
 }
 
 /// trap.S's interrupt_type for a synchronous exception from 64-bit EL0.

@@ -32,7 +32,7 @@ We're now in rust, in `main9`, and at a high level we:
 5. Initialise the [console](#devcons), ensuring we can use `port::println` to write to the UART.
 6. Set up the mailbox (rpi-specific, but allows us to extract more information from the hardware, and interact directly in certain ways).
 7. Write out some useful system information, and the kernel page tables.
-8. Run the boot tests in `boottest.rs`, panicking if one fails: `kmap`, switching between kernel contexts with `swtch`, releasing an address space, and a [process](#processes) for each of a set of small assembled test programs and `user/elftest`. These make syscalls, write to the console and exit, and the tests check each one's exit status and that everything it allocated is freed.
+8. Continue on a newly allocated kernel stack (`on_kernel_stack`): unlike the boot stack, it has an unmapped guard below it, so an overflow faults and is reported. Then run the boot tests in `boottest.rs`, panicking if one fails: `kmap`, switching between kernel contexts with `swtch`, releasing an address space, and a [process](#processes) for each of a set of small assembled test programs and `user/elftest`. These make syscalls, write to the console and exit, and the tests check each one's exit status and that everything it allocated is freed.
 9. Run [echo](#userspace) as a process, with argv `["echo", "hello", "world"]`, and print how it exited: `echo: exited` if it succeeded.
 
 ### Exceptions
@@ -41,6 +41,7 @@ We're now in rust, in `main9`, and at a high level we:
 
 - Exceptions from EL1 are taken on the interrupted kernel stack.
 - Exceptions from EL0 are taken on whatever `SP_EL1` was when we entered EL0. `to_user` enters EL0 by building a `TrapFrame` at the top of the process's kernel stack and jumping to `trap_return`, which leaves `SP_EL1` at the top of that stack. A process's first kernel context starts below that frame's space, as Plan 9 keeps the top of each kernel stack for its `Ureg`.
+- After reserving the frame, each entry checks that `sp` is still inside its stack, as Linux arm64'"'"'s `kernel_ventry` does. Every EL1 stack is the upper half of a block aligned to twice its size: the kernel stacks'"'"' slots, the boot stack, and the overflow stack. So a valid `sp` has bit 14 set, and one that has run into the guard below has it clear. On an overflow, the entry switches to the overflow stack (`trap.S`), and `stack_overflow_unsafe` prints the frame and panics with the overflowed `sp`, rather than faulting again forever.
 
 The kernel is built softfloat (see `lib/aarch64-unknown-none-elf.json`), so it never uses the FP/SIMD registers and exception entry doesn't need to save them. `to_user` zeroes the user FP/SIMD state, so one process can't read another's. It will need saving once processes are switched between.
 
