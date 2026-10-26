@@ -7,7 +7,7 @@ KZERO = 0xffff800000000000;
 
 SECTIONS {
 	/* Entrypoint for Raspberry Pi will be at 0x80000 */
-	. = ${LOAD-ADDRESS};
+	. = KZERO + ${LOAD-ADDRESS};
 
 
 	/* Group boottext and text */
@@ -74,3 +74,6 @@ SECTIONS {
 		*(.eh_frame .eh_frame_hdr .note.GNU-stack)
 	}
 }
+
+/* param_kzero is param::KZERO, exported by main.rs */
+ASSERT(param_kzero == KZERO, "KZERO in kernel.ld must match param::KZERO")

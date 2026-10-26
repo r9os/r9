@@ -34,7 +34,7 @@ mod vmdebug;
 extern crate alloc;
 
 use port::fdt::DeviceTree;
-use port::mem::{PhysRange, VirtRange};
+use port::mem::{PhysAddr, PhysRange, VirtRange};
 use port::println;
 use proc::{Arm64, enter_user};
 use reg::midr_el1::MidrEl1;
@@ -47,7 +47,28 @@ use crate::kmem::{
 use crate::vm::PageSize;
 
 #[cfg(not(test))]
-core::arch::global_asm!(include_str!("l.S"));
+core::arch::global_asm!(
+    include_str!("l.S"),
+    STACKSZ = const param::KSTACKSIZE,
+    HCR_EL2 = const aarch64_cpu::registers::HCR_EL2::RW::EL1IsAarch64.value,
+    SPSR_EL2 = const {
+        use aarch64_cpu::registers::SPSR_EL2::{A, D, F, I, M};
+        M::EL1h.value | D::Masked.value | A::Masked.value | I::Masked.value | F::Masked.value
+    },
+    CPACR_EL1 = const aarch64_cpu::registers::CPACR_EL1::FPEN::TrapNothing.value,
+    SCTLR_EL1_MMU = const {
+        use aarch64_cpu::registers::SCTLR_EL1::{C, I, M};
+        M::Enable.value | C::Cacheable.value | I::Cacheable.value
+    },
+);
+
+// kernel.ld asserts that its own KZERO matches this.
+#[cfg(not(test))]
+core::arch::global_asm!(
+    ".globl param_kzero",
+    ".set param_kzero, {KZERO}",
+    KZERO = const param::KZERO,
+);
 
 fn print_memory_range(name: &str, range: &PhysRange) {
     let size = range.size();
@@ -111,10 +132,10 @@ fn print_stacks() {
     println!("Interrupt stack:\t {range} ({range_size:#x})");
 }
 
-/// dtb_va is the virtual address of the DTB structure, mapped at KZERO + its
-/// physical address.
+/// dtb_pa is the physical address of the DTB structure, which is mapped at
+/// KZERO + dtb_pa.
 #[unsafe(no_mangle)]
-pub extern "C" fn main9(dtb_va: usize) {
+pub extern "C" fn main9(dtb_pa: usize) {
     mach::init();
     trap::init();
 
@@ -128,8 +149,9 @@ pub extern "C" fn main9(dtb_va: usize) {
     }
 
     // Parse the DTB before we set up memory so we can correctly map it
+    let dtb_va = param::KZERO + dtb_pa;
     let dt = unsafe { DeviceTree::from_usize(dtb_va).unwrap() };
-    let dtb_physrange = PhysRange::with_pa_len(kmem::paddr(dtb_va as *const u8), dt.size());
+    let dtb_physrange = PhysRange::with_pa_len(PhysAddr::new(dtb_pa as u64), dt.size());
 
     // Set up page allocator
     let mut physranges = [

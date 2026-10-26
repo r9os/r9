@@ -10,16 +10,16 @@ This document summarises the flow of each implementation as it currently stands.
 
 Execution begins in `l.S` at the `start` label and is focused on Raspberry 4 ATM. Supporting rpi5 should be straightforward, but anything beyond that would get complex. That would be a strong argument to move some of this code to rust, although that code would probably need to be segrated fromt he rest of the rust code.
 
-The code in `l.S` exists to bring us to a state where we can run kernel code in the OS level (EL1). In order to get there, we run through a number of steps:
+The code in `l.S` exists to bring us to a state where we can run kernel code in the OS level (EL1). It defines no constants: `main.rs` passes them in as `global_asm!` operands, with the register values built from `aarch64_cpu`'s fields. In order to get there, we run through a number of steps:
 
 1. Park every core except core 0 (`dnr`).
-2. Drop to EL1 from EL3 or EL2, enabling AArch64 and the FPU for EL1 on the way.
-3. Set up the initial stack (size set by STACKSZ - 16KiB), defined in BSS at the bottom of the file, using its physical address since the MMU is still off.
-4. Clear the BSS and the early page table area (`earlyvm_pagetables` in `kernel.ld`).
+2. Drop to EL1 from EL2, enabling AArch64 and the FPU for EL1 on the way. QEMU's `-kernel` enters at EL2, and the Pi's firmware is expected to. r9 doesn't support entering at EL3, so a core that does parks.
+3. Set up the initial stack (`KSTACKSIZE`, 16KiB), defined in BSS at the bottom of the file, using its physical address since the MMU is still off.
+4. Clear the BSS, which includes the early page table area (`earlyvm_pagetables` in `kernel.ld`).
 5. Set up the miniuart for some kind of debugging (`init_early_uart_rpi4` in `pre_mmu/util.rs`). This is a bare bones set up - a rust driver will take over later. It allows us to do something similar to printf-style debugging - writing a single character to the UART at specific points. Once the UART is initialised, we output a single '.' so we at least know we've gotten that far.
 6. Call `init_vm` in `pre_mmu/vminit.rs`, which builds the initial page tables from the early page table area while the MMU is still off. It maps the kernel image, the DTB and the kmap region's tables at KZERO + their physical addresses (`ttbr1_el1`), with the recursive entry 511 in the kernel root. It also identity maps the first 1GiB (`ttbr0_el1`), so the code in `l.S` can keep running once the MMU is enabled and then jump into the higher half. It sets `TCR_EL1` and `MAIR_EL1` too.
 7. Enable the MMU and caches, jump to the higher half, and move the stack to its virtual address.
-8. Jump into the rust code, entrypoint `main.rs::main9`, passing the DTB's virtual address.
+8. Jump into the rust code, entrypoint `main.rs::main9`, passing the DTB's physical address.
 
 ### Initialisation (Rust)
 

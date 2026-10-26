@@ -6,8 +6,8 @@ buildflags = ["-Z", "build-std=core,alloc"]
 # linker script to use
 script = 'aarch64/lib/kernel.ld'
 
-# kernel load address to insert into kernel.ld
-load-address = '0xffff800000100000 - 0x80000'
+# kernel physical load address to insert into kernel.ld
+load-address = '0x80000'
 
 [qemu]
 machine = "raspi4b"
