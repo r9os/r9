@@ -3,9 +3,9 @@
 //! There's no direct map of RAM, so the kernel reaches a page it doesn't
 //! otherwise map (a user page, or a page table that isn't active) by mapping
 //! it briefly in the kmap region.  Each CPU has its own KMAPSLOTS slots, so
-//! CPUs never contend for them.  kmap is for thread context only: interrupt
-//! handlers must not use it, since they could take a slot that the
-//! interrupted code is about to claim.
+//! CPUs never contend for them.  kmap is for thread context only, and panics
+//! in an interrupt handler, which could take a slot that the interrupted
+//! code is about to claim.
 
 use crate::mach::machno;
 use crate::param::{KMAPBASE, KMAPSLOTS, MAXMACH};
@@ -52,6 +52,7 @@ impl Drop for KMap {
 /// the architecture doesn't keep coherent with its Device mapping.  Map
 /// devices through deviceutil instead.
 pub fn kmap(pa: PhysAddr) -> KMap {
+    assert!(!port::irq::in_interrupt(), "kmap in interrupt context");
     let machno = machno();
     let slot = INUSE[machno]
         .iter()

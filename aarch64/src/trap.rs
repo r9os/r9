@@ -19,6 +19,9 @@ const _: () = assert!(crate::param::KSTACKSIZE.is_power_of_two());
 
 pub fn init() {
     #[cfg(not(test))]
+    port::irq::init(&IRQ);
+
+    #[cfg(not(test))]
     unsafe {
         // Set up a vector table for any exception that is taken to EL1.  IRQs
         // stay masked until we have interrupt sources to handle.
@@ -29,6 +32,33 @@ pub fn init() {
         );
     }
 }
+
+/// port::irq's functions.  IRQs and FIQs are masked together with DAIF, and
+/// restored by writing DAIF back, as Linux's arch_local_irq_save and
+/// arch_local_irq_restore do.  Neither asm! says it leaves memory alone, so
+/// each is a compiler barrier: the accesses inside a masked section stay
+/// inside it.  No isb is needed: DAIF is a Special-purpose register, and
+/// writes to those appear to occur in program order (Arm ARM DDI 0487 M.d,
+/// C5.1.5 and D24.1.2.2).
+#[cfg(not(test))]
+static IRQ: port::irq::Ops = port::irq::Ops {
+    mask: || {
+        use aarch64_cpu::registers::{DAIF, Readable};
+        let daif = DAIF.get();
+        // SAFETY: masking IRQs and FIQs only defers them.
+        unsafe { core::arch::asm!("msr daifset, #3", options(nostack)) };
+        port::irq::Saved(daif)
+    },
+    // SAFETY: saved is the DAIF that mask read on this CPU, so writing it
+    // back only restores the masking it replaced.
+    restore: |saved| unsafe { core::arch::asm!("msr daif, {}", in(reg) saved.0, options(nostack)) },
+    depth: || &IRQDEPTH[crate::mach::machno()],
+};
+
+/// How deeply each CPU is nested in interrupt handlers.
+#[cfg(not(test))]
+static IRQDEPTH: [core::sync::atomic::AtomicUsize; crate::param::MAXMACH] =
+    [const { core::sync::atomic::AtomicUsize::new(0) }; crate::param::MAXMACH];
 
 /// Register frame at time interrupt was taken
 #[repr(C, align(16))]
