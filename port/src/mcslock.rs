@@ -14,6 +14,8 @@ use core::ops::{Deref, DerefMut};
 use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
+use crate::irq;
+
 /// Represents a node in the lock structure.  Note, is cacheline
 /// aligned.
 #[repr(align(64))]
@@ -96,7 +98,17 @@ impl<T> Lock<T> {
 
     pub fn lock<'a>(&'a self, node: &'a LockNode) -> LockGuard<'a, T> {
         let node = unsafe { &mut *self.lock.get() }.lock(node);
-        LockGuard { lock: &self.lock, node, data: unsafe { &mut *self.data.get() } }
+        LockGuard { lock: &self.lock, node, data: unsafe { &mut *self.data.get() }, irq: None }
+    }
+
+    /// Take the lock with IRQs masked until it's released, as Plan 9's
+    /// ilock does, for data an interrupt handler also uses.  Masking first
+    /// means a handler on this CPU can't spin on a lock the code it
+    /// interrupted holds.
+    pub fn ilock<'a>(&'a self, node: &'a LockNode) -> LockGuard<'a, T> {
+        let irq = irq::mask();
+        let node = unsafe { &mut *self.lock.get() }.lock(node);
+        LockGuard { lock: &self.lock, node, data: unsafe { &mut *self.data.get() }, irq }
     }
 }
 
@@ -104,6 +116,8 @@ pub struct LockGuard<'a, T: ?Sized + 'a> {
     lock: &'a UnsafeCell<MCSLock>,
     node: &'a LockNode,
     data: &'a mut T,
+    /// The IRQ state to restore once the lock is released, if ilock took it.
+    irq: Option<irq::Saved>,
 }
 impl<T> Deref for LockGuard<'_, T> {
     type Target = T;
@@ -122,5 +136,6 @@ impl<T> DerefMut for LockGuard<'_, T> {
 impl<T: ?Sized> Drop for LockGuard<'_, T> {
     fn drop(&mut self) {
         unsafe { &mut *self.lock.get() }.unlock(self.node);
+        irq::restore(self.irq);
     }
 }

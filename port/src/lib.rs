@@ -17,6 +17,7 @@ pub mod exec;
 #[cfg(test)]
 mod fake;
 pub mod fdt;
+pub mod irq;
 pub mod maths;
 pub mod mcslock;
 pub mod mem;
