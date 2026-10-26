@@ -60,13 +60,8 @@ el1:	// In EL1
 	cmp	x0, x1
 	b.ne	1b
 
-	bl	init_early_uart_rpi4
-
-	mov	x0, #'.'
-	bl	init_early_uart_putc
-
 	mov	x0, x27			// DTB pointer
-	bl	init_vm
+	bl	pre_mmu_init
 
 	// Force changes to be seen before MMU enabled, then enable MMU
 	dsb sy

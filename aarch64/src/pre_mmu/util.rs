@@ -27,8 +27,7 @@ const GPIO_PUP_PDN_CNTRL_REG0: u32 = GPIO + 0xe4;
 
 // Set up a very early uart - the miniuart.  The full driver is in
 // uartmini.rs.  This code is just enough to help debug the early stage.
-#[unsafe(no_mangle)]
-pub extern "C" fn init_early_uart_rpi4() {
+pub fn init_early_uart_rpi4() {
     // Calculate the baudrate to be inserted into AUX_MU_BAUD
     const UART_CLOCK: u32 = 500000000;
     const UART_BAUDRATE: u32 = 115200;
