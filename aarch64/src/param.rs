@@ -11,7 +11,7 @@ pub const UVA_END: usize = 1 << VA_BITS;
 /// Start of the range ttbr1_el1 translates.
 pub const KVA_BASE: usize = !(UVA_END - 1);
 
-// This needs to match KZERO in l.S
+// kernel.ld has its own KZERO, which it checks against this at link time.
 pub const KZERO: usize = 0xffff_8000_0000_0000;
 
 const _: () = assert!(KZERO >= KVA_BASE);
@@ -40,7 +40,7 @@ const _: () = assert!(KMAPBASE.is_multiple_of(2 << 20));
 /// enabled.
 pub const KSTACKBASE: usize = KMAPBASE + (2 << 20);
 
-/// Size of a kernel stack, as STACKSZ in l.S.
+/// Size of a kernel stack, and of the boot stack in l.S.
 pub const KSTACKSIZE: usize = 16 * 1024;
 
 /// Number of kernel stacks.
