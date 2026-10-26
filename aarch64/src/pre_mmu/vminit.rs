@@ -105,8 +105,7 @@ fn earlyvm_pages_physrange() -> PhysRange {
     PhysRange::new(earlyvm_pagetables_physaddr(), eearlyvm_pagetables_physaddr())
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn init_vm(dtb_pa: u64) {
+pub fn init_vm(dtb_pa: u64) {
     // Parse the DTB before we set up memory so we can correctly map it
     let dt = unsafe { DeviceTree::from_usize(dtb_pa as usize).unwrap() };
     let dtb_physrange = PhysRange::with_pa_len(PhysAddr::new(dtb_pa), dt.size());
