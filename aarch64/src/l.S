@@ -47,18 +47,42 @@ start:
 
 el1:	// In EL1
 
+	// Everything written before the MMU is on is in the BSS: the boot
+	// stack, the early pagetables and the zeroed statics.  Those writes go
+	// straight to memory, but the caches' contents at reset are
+	// IMPLEMENTATION DEFINED (Arm ARM DDI 0487 M.d, D7.5.6), so firmware
+	// may have left lines over the BSS.  A dirty one could be evicted over
+	// what we write, and once SCTLR_EL1.C is set, a clean one could hide
+	// it (D7.5.5).  So invalidate the BSS before writing it, as Linux does
+	// for its early page tables (head.S, primary_entry).  No lines can be
+	// allocated again while nothing at this EL or above maps the BSS as
+	// cacheable (D7.5.1).
+	// CTR_EL0.DminLine, bits [19:16], is log2 of the smallest data cache
+	// line in words.  The BSS is page aligned, so no line holds anything
+	// else.
+	mrs	x2, ctr_el0
+	ubfx	x2, x2, #16, #4
+	mov	x3, #4
+	lsl	x2, x3, x2
+	ldr	x0, =bss_pa
+	ldr	x1, =ebss_pa
+1:	dc	ivac, x0
+	add	x0, x0, x2
+	cmp	x0, x1
+	b.lo	1b
+	dsb	sy
+
+	// Clear BSS, which includes the early pagetables and the boot stack
+	ldr	x0, =bss_pa
+1:	str	xzr, [x0], #8
+	cmp	x0, x1
+	b.ne	1b
+
 	// Set up the initial stack.  The MMU is off, so adrp gives its
 	// physical address.
 	adrp	x0, stacktop
 	add	x0, x0, #:lo12:stacktop
 	mov	sp, x0
-
-	// Clear BSS, which includes the early pagetables
-	ldr	x0, =bss_pa
-	ldr	x1, =ebss_pa
-1:	str	xzr, [x0], #8
-	cmp	x0, x1
-	b.ne	1b
 
 	mov	x0, x27			// DTB pointer
 	bl	pre_mmu_init
