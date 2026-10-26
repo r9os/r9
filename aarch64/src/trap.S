@@ -1,21 +1,20 @@
-// Space reserved for interrupt stack:
-//    interruptstackbase to interruptstackbase+INTERRUPTSTACKSZ.
-// Stack base address (bottom):
-//    interruptstackbase+INTERRUPTSTACKSZ
-// Stack pointer will reduce in value as data is pushed to the stack.
-// Until processes have their own kernel stacks, this is the stack that
-// exceptions from EL0 are taken on.
-INTERRUPTSTACKSZ = 4096*16
+// Constants from trap.rs: KSTACK_SHIFT, log2 of KSTACKSIZE.  This file is a
+// global_asm! format string, so literal braces must be doubled.
 
+// The stack exceptions move to when a kernel stack overflows.  Like a kernel
+// stack, it's the upper half of a block aligned to twice its size, so an sp
+// inside it has bit KSTACK_SHIFT set, and the overflow check passes on it.
+// There's one, for the one CPU r9 runs on: SMP needs one per CPU.
 .bss
-.balign	4096
-.globl	interruptstackbase
-interruptstackbase:	.space INTERRUPTSTACKSZ
+.balign	2 << {KSTACK_SHIFT}
+.space	1 << {KSTACK_SHIFT}
+.globl	overflowstackbase
+overflowstackbase:	.space 1 << {KSTACK_SHIFT}
 // A label rather than an absolute symbol for the size: Rust reaches extern
 // statics through the GOT, which can't hold an absolute value when this and
 // the code using it are assembled into one object.
-.globl	interruptstacktop
-interruptstacktop:
+.globl	overflowstacktop
+overflowstacktop:
 
 .section .text
 
@@ -38,6 +37,8 @@ interruptstacktop:
 .equ	IRQ_INVALID_EL0_32,	13
 .equ	FIQ_INVALID_EL0_32,	14
 .equ	ERROR_INVALID_EL0_32,	15
+
+.equ	STACK_OVERFLOW,		16
 
 // Ventry aligns to 128 bytes and branches to label, and is used for the interrupt vector table
 .macro	ventry	label
@@ -67,9 +68,7 @@ TF_SIZE		= 16 * 19
 // from EL1 that's the interrupted kernel stack.  For exceptions taken from EL0
 // it's whatever SP_EL1 was set to before the eret into EL0 (see to_user).
 // No general purpose register can be used until it has been saved.
-.macro handle_interrupt type
-	sub 	sp, sp, #TF_SIZE
-
+.macro save_frame type
 	stp 	x0, x1, [sp, #16 * 0]
 	stp 	x2, x3, [sp, #16 * 1]
 	stp	x4, x5, [sp, #16 * 2]
@@ -103,6 +102,25 @@ TF_SIZE		= 16 * 19
 	// SPSR_EL1
 	mrs	x5, spsr_el1
 	str	x5, [sp, #TF_SPSR]
+.endm
+
+// Reserve a TrapFrame on the stack, and check sp is still inside its stack,
+// as Linux arm64's kernel_ventry does.  Every EL1 stack is the upper half of
+// a block aligned to twice its size, so a valid sp has bit KSTACK_SHIFT set,
+// and one that has run into the guard below has it clear.  The test swaps sp
+// and x0 arithmetically, so no register is lost.  The EL1t vectors don't
+// check: there sp is SP_EL0, which r9 never uses at EL1.
+.macro handle_interrupt type, checksp=1
+	sub 	sp, sp, #TF_SIZE
+	.if \checksp
+	add	sp, sp, x0			// sp' = sp + x0
+	sub	x0, sp, x0			// x0' = sp
+	tbz	x0, #{KSTACK_SHIFT}, stack_overflow
+	sub	x0, sp, x0			// x0'' = x0
+	sub	sp, sp, x0			// sp'' = sp
+	.endif
+
+	save_frame \type
 
 	// Pass pointer to TrapFrame (on stack) as the first arg
 	mov	x0, sp
@@ -110,6 +128,22 @@ TF_SIZE		= 16 * 19
 
 	b	trap_return
 .endm
+
+// A kernel stack has overflowed: x0 is the overflowed sp, less a TrapFrame,
+// and sp is that plus the original x0.  Nothing returns to EL0 from here, so
+// stash both in EL0's thread registers, then report from the overflow stack.
+stack_overflow:
+	msr	tpidr_el0, x0
+	sub	x0, sp, x0
+	msr	tpidrro_el0, x0
+	ldr	x0, =overflowstacktop
+	mov	sp, x0
+	mrs	x0, tpidrro_el0
+	sub	sp, sp, #TF_SIZE
+	save_frame STACK_OVERFLOW
+	mov	x0, sp
+	mrs	x1, tpidr_el0
+	bl	stack_overflow_unsafe
 
 // Restore the TrapFrame at sp and return from the exception.  The return
 // state (ELR_EL1, SPSR_EL1, SP_EL0) is taken from the frame rather than the
@@ -175,16 +209,16 @@ exception_vectors:
 	ventry	error_invalid_el0_32			// Error 32-bit EL0
 
 sync_invalid_el1t:
-	handle_interrupt  SYNC_INVALID_EL1t
+	handle_interrupt  SYNC_INVALID_EL1t, 0
 
 irq_invalid_el1t:
-	handle_interrupt  IRQ_INVALID_EL1t
+	handle_interrupt  IRQ_INVALID_EL1t, 0
 
 fiq_invalid_el1t:
-	handle_interrupt  FIQ_INVALID_EL1t
+	handle_interrupt  FIQ_INVALID_EL1t, 0
 
 error_invalid_el1t:
-	handle_interrupt  ERROR_INVALID_EL1t
+	handle_interrupt  ERROR_INVALID_EL1t, 0
 
 sync_invalid_el1h:
 	handle_interrupt  SYNC_INVALID_EL1h

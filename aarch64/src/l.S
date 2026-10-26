@@ -122,7 +122,13 @@ higher_half:
 dnr:	wfe
 	b	dnr
 
+// Laid out like a kernel stack, the upper half of a block aligned to twice its
+// size, so that trap.S's overflow check doesn't misread an exception taken on
+// it.  The lower half is BSS, not an unmapped guard, so an overflow here
+// doesn't fault, and isn't caught: only main9's early, shallow setup runs on
+// this stack, before it moves to a kernel stack.
 .bss
-.balign	4096
+.balign	2 * {STACKSZ}
+.space	{STACKSZ}
 stack:	.space {STACKSZ}
 stacktop:
