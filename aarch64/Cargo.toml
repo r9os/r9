@@ -12,3 +12,9 @@ bitstruct = "0.1"
 port = { path = "../port" }
 r9-sys = { path = "../sys" }
 num_enum = { version = "0.7", default-features = false }
+
+[features]
+# Exit QEMU through semihosting when the kernel is done, for the smoke test.
+# QEMU only: on hardware without a debugger, the call is an undefined
+# instruction.
+semihosting = []

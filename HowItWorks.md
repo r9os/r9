@@ -184,6 +184,8 @@ xtask builds the user programs before anything that embeds them, and passes thei
 
 `cargo xtask smoke --arch aarch64` boots r9 under QEMU and checks that echo runs: the output must have the lines `hello world` and `echo: exited`, and no panic. The kernel doesn't exit QEMU, so the smoke test stops it once echo has exited or the kernel has panicked, or after 60 seconds.
 
+With `--semihosting`, which CI uses, the kernel is built with the `semihosting` feature, and makes QEMU exit through Arm semihosting (`aarch64/src/semihosting.rs`): with status 0 once echo exits successfully, and 1 if echo fails or the kernel panics. The smoke test waits for QEMU to exit, and its status must be 0 too, so a failure shows up straight away rather than as a timeout. Semihosting is an undefined instruction on hardware without a debugger, so that image is for QEMU only, and a normal build contains no semihosting call.
+
 ## port
 
 `port` is where all the shared subsytems are defined.

@@ -11,9 +11,7 @@ use port::println;
 #[panic_handler]
 pub fn panic(info: &PanicInfo) -> ! {
     println!("{}\n", info);
-
-    #[allow(clippy::empty_loop)]
-    loop {}
+    crate::shutdown(false)
 }
 
 #[alloc_error_handler]

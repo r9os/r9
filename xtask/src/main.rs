@@ -187,6 +187,7 @@ fn main() {
                     .value_parser(clap::builder::NonEmptyStringValueParser::new())
                     .default_value("default"),
                 clap::arg!(--verbose "Print commands"),
+                clap::arg!(--semihosting "Lint the kernel with its semihosting feature, as smoke --semihosting builds it"),
             ]),
         )
         .subcommand(clap::Command::new("check").about("Runs check").args(&[
@@ -220,6 +221,9 @@ fn main() {
                         .value_parser(clap::builder::NonEmptyStringValueParser::new())
                         .default_value("default"),
                     clap::arg!(--verbose "Print commands"),
+                    clap::arg!(
+                        --semihosting "Build with QEMU semihosting, and take QEMU's exit status as the result.  The image this leaves in target/ is for QEMU only: on hardware, semihosting is an undefined instruction"
+                    ),
                 ],
             ),
         )
@@ -309,10 +313,17 @@ fn verbose(matches: &clap::ArgMatches) -> bool {
     matches.get_flag("verbose")
 }
 
+/// Whether to build, lint or run with QEMU semihosting.  Only clippy and smoke
+/// have the flag.
+fn semihosting(matches: &clap::ArgMatches) -> bool {
+    matches.try_get_one::<bool>("semihosting").ok().flatten().copied().unwrap_or(false)
+}
+
 struct BuildStep {
     arch: Arch,
     config: Configuration,
     profile: Profile,
+    semihosting: bool,
     verbose: bool,
 }
 
@@ -321,9 +332,10 @@ impl BuildStep {
         let arch = Arch::from(matches);
         let config = load_config(arch, matches);
         let profile = Profile::from(matches);
+        let semihosting = semihosting(matches);
         let verbose = verbose(matches);
 
-        Self { arch, config, profile, verbose }
+        Self { arch, config, profile, semihosting, verbose }
     }
 
     fn run(self) -> Result<()> {
@@ -348,6 +360,9 @@ impl BuildStep {
         // and linker script aren't for them.
         exclude_user(&mut cmd);
         exclude_other_arches(self.arch, &mut cmd);
+        if self.semihosting {
+            cmd.arg("--features").arg("aarch64/semihosting");
+        }
         if self.profile == Profile::Release {
             cmd.arg("--release");
         }
@@ -467,6 +482,7 @@ struct QemuStep {
     wait_for_gdb: bool,
     kvm: bool,
     dump_dtb: String,
+    semihosting: bool,
     verbose: bool,
 }
 
@@ -485,7 +501,7 @@ impl QemuStep {
             .clone();
         let verbose = verbose(matches);
 
-        Self { arch, config, profile, wait_for_gdb, kvm, dump_dtb, verbose }
+        Self { arch, config, profile, wait_for_gdb, kvm, dump_dtb, semihosting: false, verbose }
     }
 
     fn run(self) -> Result<()> {
@@ -528,6 +544,9 @@ impl QemuStep {
                 }
                 cmd.arg("-kernel");
                 cmd.arg(format!("target/{target}/{dir}/aarch64-qemu.gz"));
+                if self.semihosting {
+                    cmd.arg("-semihosting-config").arg("enable=on,target=native");
+                }
                 cmd.current_dir(workspace());
                 if self.verbose {
                     // Show exception level change events in stdout
@@ -619,7 +638,8 @@ const SMOKE_TIMEOUT: Duration = Duration::from_secs(60);
 /// Boot r9 under QEMU, and check that echo runs: the output must have the
 /// lines "hello world" and "echo: exited", and no panic.  QEMU doesn't exit by
 /// itself, so it's killed once echo has exited, the kernel has panicked, or
-/// SMOKE_TIMEOUT has passed.
+/// SMOKE_TIMEOUT has passed.  With semihosting, the kernel makes QEMU exit,
+/// with status 0 only if echo succeeded, and that status must be 0 too.
 struct SmokeStep {
     qemu: QemuStep,
 }
@@ -634,6 +654,7 @@ impl SmokeStep {
             wait_for_gdb: false,
             kvm: false,
             dump_dtb: String::new(),
+            semihosting: semihosting(matches),
             verbose: verbose(matches),
         };
         Self { qemu }
@@ -671,8 +692,10 @@ impl SmokeStep {
             match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
                 Ok(line) => {
                     // echo has exited, successfully or not, or the kernel
-                    // has panicked: there's nothing more to wait for.
-                    let done = line.starts_with("echo: exited") || line.contains("panicked");
+                    // has panicked: there's nothing more to wait for, unless
+                    // the kernel will make QEMU exit.
+                    let done = !self.qemu.semihosting
+                        && (line.starts_with("echo: exited") || line.contains("panicked"));
                     lines.push(line);
                     if done {
                         break;
@@ -694,13 +717,18 @@ impl SmokeStep {
         let status = child.wait();
 
         let has = |want: &str| lines.iter().any(|l| l == want);
-        let failure = if exited {
-            Some(match status {
-                Ok(s) => format!("QEMU exited with {s}"),
-                Err(e) => format!("QEMU exited: {e}"),
-            })
+        let qemu_exited = |status: &std::io::Result<process::ExitStatus>| match status {
+            Ok(s) => format!("QEMU exited with {s}"),
+            Err(e) => format!("QEMU exited: {e}"),
+        };
+        let failure = if exited && !self.qemu.semihosting {
+            Some(qemu_exited(&status))
         } else if lines.iter().any(|l| l.contains("panicked")) {
             Some("the kernel panicked".to_string())
+        } else if self.qemu.semihosting && timed_out {
+            Some("timed out before QEMU exited".to_string())
+        } else if self.qemu.semihosting && !matches!(&status, Ok(s) if s.success()) {
+            Some(qemu_exited(&status))
         } else if !has("hello world") {
             Some("echo didn't print \"hello world\"".to_string())
         } else if !has("echo: exited") {
@@ -884,6 +912,7 @@ struct ClippyStep {
     arch: Arch,
     config: Configuration,
     profile: Profile,
+    semihosting: bool,
     verbose: bool,
 }
 
@@ -892,12 +921,17 @@ impl ClippyStep {
         let arch = Arch::from(matches);
         let config = load_config(arch, matches);
         let profile = Profile::from(matches);
+        let semihosting = semihosting(matches);
         let verbose = verbose(matches);
 
-        Self { arch, config, profile, verbose }
+        Self { arch, config, profile, semihosting, verbose }
     }
 
     fn run(self) -> Result<()> {
+        if self.semihosting && self.arch != Arch::Aarch64 {
+            return Err("clippy: only aarch64 has semihosting".into());
+        }
+
         // The aarch64 kernel embeds user programs, so they're built first.
         let user_bin = build_user(self.arch, self.profile, self.verbose)?;
 
@@ -913,6 +947,9 @@ impl ClippyStep {
         // The user crates are aarch64 programs, linted with the aarch64 kernel.
         if self.arch != Arch::Aarch64 {
             exclude_user(&mut cmd);
+        }
+        if self.semihosting {
+            cmd.arg("--features").arg("aarch64/semihosting");
         }
         if self.profile == Profile::Release {
             cmd.arg("--release");
