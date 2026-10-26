@@ -172,6 +172,10 @@ pub extern "C" fn main9(dtb_pa: usize) {
     println!("r9 from the Internet");
     println!("DTB found at: {:#x}", dtb_va);
     println!("midr_el1: {:?}", MidrEl1::read());
+    println!("sctlr_el1: {:#x}", {
+        use aarch64_cpu::registers::{Readable, SCTLR_EL1};
+        SCTLR_EL1.get()
+    });
 
     print_stacks();
 
