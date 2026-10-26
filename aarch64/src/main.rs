@@ -56,11 +56,37 @@ core::arch::global_asm!(
         M::EL1h.value | D::Masked.value | A::Masked.value | I::Masked.value | F::Masked.value
     },
     CPACR_EL1 = const aarch64_cpu::registers::CPACR_EL1::FPEN::TrapNothing.value,
-    SCTLR_EL1_MMU = const {
-        use aarch64_cpu::registers::SCTLR_EL1::{C, I, M};
-        M::Enable.value | C::Cacheable.value | I::Cacheable.value
+    CPTR_EL2 = const CPTR_EL2_NO_FP_TRAP,
+    SCTLR_EL1_MMU_OFF = const SCTLR_EL1_RES1,
+    SCTLR_EL1_MMU_ON = const {
+        use aarch64_cpu::registers::SCTLR_EL1::{C, I, M, SA, SA0};
+        SCTLR_EL1_RES1
+            | M::Enable.value
+            | C::Cacheable.value
+            | I::Cacheable.value
+            | SA::Enable.value
+            | SA0::Enable.value
     },
 );
+
+/// SCTLR_EL1's bits that are RES1 on an Armv8.0 CPU, such as the Pi 4's
+/// Cortex-A72: LSMAOE (29), nTLSMD (28), SPAN (23), EIS (22), TSCXT (20) and
+/// EOS (11) (Arm ARM DDI 0487 M.d, D24.2.174).  Later CPUs keep the Armv8.0
+/// behaviour with them set, so Linux's INIT_SCTLR_EL1_MMU_OFF is the same
+/// set.  aarch64_cpu has no fields for them.  Every other bit is left clear:
+/// little-endian, no alignment checks, and EL0's cache maintenance, CTR_EL0,
+/// DC ZVA, DAIF, WFI and WFE trapped to EL1.
+#[cfg(not(test))]
+const SCTLR_EL1_RES1: u64 =
+    (1 << 29) | (1 << 28) | (1 << 23) | (1 << 22) | (1 << 20) | (1 << 11);
+
+/// CPTR_EL2 with HCR_EL2.E2H clear (D24.2.37): the RES1 bits 13, 9 and 7:0,
+/// TZ (8) and TSM (12) set, which trap SVE and SME to EL2 where they're
+/// implemented and are RES1 on the A72, and TFP (10) clear, so FP/SIMD
+/// doesn't trap.  It's what Linux's __init_el2_cptr writes.  aarch64_cpu has
+/// no fields for them.
+#[cfg(not(test))]
+const CPTR_EL2_NO_FP_TRAP: u64 = 0x33ff;
 
 // kernel.ld asserts that its own KZERO matches this.
 #[cfg(not(test))]
