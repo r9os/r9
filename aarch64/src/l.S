@@ -39,6 +39,8 @@ start:
 	msr	spsr_el2, x0
 	ldr	x0, ={CPACR_EL1}
 	msr	cpacr_el1, x0
+	ldr	x0, ={CPTR_EL2}
+	msr	cptr_el2, x0
 
 	// Return to EL1
 	adr	x0, el1
@@ -46,6 +48,13 @@ start:
 	eret
 
 el1:	// In EL1
+
+	// Most of SCTLR_EL1 resets to UNKNOWN values, the MMU and cache
+	// enables included (Arm ARM DDI 0487 M.d, D24.2.174), and firmware
+	// may have changed it, so set all of it.
+	ldr	x0, ={SCTLR_EL1_MMU_OFF}
+	msr	sctlr_el1, x0
+	isb
 
 	// Everything written before the MMU is on is in the BSS: the boot
 	// stack, the early pagetables and the zeroed statics.  Those writes go
@@ -89,9 +98,7 @@ el1:	// In EL1
 
 	// Force changes to be seen before MMU enabled, then enable MMU
 	dsb sy
-	mrs	x0, sctlr_el1
-	ldr	x1, ={SCTLR_EL1_MMU}
-	orr	x0, x0, x1
+	ldr	x0, ={SCTLR_EL1_MMU_ON}
 	msr	sctlr_el1, x0		// Enable MMU!
 
 	// Force changes to be seen by next instruction.
