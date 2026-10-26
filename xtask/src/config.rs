@@ -198,6 +198,7 @@ fn apply_platform_config(cmd: &mut Command, rustflags: &mut Vec<String>, config:
 }
 
 fn apply_link(
+    cmd: &mut Command,
     rustflags: &mut Vec<String>,
     config: &Configuration,
     target: &str,
@@ -244,13 +245,18 @@ fn apply_link(
                 let _ = create_dir_all(&path);
             }
 
-            // everything is setup, now create the linker script
-            // in the target directory
-            let mut file = File::create(format!("{path}/kernel.ld")).unwrap();
-            let _ = file.write_all(contents.as_bytes());
+            // Everything is set up, so write the linker script into the target
+            // directory, unless it's unchanged: the kernel crates' build scripts
+            // relink when it changes, so rewriting it would relink every time.
+            let script = format!("{path}/kernel.ld");
+            if fs::read_to_string(&script).ok().as_deref() != Some(contents.as_str()) {
+                let mut file = File::create(&script).unwrap();
+                let _ = file.write_all(contents.as_bytes());
+            }
 
-            // pass the script path to the rustflags
-            rustflags.push(format!("-Clink-args=-T{path}/kernel.ld"));
+            // pass the script path to the rustflags, and to the build scripts
+            rustflags.push(format!("-Clink-args=-T{script}"));
+            cmd.env("R9_LINKER_SCRIPT", &script);
         }
     }
 }
@@ -294,7 +300,7 @@ pub fn apply_to_build_step(
     let mut rustflags: Vec<String> = Vec::new();
     apply_build(cmd, &mut rustflags, config);
     apply_platform_config(cmd, &mut rustflags, config);
-    apply_link(&mut rustflags, config, target, profile, workspace_path);
+    apply_link(cmd, &mut rustflags, config, target, profile, workspace_path);
     apply_rustflags(cmd, &rustflags);
 }
 
