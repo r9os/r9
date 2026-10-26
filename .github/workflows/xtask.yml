@@ -16,6 +16,8 @@ jobs:
       - uses: actions/checkout@v6
       - name: Clippy aarch64
         run: cargo xtask clippy --arch aarch64 --verbose
+      - name: Clippy aarch64 with semihosting
+        run: cargo xtask clippy --arch aarch64 --semihosting --verbose
       - name: Clippy riscv64
         run: cargo xtask clippy --arch riscv64 --verbose
       - name: Clippy x86-64
@@ -50,3 +52,14 @@ jobs:
       - uses: actions/checkout@v6
       - name: Build
         run: cargo xtask build --arch riscv64 --verbose
+
+  # Boots r9 and runs echo.  raspi4b needs QEMU 9.0 or later: Ubuntu 26.04 has
+  # 10.2, and 24.04 has 8.2, so this names 26.04 rather than ubuntu-latest.
+  smoke-aarch64:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install QEMU
+        run: sudo apt-get update && sudo apt-get install -y qemu-system-arm
+      - name: Smoke test
+        run: cargo xtask smoke --arch aarch64 --semihosting --verbose

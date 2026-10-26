@@ -24,6 +24,8 @@ mod pre_mmu;
 mod proc;
 mod reg;
 mod registers;
+#[cfg(all(feature = "semihosting", not(test)))]
+mod semihosting;
 mod swtch;
 mod trap;
 mod uartmini;
@@ -214,7 +216,26 @@ pub extern "C" fn main9(dtb_pa: usize) {
 
     boottest::run();
 
-    run_echo();
+    shutdown(run_echo())
+}
+
+/// Stop this CPU once the system has run, or has panicked.  Built for the smoke
+/// test, first make QEMU exit, with status 0 if `ok`.
+#[cfg(feature = "semihosting")]
+pub fn shutdown(ok: bool) -> ! {
+    semihosting::exit(if ok { 0 } else { 1 })
+}
+
+#[cfg(not(feature = "semihosting"))]
+pub fn shutdown(_ok: bool) -> ! {
+    halt()
+}
+
+/// Stop this CPU for good, waiting for events rather than spinning.
+pub fn halt() -> ! {
+    loop {
+        aarch64_cpu::asm::wfe();
+    }
 }
 
 mod runtime;
@@ -223,14 +244,15 @@ mod runtime;
 static ECHO: &[u8] = include_bytes!(concat!(env!("R9_USER_BIN"), "/echo"));
 
 /// Run echo with argv ["echo", "hello", "world"], as the system's one
-/// program, and print how it exited.  A failure is reported rather than
-/// asserted: this is the system running its program, not a test.
-fn run_echo() {
+/// program, print how it exited, and return whether it exited successfully.  A
+/// failure is reported rather than asserted: this is the system running its
+/// program, not a test.
+fn run_echo() -> bool {
     let p = match port::proc::newproc::<Arm64>(echo_start) {
         Ok(p) => p,
         Err(err) => {
             println!("echo: couldn't create a process: {err:?}");
-            return;
+            return false;
         }
     };
     let status = port::proc::run(p);
@@ -239,6 +261,7 @@ fn run_echo() {
     } else {
         println!("echo: exited with status {}", alloc::string::String::from_utf8_lossy(&status));
     }
+    status.is_empty()
 }
 
 /// echo's start: exec it with its arguments, and enter it.
