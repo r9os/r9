@@ -13,7 +13,7 @@ Execution begins in `l.S` at the `start` label and is focused on Raspberry 4 ATM
 The code in `l.S` exists to bring us to a state where we can run kernel code in the OS level (EL1). It defines no constants: `main.rs` passes them in as `global_asm!` operands, with the register values built from `aarch64_cpu`'s fields. In order to get there, we run through a number of steps:
 
 1. Park every core except core 0 (`dnr`).
-2. Drop to EL1 from EL2, enabling AArch64 and the FPU for EL1 on the way, and making sure EL2 doesn't trap the FPU (`CPTR_EL2`). QEMU's `-kernel` enters at EL2, and the Pi's firmware is expected to. r9 doesn't support entering at EL3, so a core that does parks.
+2. Drop to EL1 from EL2, enabling AArch64 and the FPU for EL1 on the way, and making sure EL2 doesn't trap the FPU (`CPTR_EL2`). It also sets the generic timer's EL2 controls, which reset to UNKNOWN values: EL1 may read the physical counter (`CNTHCTL_EL2`), and virtual time is physical time (`CNTVOFF_EL2 = 0`). QEMU's `-kernel` enters at EL2, and the Pi's firmware is expected to. r9 doesn't support entering at EL3, so a core that does parks.
 3. Set all of `SCTLR_EL1` to a known value, with the MMU and caches off, since most of it resets to UNKNOWN values. Then invalidate the data cache over the BSS, and clear it. Everything written before the MMU is on is in the BSS: the boot stack, the early page table area (`earlyvm_pagetables` in `kernel.ld`) and the zeroed statics. Those writes go straight to memory, but lines left from before r9 started could be evicted over them, or hide them once the caches are on, so the invalidate comes before any write.
 4. Set up the initial stack (`KSTACKSIZE`, 16KiB), defined in BSS at the bottom of the file, using its physical address since the MMU is still off.
 5. Call `pre_mmu_init` in `pre_mmu/mod.rs`, which does the rest of the work before the MMU is on. First it sets up the miniuart for some kind of debugging (`init_early_uart_rpi4` in `pre_mmu/util.rs`). This is a bare bones set up - a rust driver will take over later. It allows us to do something similar to printf-style debugging - writing a single character to the UART at specific points. Once the UART is initialised, we output a single '.' so we at least know we've gotten that far.
@@ -25,7 +25,7 @@ The code in `l.S` exists to bring us to a state where we can run kernel code in 
 
 We're now in rust, in `main9`, and at a high level we:
 
-1. Point `TPIDR_EL1` at this CPU's `Mach` (`mach.rs`), then set up the exception handlers early so that we get a bit of feedback if things go wrong.
+1. Point `TPIDR_EL1` at this CPU's `Mach` (`mach.rs`), then set up the exception handlers early so that we get a bit of feedback if things go wrong. Then set the generic timer's EL1 controls, which also reset to UNKNOWN values (`clock.rs`): EL0 can't read the counters or timers (`CNTKCTL_EL1 = 0`), and the virtual timer is disabled until something arms it.
 2. Replace the boot identity map in `ttbr0_el1` with the empty user root, so low addresses, including null, fault. The kernel's own page tables were built before the MMU was enabled (see above).
 3. Parse the device tree, enabling more informed initialisation.
 4. Set up the page allocator, with every page not used by the kernel image or the DTB.

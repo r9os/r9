@@ -109,6 +109,11 @@ core::arch::global_asm!(
     "usertest_wfi:",
     "   wfi",
     "usertest_wfi_end:",
+    // Read the virtual counter, which CNTKCTL_EL1 traps at EL0.
+    ".balign 8",
+    "usertest_cntvct:",
+    "   mrs x0, cntvct_el0",
+    "usertest_cntvct_end:",
     // pwrite(1, "hello\n", 6, -1) returns 6, then exits(nil), or
     // exits("pwrite") if it didn't.
     ".balign 8",
@@ -421,6 +426,11 @@ fn test_user_processes() {
             name: "wfi",
             start: || run_user(usertext!(usertest_wfi, usertest_wfi_end)),
             status: b"sys: trap: wfi or wfe pc=0x10000",
+        },
+        UserTest {
+            name: "read the counter",
+            start: || run_user(usertext!(usertest_cntvct, usertest_cntvct_end)),
+            status: b"sys: trap: exception class 0x18 pc=0x10000",
         },
         UserTest {
             name: "pwrite",
