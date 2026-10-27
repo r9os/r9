@@ -6,11 +6,11 @@ use alloc::alloc::Layout;
 use core::panic::PanicInfo;
 
 #[cfg(not(test))]
-use port::println;
+use port::iprintln;
 
 #[panic_handler]
 pub fn panic(info: &PanicInfo) -> ! {
-    println!("{}\n", info);
+    iprintln!("{}\n", info);
     crate::shutdown(false)
 }
 
