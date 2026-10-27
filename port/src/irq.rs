@@ -107,7 +107,7 @@ pub(crate) mod tests {
         depth: || DEPTH.with(|d| *d),
     };
 
-    fn is_masked() -> bool {
+    pub(crate) fn is_masked() -> bool {
         MASKED.get()
     }
 
