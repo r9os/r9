@@ -28,6 +28,8 @@ thread_local! {
     /// allows reading only, Write allows both).
     static PAGES: RefCell<Vec<(usize, Access)>> = const { RefCell::new(Vec::new()) };
     static CONS_OUT: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+    /// Whether IRQs were masked as each byte was written to the console.
+    static CONS_MASKED: RefCell<Vec<bool>> = const { RefCell::new(Vec::new()) };
     /// The current process, set by set_up.
     static UP: Cell<*mut Proc<Fake>> = const { Cell::new(core::ptr::null_mut()) };
     /// What put has mapped and unput hasn't unmapped: each page's address,
@@ -46,6 +48,7 @@ struct FakeUart;
 impl Uart for FakeUart {
     fn putb(&self, b: u8) {
         CONS_OUT.with(|o| o.borrow_mut().push(b));
+        CONS_MASKED.with(|m| m.borrow_mut().push(crate::irq::tests::is_masked()));
     }
 }
 
@@ -54,6 +57,13 @@ impl Uart for FakeUart {
 pub(crate) fn fake_cons() {
     Console::set_uart(Box::leak(Box::new(FakeUart)));
     CONS_OUT.with(|o| o.borrow_mut().clear());
+    CONS_MASKED.with(|m| m.borrow_mut().clear());
+}
+
+/// Whether IRQs were masked as each byte was written to the console, since
+/// the last call.
+pub(crate) fn cons_masked() -> Vec<bool> {
+    CONS_MASKED.with(|m| core::mem::take(&mut *m.borrow_mut()))
 }
 
 /// What this thread has written to the console since the last call.

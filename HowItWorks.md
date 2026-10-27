@@ -51,7 +51,7 @@ A syscall is `svc #0`, with the number in x8 and the arguments in x0–x5, and t
 
 Any other synchronous exception from EL0 kills the process, rather than the kernel: `trap` calls `pexit` with Plan 9's text for faults and breakpoints (`bcm/trap.c`), and its `sys: trap:` form for the rest. An abort exits with `sys: trap: fault read va=0x…`, or `write`. `BRK` exits with `sys: breakpoint`. Anything else, such as an undefined instruction or a trapped `wfi`, exits with `sys: trap: <what> pc=0x…`. Only synchronous exceptions (and SErrors) write `ESR_EL1`, so an IRQ or FIQ from EL0, once they're unmasked there, isn't mistaken for a fault: like any exception from EL1, it prints the `TrapFrame` and panics.
 
-There are no file descriptors yet: `pwrite` to fd 1 or 2 writes to the console, ignoring the offset, as Plan 9's `conswrite` does, and any other fd fails. The buffer is copied through a 256-byte stack buffer, so the console lock is never held while touching user memory. Console output is polled, with IRQs masked, so a long write holds the CPU until the UART has sent it all.
+There are no file descriptors yet: `pwrite` to fd 1 or 2 writes to the console, ignoring the offset, as Plan 9's `conswrite` does, and any other fd fails. The buffer is copied through a 256-byte stack buffer, so the console lock is never held while touching user memory. Console output is polled, so a long write holds the CPU until the UART has sent it all.
 
 ### Kernel context switching
 
@@ -196,6 +196,7 @@ With `--semihosting`, which CI uses, the kernel is built with the `semihosting` 
 `port` is where all the shared subsytems are defined.
 
 ### devcons
+The console has two ways to print, as Plan 9's does. `print` and `println` serialize their output with `PRINTLOCK`, taken with IRQs unmasked, so they're for thread context only, and panic in an interrupt handler. `iprint` and `iprintln` are for interrupt handlers, panics and exceptions: they mask IRQs, skip `PRINTLOCK`, and wait only a bounded time for `IPRINTLOCK` before printing anyway, so a CPU that stopped part way through printing can't stop another reporting. They mask IRQs for their whole output, about 87 µs a character at 115200 baud, so a handler should print at most a line. Both reach the UART through its own lock, taken with IRQs masked, held only to copy the reference, and always taken last.
 
 ### fdt
 

@@ -1,5 +1,6 @@
-use crate::mcslock::{Lock, LockNode};
-use core::fmt;
+use crate::irq;
+use crate::mcslock::{Lock, LockGuard, LockNode};
+use core::{fmt, hint};
 
 const fn ctrl(b: u8) -> u8 {
     b - b'@'
@@ -15,20 +16,40 @@ const CTLP: u8 = ctrl(b'P');
 #[expect(dead_code)]
 const CTLU: u8 = ctrl(b'U');
 
-pub trait Uart {
+/// Sync, since iprint on one CPU and print on another can use it at once.
+pub trait Uart: Sync {
     fn putb(&self, b: u8);
 }
 
-static CONS: Lock<Option<&'static mut dyn Uart>> = Lock::new("cons", None);
+/// Serializes print's output.
+static PRINTLOCK: Lock<()> = Lock::new("print", ());
+
+/// Serializes iprint's output, as far as a bounded wait for it allows.
+static IPRINTLOCK: Lock<()> = Lock::new("iprint", ());
+
+/// The UART, in a lock of its own so that iprint can reach it without
+/// PRINTLOCK.  It's taken with ilock, held only to copy the reference, and
+/// always the last lock taken.
+static UART: Lock<Option<&'static dyn Uart>> = Lock::new("uart", None);
+
+/// How many times iprint tries for IPRINTLOCK before printing without it.
+/// Plan 9 bounds the wait at about 100 ms, but there's no clock to measure
+/// that.
+const IPRINT_TRIES: usize = 1_000_000;
+
+fn uart() -> Option<&'static dyn Uart> {
+    let node = LockNode::new();
+    *UART.ilock(&node)
+}
 
 /// Console is what should be used in almost all cases, as it ensures threadsafe
 /// use of the console.
 pub struct Console;
 
 impl Console {
-    pub fn set_uart(uart: &'static mut dyn Uart) {
+    pub fn set_uart(uart: &'static dyn Uart) {
         let node = LockNode::new();
-        *CONS.lock(&node) = Some(uart);
+        *UART.ilock(&node) = Some(uart);
     }
 
     pub fn putstr(&mut self, s: &str) {
@@ -39,12 +60,13 @@ impl Console {
 /// Write `s` to the console, as Plan 9's putstrn.  It's bytes rather than a
 /// str, since user output needn't be UTF-8.
 pub fn putstrn(s: &[u8]) {
+    // PRINTLOCK is taken with IRQs unmasked, so a handler that printed while
+    // its CPU held it would deadlock.  Handlers use iprint.
+    assert!(!irq::in_interrupt(), "print in interrupt context");
     let node = LockNode::new();
-    let mut uart_guard = CONS.lock(&node);
-    if let Some(uart) = uart_guard.as_deref_mut() {
-        for &b in s {
-            putb(uart, b);
-        }
+    let _print = PRINTLOCK.lock(&node);
+    if let Some(uart) = uart() {
+        puts(uart, s);
     }
 }
 
@@ -62,6 +84,55 @@ pub fn print(args: fmt::Arguments) {
     cons.write_fmt(args).unwrap();
 }
 
+/// Print with IRQs masked, without the console lock, straight to the UART, as
+/// Plan 9's iprint: for interrupt context, panics, and debugging the console.
+/// IRQs stay masked for the whole output, about 87 µs a character at 115200
+/// baud, so an interrupt handler should keep it to a line.
+pub fn iprint(args: fmt::Arguments) {
+    irq::masked(|| {
+        let node = LockNode::new();
+        let _iprint = iprintcanlock(&node);
+        if let Some(uart) = uart() {
+            let _ = fmt::write(&mut Writer(uart), args);
+        }
+    });
+}
+
+/// Take IPRINTLOCK, as Plan 9's iprintcanlock, giving up after IPRINT_TRIES
+/// so that a panic part way through an iprint can still report.
+fn iprintcanlock(node: &LockNode) -> Option<LockGuard<'_, ()>> {
+    for _ in 0..IPRINT_TRIES {
+        if let Some(guard) = IPRINTLOCK.try_lock(node) {
+            return Some(guard);
+        }
+        hint::spin_loop();
+    }
+    None
+}
+
+/// Writes formatted output straight to a UART.
+struct Writer(&'static dyn Uart);
+
+impl fmt::Write for Writer {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        puts(self.0, s.as_bytes());
+        Ok(())
+    }
+}
+
+#[macro_export]
+macro_rules! iprintln {
+    () => ($crate::iprint!("\n"));
+    ($($arg:tt)*) => ($crate::iprint!("{}\n", format_args!($($arg)*)));
+}
+
+#[macro_export]
+macro_rules! iprint {
+    ($($args:tt)*) => {{
+        $crate::devcons::iprint(format_args!($($args)*))
+    }};
+}
+
 #[macro_export]
 macro_rules! println {
     () => ($crate::print!("\n"));
@@ -75,12 +146,57 @@ macro_rules! print {
     }};
 }
 
-fn putb(uart: &mut dyn Uart, b: u8) {
-    if b == b'\n' {
-        uart.putb(b'\r');
-    } else if b == BACKSPACE {
+fn puts(uart: &dyn Uart, s: &[u8]) {
+    for &b in s {
+        if b == b'\n' {
+            uart.putb(b'\r');
+        } else if b == BACKSPACE {
+            uart.putb(b);
+            uart.putb(b' ');
+        }
         uart.putb(b);
-        uart.putb(b' ');
     }
-    uart.putb(b);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fake::{cons_masked, cons_output, fake_cons};
+
+    #[test]
+    fn iprint_without_printlock() {
+        fake_cons();
+        let node = LockNode::new();
+        let _print = PRINTLOCK.lock(&node);
+        crate::iprintln!("held {}", 1);
+        assert_eq!(cons_output(), b"held 1\r\n");
+    }
+
+    #[test]
+    fn iprint_gives_up_waiting_for_iprintlock() {
+        fake_cons();
+        let node = LockNode::new();
+        let _iprint = IPRINTLOCK.lock(&node);
+        crate::iprint!("stuck");
+        assert_eq!(cons_output(), b"stuck");
+    }
+
+    #[test]
+    fn iprint_masks_irqs() {
+        irq::init(&irq::tests::FAKE);
+        fake_cons();
+        crate::iprint!("x");
+        assert_eq!(cons_output(), b"x");
+        assert_eq!(cons_masked(), [true]);
+        crate::print!("y");
+        assert_eq!(cons_masked(), [false]);
+    }
+
+    #[test]
+    #[should_panic(expected = "print in interrupt context")]
+    fn print_in_interrupt_panics() {
+        irq::init(&irq::tests::FAKE);
+        irq::enter_interrupt();
+        crate::print!("x");
+    }
 }
