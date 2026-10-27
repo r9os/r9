@@ -20,6 +20,8 @@ use port::{
 };
 
 #[cfg(not(test))]
+use aarch64_cpu::registers::{Readable, TTBR0_EL1};
+#[cfg(not(test))]
 use port::println;
 
 /// The user root that's loaded when there's no user address space.  It holds
@@ -817,16 +819,10 @@ pub enum RootPageTableType {
 
 /// Return the root user-level page table physical address
 fn ttbr0_el1() -> PhysAddr {
-    #[cfg(not(test))]
-    {
-        let mut addr: u64;
-        unsafe {
-            core::arch::asm!("mrs {value}, ttbr0_el1", value = out(reg) addr);
-        }
-        PhysAddr::new(addr)
-    }
-    #[cfg(test)]
-    PhysAddr::new(0)
+    PhysAddr::new(core::cfg_select! {
+        test => 0,
+        _ => TTBR0_EL1.get(),
+    })
 }
 
 /// Load the user root at `root` into ttbr0_el1.

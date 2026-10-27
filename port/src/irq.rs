@@ -33,17 +33,17 @@ std::thread_local! {
 /// Register the architecture's IRQ functions.
 pub fn init(ops: &'static Ops) {
     let ops = ptr::from_ref(ops).cast_mut();
-    #[cfg(not(test))]
-    OPS.store(ops, Ordering::Release);
-    #[cfg(test)]
-    OPS.with(|o| o.store(ops, Ordering::Release));
+    core::cfg_select! {
+        test => OPS.with(|o| o.store(ops, Ordering::Release)),
+        _ => OPS.store(ops, Ordering::Release),
+    }
 }
 
 fn ops() -> Option<&'static Ops> {
-    #[cfg(not(test))]
-    let ops = OPS.load(Ordering::Acquire);
-    #[cfg(test)]
-    let ops = OPS.with(|o| o.load(Ordering::Acquire));
+    let ops = core::cfg_select! {
+        test => OPS.with(|o| o.load(Ordering::Acquire)),
+        _ => OPS.load(Ordering::Acquire),
+    };
     // SAFETY: OPS is null, or was set from a &'static Ops by init.
     unsafe { ops.as_ref() }
 }

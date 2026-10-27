@@ -4,6 +4,8 @@
 use crate::param::MAXMACH;
 use crate::proc::Arm64;
 use crate::swtch::Label;
+#[cfg(not(test))]
+use aarch64_cpu::registers::{MPIDR_EL1, Readable, TPIDR_EL1, Writeable};
 use core::cell::SyncUnsafeCell;
 use port::dat::Proc;
 
@@ -25,33 +27,24 @@ static MACH: [SyncUnsafeCell<Mach>; MAXMACH] =
 /// Point this CPU's TPIDR_EL1 at its Mach.
 pub fn init() {
     #[cfg(not(test))]
-    {
-        use aarch64_cpu::registers::{TPIDR_EL1, Writeable};
-        TPIDR_EL1.set(MACH[machno()].get().addr() as u64);
-    }
+    TPIDR_EL1.set(MACH[machno()].get().addr() as u64);
 }
 
 /// This CPU's Mach.
 pub fn mach() -> *mut Mach {
-    #[cfg(not(test))]
-    {
-        use aarch64_cpu::registers::{Readable, TPIDR_EL1};
-        TPIDR_EL1.get() as *mut Mach
+    core::cfg_select! {
+        test => MACH[0].get(),
+        _ => TPIDR_EL1.get() as *mut Mach,
     }
-    #[cfg(test)]
-    MACH[0].get()
 }
 
 /// Return this CPU's number, Aff0 of MPIDR_EL1 (one cluster of up to four
 /// cores on the Raspberry Pi 4).
 pub fn machno() -> usize {
-    #[cfg(not(test))]
-    let machno = {
-        use aarch64_cpu::registers::{MPIDR_EL1, Readable};
-        MPIDR_EL1.read(MPIDR_EL1::Aff0) as usize
+    let machno = core::cfg_select! {
+        test => 0,
+        _ => MPIDR_EL1.read(MPIDR_EL1::Aff0) as usize,
     };
-    #[cfg(test)]
-    let machno = 0;
     assert!(machno < MAXMACH, "machno {machno} >= MAXMACH");
     machno
 }
