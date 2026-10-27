@@ -109,8 +109,18 @@ impl Step for PhysAddr {
         startpa.0.checked_add(count as u64).map(PhysAddr)
     }
 
+    fn forward_overflowing(startpa: Self, count: usize) -> (Self, bool) {
+        let (pa, overflowed) = startpa.0.overflowing_add(count as u64);
+        (PhysAddr(pa), overflowed)
+    }
+
     fn backward_checked(startpa: Self, count: usize) -> Option<Self> {
         startpa.0.checked_sub(count as u64).map(PhysAddr)
+    }
+
+    fn backward_overflowing(startpa: Self, count: usize) -> (Self, bool) {
+        let (pa, overflowed) = startpa.0.overflowing_sub(count as u64);
+        (PhysAddr(pa), overflowed)
     }
 }
 

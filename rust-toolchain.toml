@@ -1,5 +1,5 @@
 [toolchain]
-channel = "nightly-2026-07-06"
+channel = "nightly-2026-10-27"
 components = ["rustfmt", "rust-analyzer", "rust-src", "clippy", "llvm-tools"]
 targets = [
     "aarch64-unknown-none",
