@@ -1,5 +1,7 @@
+use crate::clock;
 use crate::irq;
 use crate::mcslock::{Lock, LockGuard, LockNode};
+use core::time::Duration;
 use core::{fmt, hint};
 
 const fn ctrl(b: u8) -> u8 {
@@ -31,11 +33,6 @@ static IPRINTLOCK: Lock<()> = Lock::new("iprint", ());
 /// PRINTLOCK.  It's taken with ilock, held only to copy the reference, and
 /// always the last lock taken.
 static UART: Lock<Option<&'static dyn Uart>> = Lock::new("uart", None);
-
-/// How many times iprint tries for IPRINTLOCK before printing without it.
-/// Plan 9 bounds the wait at about 100 ms, but there's no clock to measure
-/// that.
-const IPRINT_TRIES: usize = 1_000_000;
 
 fn uart() -> Option<&'static dyn Uart> {
     let node = LockNode::new();
@@ -98,16 +95,27 @@ pub fn iprint(args: fmt::Arguments) {
     });
 }
 
-/// Take IPRINTLOCK, as Plan 9's iprintcanlock, giving up after IPRINT_TRIES
-/// so that a panic part way through an iprint can still report.
+/// Take IPRINTLOCK, as Plan 9's iprintcanlock, giving up after IPRINT_TIMEOUT
+/// so that a panic part way through an iprint can still report.  Without a
+/// clock it tries once: only one CPU runs then, so only a recursion on this
+/// CPU could be holding the lock.
 fn iprintcanlock(node: &LockNode) -> Option<LockGuard<'_, ()>> {
-    for _ in 0..IPRINT_TRIES {
+    const IPRINT_TIMEOUT: Duration = Duration::from_millis(100);
+
+    let (Some(now), Some(hz)) = (clock::fastticks(), clock::fasthz()) else {
+        return IPRINTLOCK.try_lock(node);
+    };
+
+    let deadline = now.saturating_add(clock::ns2fastticks(IPRINT_TIMEOUT, hz));
+    loop {
         if let Some(guard) = IPRINTLOCK.try_lock(node) {
             return Some(guard);
         }
+        if clock::fastticks().is_none_or(|t| t >= deadline) {
+            return None;
+        }
         hint::spin_loop();
     }
-    None
 }
 
 /// Writes formatted output straight to a UART.
@@ -173,12 +181,31 @@ mod tests {
     }
 
     #[test]
-    fn iprint_gives_up_waiting_for_iprintlock() {
+    fn iprint_without_a_clock_tries_once() {
         fake_cons();
         let node = LockNode::new();
         let _iprint = IPRINTLOCK.lock(&node);
         crate::iprint!("stuck");
         assert_eq!(cons_output(), b"stuck");
+    }
+
+    #[test]
+    fn iprint_gives_up_waiting_after_iprint_wait() {
+        thread_local! {
+            static NOW: core::cell::Cell<u64> = const { core::cell::Cell::new(0) };
+        }
+        // A 1 kHz clock that advances a tick each time it's read.
+        static FAKE: clock::Ops =
+            clock::Ops { fastticks: || NOW.replace(NOW.get() + 1), fasthz: || 1000 };
+        clock::init(&FAKE);
+        fake_cons();
+        let node = LockNode::new();
+        let _iprint = IPRINTLOCK.lock(&node);
+        crate::iprint!("stuck");
+        assert_eq!(cons_output(), b"stuck");
+        // It waited out 100 ms, 100 ticks at 1 kHz, and gave up soon after.
+        let ticks = NOW.get();
+        assert!((100..=102).contains(&ticks), "gave up after {ticks} ticks");
     }
 
     #[test]
