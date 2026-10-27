@@ -41,6 +41,12 @@ start:
 	msr	cpacr_el1, x0
 	ldr	x0, ={CPTR_EL2}
 	msr	cptr_el2, x0
+	// The timer's EL2 controls reset to UNKNOWN values (Arm ARM DDI 0487
+	// M.d, D24.10.2 and D24.10.27).  A zero virtual offset makes virtual
+	// time equal physical time.
+	ldr	x0, ={CNTHCTL_EL2}
+	msr	cnthctl_el2, x0
+	msr	cntvoff_el2, xzr
 
 	// Return to EL1
 	adr	x0, el1

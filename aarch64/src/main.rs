@@ -10,6 +10,7 @@
 
 mod allocator;
 mod boottest;
+mod clock;
 mod devcons;
 mod deviceutil;
 mod io;
@@ -61,6 +62,7 @@ core::arch::global_asm!(
     },
     CPACR_EL1 = const aarch64_cpu::registers::CPACR_EL1::FPEN::TrapNothing.value,
     CPTR_EL2 = const CPTR_EL2_NO_FP_TRAP,
+    CNTHCTL_EL2 = const CNTHCTL_EL2_EL1PCTEN,
     SCTLR_EL1_MMU_OFF = const SCTLR_EL1_RES1,
     SCTLR_EL1_MMU_ON = const {
         use aarch64_cpu::registers::SCTLR_EL1::{C, I, M, SA, SA0};
@@ -90,6 +92,14 @@ const SCTLR_EL1_RES1: u64 = (1 << 29) | (1 << 28) | (1 << 23) | (1 << 22) | (1 <
 /// no fields for them.
 #[cfg(not(test))]
 const CPTR_EL2_NO_FP_TRAP: u64 = 0x33ff;
+
+/// CNTHCTL_EL2 with HCR_EL2.E2H clear (D24.10.2): EL1PCTEN (0) set, so EL1
+/// can read the physical counter rather than trap to EL2, where r9 has no
+/// handler, and everything else clear: EL1PCEN (1), since r9 uses the
+/// virtual timer, and the event stream.  Every field resets to UNKNOWN.
+/// Linux's __init_el2_timers also sets EL1PCEN.
+#[cfg(not(test))]
+const CNTHCTL_EL2_EL1PCTEN: u64 = aarch64_cpu::registers::CNTHCTL_EL2::EL1PCTEN::SET.value;
 
 // kernel.ld asserts that its own KZERO matches this.
 #[cfg(not(test))]
@@ -167,6 +177,7 @@ fn print_stacks() {
 pub extern "C" fn main9(dtb_pa: usize) {
     mach::init();
     trap::init();
+    clock::init();
 
     // Nothing needs the boot identity map in ttbr0_el1 any more.  Replace it
     // with the empty user root, so low addresses, including null, fault.
