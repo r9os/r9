@@ -8,6 +8,7 @@ extern crate alloc;
 
 pub mod allocator;
 pub mod bitmapalloc;
+pub mod clock;
 pub mod dat;
 pub mod devcons;
 pub mod elf;
