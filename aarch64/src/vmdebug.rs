@@ -111,6 +111,10 @@ fn print_table_at_level(
     pte_indices: PteIndices,
 ) {
     let indent = 2 + level.depth() * 2;
+    // Index rather than iterate: the root table is the last page of the
+    // address space, so an iterator over it would compute a pointer one past
+    // its end, which overflows.
+    #[allow(clippy::needless_range_loop)]
     for i in 0..512 {
         let pte = page_table.entries[i];
         if !pte.valid() {

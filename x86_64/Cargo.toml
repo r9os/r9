@@ -8,7 +8,6 @@ default-target = "x86_64-unknown-none"
 
 [dependencies]
 bitstruct = "0.1"
-x86 = "0.52"
 port = { path = "../port" }
 seq-macro = "0.3.6"
 zerocopy = { version = "0.8.27", features = ["derive"] }
