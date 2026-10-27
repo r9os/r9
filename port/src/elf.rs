@@ -177,15 +177,15 @@ fn segment<'a>(image: &'a [u8], ph: &[u8; PHDR_SIZE]) -> Result<Option<Segment<'
 // Callers pass the header or a program header, which are arrays long enough for
 // every field read from them.
 fn u16_at(b: &[u8], off: usize) -> u16 {
-    u16::from_le_bytes([b[off], b[off + 1]])
+    u16::from_le_bytes(*b[off..].first_chunk().unwrap())
 }
 
 fn u32_at(b: &[u8], off: usize) -> u32 {
-    u32::from_le_bytes(b[off..off + 4].try_into().unwrap())
+    u32::from_le_bytes(*b[off..].first_chunk().unwrap())
 }
 
 fn u64_at(b: &[u8], off: usize) -> u64 {
-    u64::from_le_bytes(b[off..off + 8].try_into().unwrap())
+    u64::from_le_bytes(*b[off..].first_chunk().unwrap())
 }
 
 #[cfg(test)]
