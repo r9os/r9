@@ -177,7 +177,6 @@ fn print_stacks() {
 pub extern "C" fn main9(dtb_pa: usize) {
     mach::init();
     trap::init();
-    clock::init();
 
     // Nothing needs the boot identity map in ttbr0_el1 any more.  Replace it
     // with the empty user root, so low addresses, including null, fault.
@@ -206,12 +205,14 @@ pub extern "C" fn main9(dtb_pa: usize) {
     }
 
     devcons::init(&dt);
+    clock::init();
     mailbox::init(&dt);
 
     println!();
     println!("r9 from the Internet");
     println!("DTB found at: {:#x}", dtb_va);
     println!("midr_el1: {:?}", MidrEl1::read());
+    println!("Counter frequency: {} Hz", port::clock::fasthz().expect("no clock"));
     println!("sctlr_el1: {:#x}", {
         use aarch64_cpu::registers::{Readable, SCTLR_EL1};
         SCTLR_EL1.get()

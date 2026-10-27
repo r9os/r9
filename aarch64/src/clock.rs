@@ -1,17 +1,25 @@
-//! The generic timer.
+//! The generic timer's counter.  l.S puts the timer's controls in a known
+//! state.
 
 #[cfg(not(test))]
-use aarch64_cpu::registers::{CNTKCTL_EL1, CNTV_CTL_EL0, Writeable};
+use aarch64_cpu::registers::{CNTFRQ_EL0, CNTVCT_EL0, Readable};
 
-/// Put the EL1 timer registers in a known state.  Both reset to UNKNOWN
-/// values (Arm ARM DDI 0487 M.d, D24.10.15 and D24.10.28).  CNTKCTL_EL1 = 0
-/// traps EL0's reads of the counters and timers, and CNTV_CTL_EL0 = 0
-/// disables the virtual timer, which could otherwise be armed with a stale
-/// deadline.
+/// port::clock's functions.  Reads of CNTVCT_EL0 are in program order
+/// relative to each other, but can be taken ahead of earlier instructions
+/// (Arm ARM DDI 0487 M.d, D12.2.2), so an isb keeps a time read after some
+/// work from being read before it, as Linux's __arch_counter_get_cntvct
+/// does.  Firmware sets CNTFRQ_EL0 (D24.10.1).
+#[cfg(not(test))]
+static CLOCK: port::clock::Ops = port::clock::Ops {
+    fastticks: || {
+        aarch64_cpu::asm::barrier::isb(aarch64_cpu::asm::barrier::SY);
+        CNTVCT_EL0.get()
+    },
+    fasthz: || CNTFRQ_EL0.get(),
+};
+
+/// Register the counter with port::clock.
 pub fn init() {
     #[cfg(not(test))]
-    {
-        CNTKCTL_EL1.set(0);
-        CNTV_CTL_EL0.set(0);
-    }
+    port::clock::init(&CLOCK);
 }

@@ -62,6 +62,13 @@ el1:	// In EL1
 	msr	sctlr_el1, x0
 	isb
 
+	// The timer's EL1 controls reset to UNKNOWN values too (D24.10.15
+	// and D24.10.28).  CNTKCTL_EL1 = 0 traps EL0's reads of the counters
+	// and timers, and CNTV_CTL_EL0 = 0 disables the virtual timer, which
+	// could otherwise be armed with a stale deadline.
+	msr	cntkctl_el1, xzr
+	msr	cntv_ctl_el0, xzr
+
 	// Everything written before the MMU is on is in the BSS: the boot
 	// stack, the early pagetables and the zeroed statics.  Those writes go
 	// straight to memory, but the caches' contents at reset are

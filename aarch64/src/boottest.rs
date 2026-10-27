@@ -18,6 +18,7 @@ use port::segment;
 
 /// Run the tests, panicking if one fails.
 pub fn run() {
+    test_clock();
     test_kmap();
     test_swtch();
     test_release();
@@ -602,6 +603,19 @@ fn test_user_access() {
     assert!(!ok(param::UADDRTOP, Read), "user recursive window");
     assert!(!ok(param::KZERO, Read), "kernel");
     println!("user access test: ok");
+}
+
+/// The counter is running, and fastticks never goes backwards.
+fn test_clock() {
+    let fastticks = || port::clock::fastticks().expect("clock test: no clock");
+    let first = fastticks();
+    let mut last = first;
+    for _ in 0..100_000 {
+        let t = fastticks();
+        assert!(t >= last, "clock test: went backwards from {last} to {t}");
+        last = t;
+    }
+    assert!(last > first, "clock test: the counter isn't running");
 }
 
 /// Write a page that's mapped nowhere else through one kmap, and read it back
