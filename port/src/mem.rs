@@ -154,7 +154,6 @@ impl PhysRange {
         Self { start, end: PhysAddr(start.0 + len as u64) }
     }
 
-    #[allow(dead_code)]
     pub fn offset_addr(&self, offset: u64) -> Option<PhysAddr> {
         let addr = self.start + offset;
         if self.contains(addr) { Some(addr) } else { None }

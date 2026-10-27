@@ -11,9 +11,9 @@ use port::mem::{PhysRange, VirtRange};
 use port::println;
 
 // UART 0 (PL011) registers
-#[allow(unused)]
+#[expect(unused)]
 pub const UART0_DR: usize = 0x00; // Data register
-#[allow(unused)]
+#[expect(unused)]
 pub const UART0_FR: usize = 0x18; // Flag register
 pub const UART0_IBRD: usize = 0x24; // Integer baud rate divisor
 pub const UART0_FBRD: usize = 0x28; // Fractional baud rate divisor
@@ -22,7 +22,7 @@ pub const UART0_CR: usize = 0x30; // Control register
 pub const UART0_IMSC: usize = 0x38; // Interrupt mask set clear register
 pub const UART0_ICR: usize = 0x44; // Interrupt clear register
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub struct Pl011Uart {
     gpio_virtrange: VirtRange,
     pl011_virtrange: VirtRange,
@@ -31,7 +31,7 @@ pub struct Pl011Uart {
 /// PL011 is the default in qemu (UART0), but a bit fiddly to use on a real
 /// Raspberry Pi board, as it needs additional configuration in the config
 /// and EEPROM (rpi4) to assign to the serial GPIO pins.
-#[allow(dead_code)]
+#[expect(dead_code)]
 impl Pl011Uart {
     pub fn new(dt: &DeviceTree) -> Result<Pl011Uart> {
         let gpio_physrange = Self::find_gpio_physrange(dt)?;

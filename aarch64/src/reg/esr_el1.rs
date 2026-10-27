@@ -78,7 +78,7 @@ bitstruct! {
     }
 }
 
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 impl EsrEl1IssInstructionAbort {
     pub fn from_esr_el1(r: EsrEl1) -> Option<EsrEl1IssInstructionAbort> {
         r.exception_class_enum()

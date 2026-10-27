@@ -591,7 +591,7 @@ impl<'a> DeviceTree<'a> {
 
 /// Flattened Devicetree header structure, as documented in the spec
 #[derive(Debug)]
-#[allow(dead_code)]
+#[expect(dead_code)]
 struct FdtHeader {
     magic: u32,
     totalsize: u32,
