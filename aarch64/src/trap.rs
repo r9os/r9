@@ -7,7 +7,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use crate::proc::Arm64;
 use crate::reg::esr_el1::{EsrEl1, ExceptionClass};
 use port::exec::UserRegs;
-use port::println;
+use port::iprintln;
 
 #[cfg(not(test))]
 core::arch::global_asm!(
@@ -183,7 +183,7 @@ pub extern "C" fn stack_overflow_unsafe(frame: *const TrapFrame, sp: u64) -> ! {
     }
     // SAFETY: trap.S saved the frame on the overflow stack, and passes it.
     let frame = unsafe { &*frame };
-    println!("{:#?}", frame);
+    iprintln!("{:#?}", frame);
     panic!("kernel stack overflow: sp={:#x}", sp + size_of::<TrapFrame>() as u64);
 }
 
@@ -201,7 +201,7 @@ fn trap(frame: &mut TrapFrame) {
         port::proc::pexit::<Arm64>(user_fault(frame).as_bytes());
     }
 
-    println!("{:#?}", frame);
+    iprintln!("{:#?}", frame);
     panic!("Unhandled exception from EL{}", frame.exception_level());
 }
 
