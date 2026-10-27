@@ -5,8 +5,6 @@ use core::cell::SyncUnsafeCell;
 use core::mem::MaybeUninit;
 use port::devcons::Console;
 use port::fdt::DeviceTree;
-#[cfg(not(test))]
-use port::println;
 // The aarch64 devcons implementation is focussed on Raspberry Pi 4 for now.
 
 // Useful links
@@ -26,27 +24,14 @@ use port::println;
 // - UART3 PL011
 
 pub fn init(dt: &DeviceTree) {
-    Console::set_uart(|| {
-        let uart = MiniUart::new_with_map_ranges(dt);
+    // Without a UART, there's nowhere to report the failure.
+    let Ok(uart) = MiniUart::new_with_map_ranges(dt) else {
+        return;
+    };
+    uart.init();
 
-        // Return a statically initialised MiniUart.  If that couldn't be done for some reason,
-        // return None and hope that things work out regardless
-        match uart {
-            Ok(uart) => {
-                uart.init();
-
-                static UART: SyncUnsafeCell<MaybeUninit<MiniUart>> =
-                    SyncUnsafeCell::new(MaybeUninit::uninit());
-                unsafe {
-                    let cons = &mut *UART.get();
-                    cons.write(uart);
-                    Ok(cons.assume_init_mut())
-                }
-            }
-            Err(msg) => {
-                println!("can't initialise uart: {msg:?}");
-                Err("can't initialise uart")
-            }
-        }
-    });
+    static UART: SyncUnsafeCell<MaybeUninit<MiniUart>> = SyncUnsafeCell::new(MaybeUninit::uninit());
+    // SAFETY: init runs once, before anything else uses UART.
+    let uart = unsafe { (*UART.get()).write(uart) };
+    Console::set_uart(uart);
 }

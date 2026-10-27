@@ -52,7 +52,7 @@ impl Uart for FakeUart {
 /// Make the console FakeUart, and clear this thread's output.  The console is
 /// shared by every thread, but each thread's output is its own.
 pub(crate) fn fake_cons() {
-    Console::set_uart(|| Ok(Box::leak(Box::new(FakeUart))));
+    Console::set_uart(Box::leak(Box::new(FakeUart)));
     CONS_OUT.with(|o| o.borrow_mut().clear());
 }
 
