@@ -33,7 +33,7 @@ pub struct MiniUart {
     pub miniuart_virtrange: VirtRange,
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 impl MiniUart {
     /// Create MiniUart assuming the required register have already been mapped.
     /// This is intended for use only at early startup, *before* the full VM code has been set up,

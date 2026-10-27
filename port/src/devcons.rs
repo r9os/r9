@@ -6,15 +6,14 @@ const fn ctrl(b: u8) -> u8 {
     b - b'@'
 }
 
-#[allow(dead_code)]
 const BACKSPACE: u8 = ctrl(b'H');
-#[allow(dead_code)]
+#[expect(dead_code)]
 const DELETE: u8 = 0x7F;
-#[allow(dead_code)]
+#[expect(dead_code)]
 const CTLD: u8 = ctrl(b'D');
-#[allow(dead_code)]
+#[expect(dead_code)]
 const CTLP: u8 = ctrl(b'P');
-#[allow(dead_code)]
+#[expect(dead_code)]
 const CTLU: u8 = ctrl(b'U');
 
 pub trait Uart {

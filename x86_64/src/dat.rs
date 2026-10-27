@@ -107,9 +107,9 @@ pub enum Trap {
     XM,
     VE,
     CP,
-    #[allow(unused)]
+    #[expect(unused)]
     Reserved(u8),
-    #[allow(unused)] // XXX: remove soon.
+    #[expect(unused)] // XXX: remove soon.
     Intr(u8),
 }
 

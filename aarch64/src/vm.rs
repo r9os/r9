@@ -27,7 +27,7 @@ use port::println;
 /// the null page.
 static mut EMPTY_USER_ROOT: RootPageTable = RootPageTable::empty();
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PageSize {
     Page4K,
@@ -386,7 +386,7 @@ pub fn unmap_user_page(va: usize) -> Option<PhysAddr> {
 }
 
 /// Remove any TLB entry for `va` on every CPU.
-#[allow(unused_variables)]
+#[cfg_attr(test, expect(unused_variables))]
 fn invalidate_va(va: usize) {
     #[cfg(not(test))]
     // SAFETY: TLB maintenance and barriers only.
@@ -408,7 +408,7 @@ fn invalidate_va(va: usize) {
 }
 
 #[derive(Debug)]
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub enum PageTableError {
     AllocationFailed(PageAllocError),
     EntryIsNotTable,
@@ -830,7 +830,7 @@ fn ttbr0_el1() -> PhysAddr {
 }
 
 /// Load the user root at `root` into ttbr0_el1.
-#[allow(unused_variables)]
+#[cfg_attr(test, expect(unused_variables))]
 unsafe fn load_user_root(root: PhysAddr) {
     // Make the new root's entries visible to the table walker before it's
     // loaded.
@@ -872,7 +872,7 @@ fn write_barrier() {
 /// Callers then access `va` directly, which needs PSTATE.PAN clear.  The
 /// Cortex-A72 is Armv8.0, without PAN.  On a core with PAN (Armv8.1),
 /// SCTLR_EL1.SPAN must be 1, or every exception to EL1 sets PAN.
-#[allow(unused_variables)]
+#[cfg_attr(test, expect(unused_variables))]
 pub fn user_page_ok(va: usize, access: Access) -> bool {
     #[cfg(not(test))]
     {
@@ -918,7 +918,7 @@ pub fn user_page_ok(va: usize, access: Access) -> bool {
 /// is skipped if CTR_EL0 says the hardware doesn't need it (IDC, DIC).  See
 /// the Arm ARM (DDI 0487) on instruction cache maintenance and CTR_EL0, and
 /// Linux's sync_icache_aliases.
-#[allow(unused_variables)]
+#[cfg_attr(test, expect(unused_variables))]
 pub fn sync_icache(va: usize, len: usize) {
     #[cfg(not(test))]
     {
@@ -947,7 +947,6 @@ pub fn sync_icache(va: usize, len: usize) {
     }
 }
 
-#[allow(unused_variables)]
 pub unsafe fn invalidate_all_tlb_entries() {
     #[cfg(not(test))]
     unsafe {

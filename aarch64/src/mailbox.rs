@@ -192,7 +192,7 @@ struct SetClockRateResponse {
     rate_hz: u32,
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub fn set_clock_rate(clock_id: u32, rate_hz: u32, skip_setting_turbo: u32) {
     let tags = Tag::<SetClockRateRequest> {
         tag_id0: TagId::SetClockRate,
@@ -217,14 +217,14 @@ struct MemoryResponse {
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub struct MemoryInfo {
     pub start: u32,
     pub size: u32,
     pub end: u32,
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub fn get_arm_memory() -> PhysRange {
     let tags = Tag::<EmptyRequest> {
         tag_id0: TagId::GetArmMemory,
@@ -241,7 +241,7 @@ pub fn get_arm_memory() -> PhysRange {
     PhysRange::new(PhysAddr::new(start as u64), PhysAddr::new(end as u64))
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub fn get_vc_memory() -> PhysRange {
     let tags = Tag::<EmptyRequest> {
         tag_id0: TagId::GetVcMemory,

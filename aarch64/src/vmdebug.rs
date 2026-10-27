@@ -114,7 +114,7 @@ fn print_table_at_level(
     // Index rather than iterate: the root table is the last page of the
     // address space, so an iterator over it would compute a pointer one past
     // its end, which overflows.
-    #[allow(clippy::needless_range_loop)]
+    #[expect(clippy::needless_range_loop)]
     for i in 0..512 {
         let pte = page_table.entries[i];
         if !pte.valid() {

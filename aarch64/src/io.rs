@@ -1,7 +1,7 @@
 use core::ptr::{read_volatile, write_volatile};
 use port::mem::VirtRange;
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub enum GpioPull {
     Off = 0,
     Down,
@@ -9,7 +9,6 @@ pub enum GpioPull {
 }
 
 /// Delay for count cycles
-#[allow(dead_code)]
 pub fn delay(count: u32) {
     for _ in 0..count {
         core::hint::spin_loop();
@@ -26,7 +25,6 @@ pub fn write_reg(range: &VirtRange, offset: usize, val: u32) {
 /// Write val|old into the reg RegBlock at offset from reg.addr,
 /// where `old` is the existing value.
 /// Panics if offset is outside any range specified by reg.len.
-#[allow(dead_code)]
 pub fn write_or_reg(range: &VirtRange, offset: usize, val: u32) {
     let dst = range.offset_addr(offset).expect("offset outside bounds");
     unsafe {
