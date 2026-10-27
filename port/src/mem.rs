@@ -72,7 +72,8 @@ impl PhysAddr {
 
     /// Round up by a power of 2
     pub const fn round_up2(&self, step: u64) -> PhysAddr {
-        PhysAddr(maths::round_up2_u64(self.0, step))
+        assert!(step.is_power_of_two());
+        PhysAddr(self.0.next_multiple_of(step))
     }
 
     /// Round down by a power of 2
