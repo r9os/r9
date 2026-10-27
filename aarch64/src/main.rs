@@ -81,8 +81,7 @@ core::arch::global_asm!(
 /// little-endian, no alignment checks, and EL0's cache maintenance, CTR_EL0,
 /// DC ZVA, DAIF, WFI and WFE trapped to EL1.
 #[cfg(not(test))]
-const SCTLR_EL1_RES1: u64 =
-    (1 << 29) | (1 << 28) | (1 << 23) | (1 << 22) | (1 << 20) | (1 << 11);
+const SCTLR_EL1_RES1: u64 = (1 << 29) | (1 << 28) | (1 << 23) | (1 << 22) | (1 << 20) | (1 << 11);
 
 /// CPTR_EL2 with HCR_EL2.E2H clear (D24.2.37): the RES1 bits 13, 9 and 7:0,
 /// TZ (8) and TSM (12) set, which trap SVE and SME to EL2 where they're

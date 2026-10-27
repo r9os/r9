@@ -1,4 +1,3 @@
-use crate::Result;
 use crate::mcslock::{Lock, LockNode};
 use core::fmt;
 
@@ -27,13 +26,9 @@ static CONS: Lock<Option<&'static mut dyn Uart>> = Lock::new("cons", None);
 pub struct Console;
 
 impl Console {
-    pub fn set_uart<F>(uart_fn: F)
-    where
-        F: FnOnce() -> Result<&'static mut dyn Uart>,
-    {
+    pub fn set_uart(uart: &'static mut dyn Uart) {
         let node = LockNode::new();
-        let mut cons = CONS.lock(&node);
-        *cons = uart_fn().ok();
+        *CONS.lock(&node) = Some(uart);
     }
 
     pub fn putstr(&mut self, s: &str) {

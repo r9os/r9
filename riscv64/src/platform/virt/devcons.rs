@@ -14,16 +14,12 @@ pub fn init(dt: &DeviceTree) {
         .and_then(|reg| reg.regblock())
         .unwrap();
 
-    Console::set_uart(|| {
-        let mut uart = Uart16550::new(ns16550a_reg);
-        uart.init(115_200);
+    let mut uart = Uart16550::new(ns16550a_reg);
+    uart.init(115_200);
 
-        static CONS: SyncUnsafeCell<MaybeUninit<Uart16550>> =
-            SyncUnsafeCell::new(MaybeUninit::uninit());
-        unsafe {
-            let cons = &mut *CONS.get();
-            cons.write(uart);
-            Ok(cons.assume_init_mut())
-        }
-    });
+    static CONS: SyncUnsafeCell<MaybeUninit<Uart16550>> =
+        SyncUnsafeCell::new(MaybeUninit::uninit());
+    // SAFETY: init runs once, before anything else uses CONS.
+    let uart = unsafe { (*CONS.get()).write(uart) };
+    Console::set_uart(uart);
 }
