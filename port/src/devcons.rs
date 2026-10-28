@@ -195,8 +195,11 @@ mod tests {
             static NOW: core::cell::Cell<u64> = const { core::cell::Cell::new(0) };
         }
         // A 1 kHz clock that advances a tick each time it's read.
-        static FAKE: clock::Ops =
-            clock::Ops { fastticks: || NOW.replace(NOW.get() + 1), fasthz: || 1000 };
+        static FAKE: clock::Ops = clock::Ops {
+            fastticks: || NOW.replace(NOW.get() + 1),
+            fasthz: || 1000,
+            timerset: |_| {},
+        };
         clock::init(&FAKE);
         fake_cons();
         let node = LockNode::new();
