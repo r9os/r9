@@ -198,6 +198,12 @@ impl ProcArch for Fake {
         core::ptr::null_mut()
     }
 
+    type Fp = ();
+
+    fn fp_save(_fp: &mut ()) {}
+
+    fn fp_restore(_fp: &()) {}
+
     fn run_queue() -> &'static Lock<RunQueue<Fake>> {
         RUN_QUEUE.with(|q| *q)
     }

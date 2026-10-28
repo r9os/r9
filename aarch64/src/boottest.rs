@@ -41,6 +41,7 @@ pub fn run() {
     test_release();
     test_user_processes();
     test_preemption();
+    test_fp_state();
 }
 
 // Test programs for test_user_processes.  Each is copied to UTZERO from
@@ -73,6 +74,34 @@ core::arch::global_asm!(
     "   mov x8, #{EXITS}",
     "   svc #0",
     "usertest_spin_end:",
+    // Fill every FP/SIMD register with argc, spin for about 300 ms under
+    // QEMU, long enough to be preempted several times, then check them all:
+    // exits(nil) if each still holds argc, or exits(argv[0]) if any doesn't.
+    ".arch_extension simd",
+    ".balign 8",
+    "usertest_fp:",
+    "   mov x2, x0",
+    "   mov x5, x1",
+    "   .irp n, 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31",
+    "   dup v\\n\\().2d, x2",
+    "   .endr",
+    "   mov x3, #0x8000000",
+    "1: subs x3, x3, #1",
+    "   b.ne 1b",
+    "   .irp n, 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31",
+    "   umov x4, v\\n\\().d[0]",
+    "   cmp x4, x2",
+    "   b.ne 2f",
+    "   umov x4, v\\n\\().d[1]",
+    "   cmp x4, x2",
+    "   b.ne 2f",
+    "   .endr",
+    "   mov x0, #0",
+    "   b 3f",
+    "2: ldr x0, [x5]",
+    "3: mov x8, #{EXITS}",
+    "   svc #0",
+    "usertest_fp_end:",
     // exits("bye")
     ".balign 8",
     "usertest_bye:",
@@ -540,6 +569,39 @@ fn test_preemption() {
     assert!(exits[1].1.is_empty(), "preemption test: spin exited badly");
     assert_eq!(port::pagealloc::usage_bytes().0, used_before, "preemption test: leaked");
     println!("preemption test: ok ({took:?})");
+}
+
+/// Two processes that each fill their FP/SIMD registers with their own
+/// pattern, then spin and are preempted, still find them intact: each exits
+/// with its name if it doesn't.
+fn test_fp_state() {
+    let (used_before, _) = port::pagealloc::usage_bytes();
+    let a = port::proc::newproc::<Arm64>(|| fp_start(&[b"fpa"])).expect("couldn't create process");
+    let b = port::proc::newproc::<Arm64>(|| fp_start(&[b"fpb", b"2"]))
+        .expect("couldn't create process");
+    port::proc::ready(a);
+    port::proc::ready(b);
+    let exits = port::proc::schedule::<Arm64>();
+    let lost: alloc::vec::Vec<_> = exits
+        .iter()
+        .filter(|(_, s)| !s.is_empty())
+        .map(|(_, s)| alloc::string::String::from_utf8_lossy(s))
+        .collect();
+    assert_eq!(exits.len(), 2, "fp state test: {} exits", exits.len());
+    assert!(lost.is_empty(), "fp state test: lost by {lost:?}");
+    assert_eq!(port::pagealloc::usage_bytes().0, used_before, "fp state test: leaked");
+    println!("fp state test: ok");
+}
+
+/// The FP state test program's start, with `args`: its pattern is how many
+/// there are, and its name the first.
+fn fp_start(args: &[&[u8]]) {
+    load_user(usertext!(usertest_fp, usertest_fp_end));
+    let regs = match port::exec::push_args::<Arm64>(UTZERO, USTKTOP, args) {
+        Ok(regs) => regs,
+        Err(err) => port::proc::pexit::<Arm64>(err.as_bytes()),
+    };
+    enter_user(regs)
 }
 
 /// The first test program's start, which also checks the user access checks

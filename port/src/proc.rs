@@ -53,6 +53,7 @@ pub fn newproc<A: ProcArch>(start: fn()) -> Result<Box<Proc<A>>, NewprocError> {
         exit_status: Vec::new(),
         errstr: [0; sys::ERRMAX],
         state: State::Ready,
+        fp: A::Fp::default(),
         quantum_end: 0,
         next: ptr::null_mut(),
     }))
@@ -81,6 +82,9 @@ pub fn schedule<A: ProcArch>() -> Vec<(u64, Vec<u8>)> {
         // SAFETY: nothing here refers to memory through the address space
         // being replaced.
         unsafe { A::switch(&p.pmmu) };
+        // The kernel doesn't use the FP/SIMD registers, so they hold a
+        // process's own until the scheduler loads the next one's.
+        A::fp_restore(&p.fp);
         // While it runs, the process is reached only through up, so the Box
         // gives way to its raw pointer until it switches back.
         let up = Box::into_raw(p);
@@ -96,7 +100,10 @@ pub fn schedule<A: ProcArch>() -> Vec<(u64, Vec<u8>)> {
         A::set_up(ptr::null_mut());
         // SAFETY: up is from Box::into_raw, and the process has switched back,
         // so nothing else refers to it.
-        let p = unsafe { Box::from_raw(up) };
+        let mut p = unsafe { Box::from_raw(up) };
+        if p.state != State::Exited {
+            A::fp_save(&mut p.fp);
+        }
         match p.state {
             State::Running => ready(p),
             State::Exited => {
