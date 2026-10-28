@@ -1,6 +1,7 @@
-//! The kernel's boot-time tests: kmap, swtch, releasing an address space,
-//! and a set of test processes, most of them small assembled programs, which
-//! check the syscalls, user memory access and the ELF loader.
+//! The kernel's boot-time tests: the GIC, before the clock starts; then the
+//! clock and timers, kmap, swtch, releasing an address space, and a set of
+//! test processes, most of them small assembled programs, which check the
+//! syscalls, user memory access and the ELF loader.
 
 use crate::clock;
 use crate::gic;
@@ -13,19 +14,28 @@ use crate::vm;
 use aarch64_cpu::registers::{CNTV_CTL_EL0, CNTV_CVAL_EL0, CNTVCT_EL0, Readable, Writeable};
 use core::cell::SyncUnsafeCell;
 use core::hint::black_box;
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use core::time::Duration;
 use port::dat::{MMU, Perm, PutError};
 use port::exec::UserRegs;
 use port::mem::{PAGE_SIZE_4K, PhysAddr, VirtRange};
 use port::println;
 use port::segment;
+use port::timer::{self, Mode, Timer};
 
-/// Run the tests, panicking if one fails.
-pub fn run() {
-    test_clock();
+/// Run the GIC's tests, which need the timer's interrupt to themselves, so
+/// must run before the clock starts.
+pub fn gic() {
     test_timer_interrupt();
     test_unhandled_interrupt();
+}
+
+/// Run the other tests, with the clock started and IRQs unmasked, panicking
+/// if one fails.
+pub fn run() {
+    test_clock();
+    test_ticks();
+    test_one_shot_timer();
     test_kmap();
     test_swtch();
     test_release();
@@ -614,7 +624,6 @@ fn test_user_access() {
 
 /// The counter is running, and the clock never goes backwards.
 fn test_clock() {
-    let now = || port::clock::now().expect("clock test: no clock");
     let first = now();
     let mut last = first;
     for _ in 0..100_000 {
@@ -671,17 +680,60 @@ fn disarm_timer() {
 
 /// Unmask IRQs at EL1 for `d`, then mask them again.
 fn take_irqs_for(d: Duration) {
-    let hz = port::clock::frequency().expect("no clock");
-    let now = || port::clock::now().expect("no clock");
-    let end = now() + port::clock::to_counts(d, hz);
     // SAFETY: unmasking IRQs lets the GIC's enabled interrupts in, and only
     // the test's is enabled.  Neither asm! says it leaves memory alone, so
     // each is a compiler barrier.
     unsafe { core::arch::asm!("msr daifclr, #2", options(nostack)) };
+    wait(d);
+    unsafe { core::arch::asm!("msr daifset, #2", options(nostack)) };
+}
+
+/// The counter, now.
+fn now() -> u64 {
+    port::clock::now().expect("no clock")
+}
+
+/// `d` in counts.
+fn counts(d: Duration) -> u64 {
+    port::clock::to_counts(d, port::clock::frequency().expect("no clock"))
+}
+
+/// Spin for `d`, by the counter.
+fn wait(d: Duration) {
+    let end = now() + counts(d);
     while now() < end {
         core::hint::spin_loop();
     }
-    unsafe { core::arch::asm!("msr daifset, #2", options(nostack)) };
+}
+
+/// The HZ clock ticks at HZ: over 100 ms by the counter, ticks advances by
+/// 10, give or take 2 for the ticks either side.
+fn test_ticks() {
+    let first = timer::ticks();
+    wait(Duration::from_millis(100));
+    let ticks = timer::ticks() - first;
+    assert!((8..=12).contains(&ticks), "ticks test: {ticks} ticks in 100 ms");
+}
+
+/// A one-shot timer fires once, not before its deadline, and soon after it.
+fn test_one_shot_timer() {
+    static FIRED: AtomicUsize = AtomicUsize::new(0);
+    static AT: AtomicU64 = AtomicU64::new(0);
+    static ONE_SHOT: Timer = Timer::new(Mode::Relative(Duration::from_millis(20)), || {
+        FIRED.fetch_add(1, Ordering::Relaxed);
+        AT.store(now(), Ordering::Relaxed);
+    });
+    let deadline = now() + counts(Duration::from_millis(20));
+    timer::add(&ONE_SHOT);
+    wait(Duration::from_millis(60));
+    let fired = FIRED.load(Ordering::Relaxed);
+    assert_eq!(fired, 1, "one-shot timer test: fired {fired} times");
+    let late = AT.load(Ordering::Relaxed) as i64 - deadline as i64;
+    let slack = counts(Duration::from_millis(20)) as i64;
+    assert!(
+        (0..slack).contains(&late),
+        "one-shot timer test: fired {late} counts after its deadline"
+    );
 }
 
 /// Write a page that's mapped nowhere else through one kmap, and read it back

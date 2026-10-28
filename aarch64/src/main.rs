@@ -235,6 +235,9 @@ pub extern "C" fn main9(dtb_pa: usize) {
 
 /// The rest of main9, on a kernel stack: the boot tests, then echo.
 extern "C" fn main9_rest() -> ! {
+    boottest::gic();
+    clock::start();
+    unmask_irqs();
     boottest::run();
 
     shutdown(run_echo())
@@ -273,6 +276,14 @@ pub fn shutdown(_ok: bool) -> ! {
 pub fn mask_interrupts() {
     // SAFETY: masking only defers interrupts.
     unsafe { core::arch::asm!("msr daifset, #3", options(nostack)) };
+}
+
+/// Unmask IRQs at EL1.  FIQs stay masked: nothing uses them.
+fn unmask_irqs() {
+    // SAFETY: every lock an interrupt handler takes masks IRQs, and handlers
+    // don't allocate or print with print, whose locks don't, so nothing a
+    // handler does can wait on the code it interrupted.
+    unsafe { core::arch::asm!("msr daifclr, #2", options(nostack)) };
 }
 
 /// Stop this CPU for good, waiting for events rather than spinning.
