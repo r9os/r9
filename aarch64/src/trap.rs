@@ -188,12 +188,12 @@ pub extern "C" fn stack_overflow_unsafe(frame: *const TrapFrame, sp: u64) -> ! {
 }
 
 /// trap.S's interrupt_type for a synchronous exception from 64-bit EL0.
-const SYNC_INVALID_EL0_64: u64 = 8;
+const EL0T_64_SYNC: u64 = 8;
 
 fn trap(frame: &mut TrapFrame) {
     // Only synchronous exceptions and SErrors write ESR_EL1 (Arm ARM DDI 0487
     // M.d, D1.4.2), so an IRQ or FIQ from EL0 isn't taken as a fault.
-    if frame.interrupt_type == SYNC_INVALID_EL0_64 {
+    if frame.interrupt_type == EL0T_64_SYNC {
         if frame.esr_el1.exception_class_enum() == Ok(ExceptionClass::Svc64) {
             syscall(frame);
             return;
