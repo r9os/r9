@@ -68,3 +68,10 @@ fn vtimer_intid_from(dt: &DeviceTree) -> usize {
         cells => panic!("clock: virtual timer's interrupt isn't a PPI: {cells:?}"),
     }
 }
+
+/// Take the virtual timer's interrupt for the timer queue, and start the HZ
+/// clock.
+pub fn start() {
+    crate::gic::attach(vtimer_intid(), port::timer::interrupt);
+    port::timer::start();
+}
