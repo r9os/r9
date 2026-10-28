@@ -18,25 +18,25 @@ overflowstacktop:
 
 .section .text
 
-.equ	SYNC_INVALID_EL1t,	0
-.equ	IRQ_INVALID_EL1t,	1
-.equ	FIQ_INVALID_EL1t,	2
-.equ	ERROR_INVALID_EL1t,	3
+.equ	EL1T_64_SYNC,	0
+.equ	EL1T_64_IRQ,	1
+.equ	EL1T_64_FIQ,	2
+.equ	EL1T_64_ERROR,	3
 
-.equ	SYNC_INVALID_EL1h,	4
-.equ	IRQ_INVALID_EL1h,	5
-.equ	FIQ_INVALID_EL1h,	6
-.equ	ERROR_INVALID_EL1h,	7
+.equ	EL1H_64_SYNC,	4
+.equ	EL1H_64_IRQ,	5
+.equ	EL1H_64_FIQ,	6
+.equ	EL1H_64_ERROR,	7
 
-.equ	SYNC_INVALID_EL0_64,	8
-.equ	IRQ_INVALID_EL0_64,	9
-.equ	FIQ_INVALID_EL0_64,	10
-.equ	ERROR_INVALID_EL0_64,	11
+.equ	EL0T_64_SYNC,	8
+.equ	EL0T_64_IRQ,	9
+.equ	EL0T_64_FIQ,	10
+.equ	EL0T_64_ERROR,	11
 
-.equ	SYNC_INVALID_EL0_32,	12
-.equ	IRQ_INVALID_EL0_32,	13
-.equ	FIQ_INVALID_EL0_32,	14
-.equ	ERROR_INVALID_EL0_32,	15
+.equ	EL0T_32_SYNC,	12
+.equ	EL0T_32_IRQ,	13
+.equ	EL0T_32_FIQ,	14
+.equ	EL0T_32_ERROR,	15
 
 .equ	STACK_OVERFLOW,		16
 
@@ -185,73 +185,73 @@ trap_return:
 .globl exception_vectors
 exception_vectors:
 	// Current EL with SP0
-	ventry	sync_invalid_el1t			// Synchronous EL1t
-	ventry	irq_invalid_el1t			// IRQ EL1t
-	ventry	fiq_invalid_el1t			// FIQ EL1t
-	ventry	error_invalid_el1t			// Error EL1t
+	ventry	el1t_64_sync			// Synchronous EL1t
+	ventry	el1t_64_irq			// IRQ EL1t
+	ventry	el1t_64_fiq			// FIQ EL1t
+	ventry	el1t_64_error			// Error EL1t
 
 	// Current EL with SPx
-	ventry	sync_invalid_el1h			// Synchronous EL1h
-	ventry	irq_invalid_el1h			// IRQ EL1h
-	ventry	fiq_invalid_el1h			// FIQ EL1h
-	ventry	error_invalid_el1h			// Error EL1h
+	ventry	el1h_64_sync			// Synchronous EL1h
+	ventry	el1h_64_irq			// IRQ EL1h
+	ventry	el1h_64_fiq			// FIQ EL1h
+	ventry	el1h_64_error			// Error EL1h
 
 	// Lower EL using AArch64
-	ventry	sync_invalid_el0_64			// Synchronous 64-bit EL0
-	ventry	irq_invalid_el0_64			// IRQ 64-bit EL0
-	ventry	fiq_invalid_el0_64			// FIQ 64-bit EL0
-	ventry	error_invalid_el0_64			// Error 64-bit EL0
+	ventry	el0t_64_sync			// Synchronous 64-bit EL0
+	ventry	el0t_64_irq			// IRQ 64-bit EL0
+	ventry	el0t_64_fiq			// FIQ 64-bit EL0
+	ventry	el0t_64_error			// Error 64-bit EL0
 
 	// Lower EL using AArch32
-	ventry	sync_invalid_el0_32			// Synchronous 32-bit EL0
-	ventry	irq_invalid_el0_32			// IRQ 32-bit EL0
-	ventry	fiq_invalid_el0_32			// FIQ 32-bit EL0
-	ventry	error_invalid_el0_32			// Error 32-bit EL0
+	ventry	el0t_32_sync			// Synchronous 32-bit EL0
+	ventry	el0t_32_irq			// IRQ 32-bit EL0
+	ventry	el0t_32_fiq			// FIQ 32-bit EL0
+	ventry	el0t_32_error			// Error 32-bit EL0
 
-sync_invalid_el1t:
-	handle_interrupt  SYNC_INVALID_EL1t, 0
+el1t_64_sync:
+	handle_interrupt  EL1T_64_SYNC, 0
 
-irq_invalid_el1t:
-	handle_interrupt  IRQ_INVALID_EL1t, 0
+el1t_64_irq:
+	handle_interrupt  EL1T_64_IRQ, 0
 
-fiq_invalid_el1t:
-	handle_interrupt  FIQ_INVALID_EL1t, 0
+el1t_64_fiq:
+	handle_interrupt  EL1T_64_FIQ, 0
 
-error_invalid_el1t:
-	handle_interrupt  ERROR_INVALID_EL1t, 0
+el1t_64_error:
+	handle_interrupt  EL1T_64_ERROR, 0
 
-sync_invalid_el1h:
-	handle_interrupt  SYNC_INVALID_EL1h
+el1h_64_sync:
+	handle_interrupt  EL1H_64_SYNC
 
-irq_invalid_el1h:
-	handle_interrupt  IRQ_INVALID_EL1h
+el1h_64_irq:
+	handle_interrupt  EL1H_64_IRQ
 
-fiq_invalid_el1h:
-	handle_interrupt  FIQ_INVALID_EL1h
+el1h_64_fiq:
+	handle_interrupt  EL1H_64_FIQ
 
-error_invalid_el1h:
-	handle_interrupt  ERROR_INVALID_EL1h
+el1h_64_error:
+	handle_interrupt  EL1H_64_ERROR
 
-sync_invalid_el0_64:
-	handle_interrupt  SYNC_INVALID_EL0_64
+el0t_64_sync:
+	handle_interrupt  EL0T_64_SYNC
 
-irq_invalid_el0_64:
-	handle_interrupt  IRQ_INVALID_EL0_64
+el0t_64_irq:
+	handle_interrupt  EL0T_64_IRQ
 
-fiq_invalid_el0_64:
-	handle_interrupt  FIQ_INVALID_EL0_64
+el0t_64_fiq:
+	handle_interrupt  EL0T_64_FIQ
 
-error_invalid_el0_64:
-	handle_interrupt  ERROR_INVALID_EL0_64
+el0t_64_error:
+	handle_interrupt  EL0T_64_ERROR
 
-sync_invalid_el0_32:
-	handle_interrupt  SYNC_INVALID_EL0_32
+el0t_32_sync:
+	handle_interrupt  EL0T_32_SYNC
 
-irq_invalid_el0_32:
-	handle_interrupt  IRQ_INVALID_EL0_32
+el0t_32_irq:
+	handle_interrupt  EL0T_32_IRQ
 
-fiq_invalid_el0_32:
-	handle_interrupt  FIQ_INVALID_EL0_32
+el0t_32_fiq:
+	handle_interrupt  EL0T_32_FIQ
 
-error_invalid_el0_32:
-	handle_interrupt  ERROR_INVALID_EL0_32
+el0t_32_error:
+	handle_interrupt  EL0T_32_ERROR
