@@ -1,11 +1,13 @@
 extern crate alloc;
 
+use alloc::boxed::Box;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use bitflags::bitflags;
-use core::ptr::NonNull;
+use core::ptr::{self, NonNull};
 use core::result::Result;
 
+use crate::mcslock::Lock;
 use crate::mem::{PhysAddr, VirtRange};
 use crate::pagealloc::PageAllocError;
 
@@ -186,7 +188,7 @@ pub trait MMU {
 }
 
 /// What a process needs from the architecture, besides its MMU.
-pub trait ProcArch: MMU + Sized {
+pub trait ProcArch: MMU + Sized + 'static {
     /// A saved kernel context, as swtch saves and restores.
     type Label;
 
@@ -221,8 +223,23 @@ pub trait ProcArch: MMU + Sized {
     fn set_up(p: *mut Proc<Self>);
 
     /// This CPU's scheduler context (Plan 9's `m->sched`), which a process
-    /// switches back to when it exits.
+    /// switches back to when it yields or exits.
     fn sched() -> *mut Self::Label;
+
+    /// The run queue.  It's the architecture's to hold, since Proc is
+    /// generic over it.
+    fn run_queue() -> &'static Lock<RunQueue<Self>>;
+}
+
+/// Where a process is in its life.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum State {
+    /// On the run queue.
+    Ready,
+    /// Running, or switched back to the scheduler to be re-queued.
+    Running,
+    /// Exited, to be reaped.
+    Exited,
 }
 
 /// A process.  See port::proc for its lifecycle.
@@ -242,11 +259,70 @@ pub struct Proc<A: ProcArch> {
     /// The error string of the last syscall that failed, NUL-terminated, as
     /// Plan 9's syserrstr.  errstr swaps it with the caller's buffer.
     pub(crate) errstr: [u8; sys::ERRMAX],
+    pub(crate) state: State,
+    /// The tick at which its quantum runs out, set when it's dispatched.
+    pub(crate) quantum_end: u64,
+    /// The next process on the run queue.
+    pub(crate) next: *mut Proc<A>,
 }
 
 impl<A: ProcArch> Proc<A> {
     /// The process's kernel stack.
     pub fn kstack(&self) -> &A::KStack {
         &self.kstack
+    }
+}
+
+/// Ready processes, first in first out, linked through Proc::next.  Each is a
+/// Box the queue owns, held as the raw pointer Box::into_raw gave it, so
+/// queueing never allocates.
+pub struct RunQueue<A: ProcArch> {
+    head: *mut Proc<A>,
+    tail: *mut Proc<A>,
+}
+
+impl<A: ProcArch> RunQueue<A> {
+    pub const fn new() -> Self {
+        RunQueue { head: ptr::null_mut(), tail: ptr::null_mut() }
+    }
+
+    pub(crate) fn push(&mut self, p: Box<Proc<A>>) {
+        let p = Box::into_raw(p);
+        // An empty queue is a case of its own: pointing tail at the last
+        // link, starting at head, would make the queue refer to itself, which
+        // a static can't be built with.
+        // SAFETY: p is from Box::into_raw, and so is tail, if it's not null.
+        unsafe {
+            (*p).next = ptr::null_mut();
+            match self.tail.as_mut() {
+                Some(tail) => tail.next = p,
+                None => self.head = p,
+            }
+        }
+        self.tail = p;
+    }
+
+    pub(crate) fn pop(&mut self) -> Option<Box<Proc<A>>> {
+        if self.head.is_null() {
+            return None;
+        }
+        // SAFETY: head is from Box::into_raw, and is taken off the queue
+        // before it's turned back into a Box, so it's owned once.
+        let p = unsafe { Box::from_raw(self.head) };
+        self.head = p.next;
+        if self.head.is_null() {
+            self.tail = ptr::null_mut();
+        }
+        Some(p)
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.head.is_null()
+    }
+}
+
+impl<A: ProcArch> Default for RunQueue<A> {
+    fn default() -> Self {
+        Self::new()
     }
 }

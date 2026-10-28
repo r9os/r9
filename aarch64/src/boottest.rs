@@ -122,10 +122,13 @@ core::arch::global_asm!(
     "usertest_udf:",
     "   udf #0",
     "usertest_udf_end:",
-    // wfi, which SCTLR_EL1.nTWI traps at EL0.
+    // wfi, which SCTLR_EL1.nTWI traps at EL0, but only if it would enter a
+    // low-power state (Arm ARM DDI 0487 M.d, D24.2.174): with an interrupt
+    // pending, it completes, so try again.
     ".balign 8",
     "usertest_wfi:",
-    "   wfi",
+    "1: wfi",
+    "   b 1b",
     "usertest_wfi_end:",
     // Read the virtual counter, which CNTKCTL_EL1 traps at EL0.
     ".balign 8",
