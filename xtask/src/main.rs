@@ -884,6 +884,15 @@ impl TestStep {
                 "--target".to_string(),
                 target.to_string(),
             ]);
+            // The user library's parsing and math are tested on the host.
+            all_cmd_args.push(vec![
+                "test".to_string(),
+                "--package".to_string(),
+                "r9-libc".to_string(),
+                "--lib".to_string(),
+                "--target".to_string(),
+                target.to_string(),
+            ]);
         }
 
         for cmd_args in all_cmd_args {
