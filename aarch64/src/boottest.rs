@@ -40,6 +40,7 @@ pub fn run() {
     test_swtch();
     test_release();
     test_user_processes();
+    test_preemption();
 }
 
 // Test programs for test_user_processes.  Each is copied to UTZERO from
@@ -63,6 +64,15 @@ core::arch::global_asm!(
     "   svc #0",
     "3: .asciz \"sysr1\"",
     "usertest_sysr1_end:",
+    // Count down from 2^29, then exits(nil), without a syscall in between.
+    ".balign 8",
+    "usertest_spin:",
+    "   mov x0, #0x20000000",
+    "1: subs x0, x0, #1",
+    "   b.ne 1b",
+    "   mov x8, #{EXITS}",
+    "   svc #0",
+    "usertest_spin_end:",
     // exits("bye")
     ".balign 8",
     "usertest_bye:",
@@ -507,6 +517,29 @@ fn test_user_processes() {
         assert_eq!(port::pagealloc::usage_bytes().0, used_before, "{name}");
     }
     println!("user process test: ok");
+}
+
+/// A process that spins without a syscall for far longer than a quantum is
+/// preempted: readied after it, one that exits at once exits first.
+fn test_preemption() {
+    let (used_before, _) = port::pagealloc::usage_bytes();
+    let spin =
+        port::proc::newproc::<Arm64>(|| run_user(usertext!(usertest_spin, usertest_spin_end)))
+            .expect("couldn't create process");
+    let bye = port::proc::newproc::<Arm64>(|| run_user(usertext!(usertest_bye, usertest_bye_end)))
+        .expect("couldn't create process");
+    let (spin_pid, bye_pid) = (spin.pid, bye.pid);
+    let start = now();
+    port::proc::ready(spin);
+    port::proc::ready(bye);
+    let exits = port::proc::schedule::<Arm64>();
+    let took = port::clock::to_duration(now() - start, port::clock::frequency().unwrap());
+    let order: alloc::vec::Vec<_> = exits.iter().map(|&(pid, _)| pid).collect();
+    assert_eq!(order, [bye_pid, spin_pid], "preemption test: wrong exit order");
+    assert_eq!(exits[0].1, b"bye", "preemption test");
+    assert!(exits[1].1.is_empty(), "preemption test: spin exited badly");
+    assert_eq!(port::pagealloc::usage_bytes().0, used_before, "preemption test: leaked");
+    println!("preemption test: ok ({took:?})");
 }
 
 /// The first test program's start, which also checks the user access checks
