@@ -85,7 +85,6 @@ fn split(path: &str) -> Vec<&str> {
 /// The channel `name` opens for the access `omode`, as the # branch of Plan
 /// 9's namec: the mode is checked first, as Plan 9's openmode, then the
 /// device is attached, the path walked, and the channel opened.
-#[cfg_attr(not(test), expect(dead_code, reason = "newproc and the file syscalls use it"))]
 pub(crate) fn open_name(name: &str, omode: u32) -> crate::Result<Arc<Chan>> {
     let omode = chan::openmode(omode)?;
     let (dev, path) = devpath(name)?;
