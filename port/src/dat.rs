@@ -10,6 +10,7 @@ use core::result::Result;
 use crate::mcslock::Lock;
 use crate::mem::{PhysAddr, VirtRange};
 use crate::pagealloc::PageAllocError;
+use crate::timer::Timer;
 
 pub struct Error {}
 
@@ -282,6 +283,14 @@ pub struct Proc<A: ProcArch> {
     pub(crate) quantum_end: u64,
     /// The next process on the run queue.
     pub(crate) next: *mut Proc<A>,
+    /// The process's own Rendez, for SLEEP, as Plan 9's up->sleep.
+    pub(crate) sleep: Rendez<A>,
+    /// Its tsleep's timeout, as Plan 9's up->t: added and removed on every
+    /// tsleep, and removed before the process is reaped.
+    pub(crate) timer: Timer,
+    /// The Rendez its tsleep's timeout should wake, cleared when the timeout
+    /// fires, as Plan 9's up->trend.
+    pub(crate) trend: *const Rendez<A>,
 }
 
 impl<A: ProcArch> Proc<A> {
