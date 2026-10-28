@@ -13,25 +13,25 @@ use core::time::Duration;
 /// The clock's frequency, as Plan 9's HZ.
 pub const HZ: u64 = 100;
 
-/// How many timers timerintr fires before reporting that it seems stuck, as
+/// How many timers `interrupt` fires before reporting that it seems stuck, as
 /// Plan 9's Maxtimerloops.
-const MAXTIMERLOOPS: usize = 20_000;
+const STUCK_LOOPS: usize = 20_000;
 
 /// The shortest period, as Plan 9's tadd asserts: a shorter one could be due
-/// again before timerintr returns.
-const MINPERIOD: Duration = Duration::from_micros(100);
+/// again before `interrupt` returns.
+const MIN_PERIOD: Duration = Duration::from_micros(100);
 
 pub enum Mode {
-    /// Fire once, this long after timeradd.
+    /// Fire once, this long after `add`.
     Relative(Duration),
-    /// Fire every period, from one period after timeradd.
+    /// Fire every period, from one period after `add`.
     Periodic(Duration),
 }
 
 pub struct Timer {
     mode: Mode,
     f: fn(),
-    /// The deadline in fastticks, the next timer in the queue, and whether
+    /// The deadline, in counts, the next timer in the queue, and whether
     /// it's queued.  These are touched only with TIMERS held.
     when: Cell<u64>,
     next: Cell<*const Timer>,
@@ -113,25 +113,25 @@ impl Queue {
 
     /// Arm the clock's timer for the earliest deadline, or disarm it.
     fn arm(&self) {
-        clock::timerset(self.head().map(|t| t.when.get()));
+        clock::set_timer(self.head().map(|t| t.when.get()));
     }
 }
 
 fn now_and_hz() -> (u64, u64) {
-    let now = clock::fastticks().expect("timer: no clock");
-    (now, clock::fasthz().expect("timer: no clock"))
+    let now = clock::now().expect("timer: no clock");
+    (now, clock::frequency().expect("timer: no clock"))
 }
 
 /// Queue `t` to fire after its duration, moving it if it's already queued,
 /// as Plan 9's timeradd.
-pub fn timeradd(t: &'static Timer) {
+pub fn add(t: &'static Timer) {
     let d = match t.mode {
         Mode::Relative(d) => {
-            assert!(!d.is_zero(), "timeradd: zero duration");
+            assert!(!d.is_zero(), "add: zero duration");
             d
         }
         Mode::Periodic(p) => {
-            assert!(p >= MINPERIOD, "timeradd: period under {MINPERIOD:?}");
+            assert!(p >= MIN_PERIOD, "add: period under {MIN_PERIOD:?}");
             p
         }
     };
@@ -139,15 +139,15 @@ pub fn timeradd(t: &'static Timer) {
     let q = timers().ilock(&node);
     q.remove(t);
     let (now, hz) = now_and_hz();
-    t.when.set(now + clock::ns2fastticks(d, hz));
+    t.when.set(now + clock::to_counts(d, hz));
     q.insert(t);
     q.arm();
 }
 
 /// Unqueue `t`, so it doesn't fire, as Plan 9's timerdel.  A periodic timer
 /// can't stop itself this way from its own callback: it's unqueued while the
-/// callback runs, and timerintr re-queues it after.
-pub fn timerdel(t: &'static Timer) {
+/// callback runs, and `interrupt` re-queues it after.
+pub fn remove(t: &'static Timer) {
     let node = LockNode::new();
     let q = timers().ilock(&node);
     q.remove(t);
@@ -158,7 +158,7 @@ pub fn timerdel(t: &'static Timer) {
 /// the next, as Plan 9's timerintr.  The architecture calls it from the
 /// clock's timer interrupt.  A periodic timer's next deadline is its last
 /// plus its period, so it doesn't drift.
-pub fn timerintr() {
+pub fn interrupt() {
     let (now, hz) = now_and_hz();
     let node = LockNode::new();
     let mut q = timers().ilock(&node);
@@ -171,34 +171,33 @@ pub fn timerintr() {
         if let Mode::Periodic(period) = t.mode
             && !t.queued.get()
         {
-            t.when.set(t.when.get() + clock::ns2fastticks(period, hz));
+            t.when.set(t.when.get() + clock::to_counts(period, hz));
             q.insert(t);
         }
         fired += 1;
-        if fired % MAXTIMERLOOPS == 0 {
-            iprintln!("timerintr: probably stuck in its loop");
+        if fired % STUCK_LOOPS == 0 {
+            iprintln!("interrupt: probably stuck in its loop");
         }
     }
     q.arm();
 }
 
-/// Clock ticks since timersinit, as Plan 9's m->ticks.
+/// Clock ticks since `start`, as Plan 9's m->ticks.
 static TICKS: AtomicU64 = AtomicU64::new(0);
 
 /// The HZ clock, as Plan 9's hzclock.
-fn hzclock() {
+fn tick() {
     TICKS.fetch_add(1, Ordering::Relaxed);
 }
 
-static HZCLOCK: Timer =
-    Timer::new(Mode::Periodic(Duration::from_nanos(1_000_000_000 / HZ)), hzclock);
+static HZCLOCK: Timer = Timer::new(Mode::Periodic(Duration::from_nanos(1_000_000_000 / HZ)), tick);
 
 /// Start the HZ clock, as Plan 9's timersinit.
-pub fn timersinit() {
-    timeradd(&HZCLOCK);
+pub fn start() {
+    add(&HZCLOCK);
 }
 
-/// Clock ticks since timersinit.
+/// Clock ticks since `start`.
 pub fn ticks() -> u64 {
     TICKS.load(Ordering::Relaxed)
 }
@@ -216,7 +215,7 @@ mod tests {
 
     /// A 1 kHz clock, so a tick is a millisecond, whose time the test sets.
     static FAKE: clock::Ops =
-        clock::Ops { fastticks: || NOW.get(), fasthz: || 1000, timerset: |when| ARMED.set(when) };
+        clock::Ops { now: || NOW.get(), frequency: || 1000, set_timer: |when| ARMED.set(when) };
 
     fn set_up() {
         clock::init(&FAKE);
@@ -224,7 +223,7 @@ mod tests {
 
     fn at(ms: u64) {
         NOW.set(ms);
-        timerintr();
+        interrupt();
     }
 
     fn fired() -> Vec<char> {
@@ -244,9 +243,9 @@ mod tests {
         static C: Timer =
             Timer::new(Mode::Relative(ms(20)), || FIRED.with(|f| f.borrow_mut().push('c')));
         set_up();
-        timeradd(&B);
-        timeradd(&A);
-        timeradd(&C);
+        add(&B);
+        add(&A);
+        add(&C);
         assert_eq!(ARMED.get(), Some(10));
         at(25);
         assert_eq!(fired(), ['a', 'c']);
@@ -261,7 +260,7 @@ mod tests {
         static P: Timer =
             Timer::new(Mode::Periodic(ms(10)), || FIRED.with(|f| f.borrow_mut().push('p')));
         set_up();
-        timeradd(&P);
+        add(&P);
         // Late by 3 ms, it still next fires at 20, not 23.
         at(13);
         assert_eq!(fired(), ['p']);
@@ -270,16 +269,16 @@ mod tests {
         at(45);
         assert_eq!(fired(), ['p', 'p', 'p']);
         assert_eq!(ARMED.get(), Some(50));
-        timerdel(&P);
+        remove(&P);
     }
 
     #[test]
-    fn timerdel_stops_a_timer() {
+    fn remove_stops_a_timer() {
         static A: Timer =
             Timer::new(Mode::Relative(ms(10)), || FIRED.with(|f| f.borrow_mut().push('a')));
         set_up();
-        timeradd(&A);
-        timerdel(&A);
+        add(&A);
+        remove(&A);
         assert_eq!(ARMED.get(), None);
         at(20);
         assert_eq!(fired(), []);
@@ -290,17 +289,17 @@ mod tests {
         static A: Timer = Timer::new(Mode::Relative(ms(20)), || {});
         static B: Timer = Timer::new(Mode::Relative(ms(10)), || {});
         set_up();
-        timeradd(&A);
+        add(&A);
         assert_eq!(ARMED.get(), Some(20));
-        timeradd(&B);
+        add(&B);
         assert_eq!(ARMED.get(), Some(10));
-        timerdel(&B);
+        remove(&B);
         assert_eq!(ARMED.get(), Some(20));
         // Adding a queued timer moves it.
         NOW.set(5);
-        timeradd(&A);
+        add(&A);
         assert_eq!(ARMED.get(), Some(25));
-        timerdel(&A);
+        remove(&A);
         assert_eq!(ARMED.get(), None);
     }
 
@@ -309,7 +308,7 @@ mod tests {
     fn short_period_panics() {
         static S: Timer = Timer::new(Mode::Periodic(Duration::from_micros(99)), || {});
         set_up();
-        timeradd(&S);
+        add(&S);
     }
 
     #[test]
@@ -317,6 +316,6 @@ mod tests {
     fn zero_duration_panics() {
         static Z: Timer = Timer::new(Mode::Relative(Duration::ZERO), || {});
         set_up();
-        timeradd(&Z);
+        add(&Z);
     }
 }

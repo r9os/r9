@@ -6,6 +6,7 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::dat::{Proc, ProcArch};
+use crate::irq;
 use crate::pagealloc::{PageAllocError, free_physpage};
 
 static NEXT_PID: AtomicU64 = AtomicU64::new(1);
@@ -49,10 +50,15 @@ pub fn newproc<A: ProcArch>(start: fn()) -> Result<Proc<A>, NewprocError> {
 pub fn run<A: ProcArch>(mut p: Proc<A>) -> Vec<u8> {
     let up: *mut Proc<A> = &mut p;
     A::set_up(up);
+    // swtch returns with the interrupt state pexit left, inside a masked
+    // syscall exception, so save this context's state first and restore it
+    // after, as Plan 9's sched brackets its switch with splhi and splx.
+    let saved = irq::mask();
     // SAFETY: the scheduler context is this CPU's, and p's label was made by
     // new_context.  This returns when p exits.  The label is reached through
     // up, as pexit saves into it.
     unsafe { A::swtch(A::sched(), &raw const (*up).label) };
+    irq::restore(saved);
     A::set_up(core::ptr::null_mut());
     // SAFETY: p has exited, so nothing runs on its stack or in its address
     // space.

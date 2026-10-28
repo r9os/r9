@@ -510,6 +510,9 @@ pub mod global {
         where
             F: FnOnce(&mut QuickFit) -> R,
         {
+            // The heap isn't re-entrant: an interrupt handler that allocated
+            // while the code it interrupted held it would find it taken.
+            assert!(!crate::irq::in_interrupt(), "heap allocation in interrupt context");
             let a = self.0.swap(ptr::null_mut(), Ordering::Relaxed);
             assert!(!a.is_null(), "global allocator is nil");
             let r = thunk(unsafe { &mut *a });
