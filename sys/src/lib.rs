@@ -6,6 +6,7 @@
 
 pub const SYSR1: u64 = 0;
 pub const EXITS: u64 = 8;
+pub const SLEEP: u64 = 17;
 pub const BRK_: u64 = 24;
 pub const ERRSTR: u64 = 41;
 pub const PWRITE: u64 = 51;

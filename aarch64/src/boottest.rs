@@ -43,6 +43,8 @@ pub fn run() {
     test_preemption();
     test_fp_state();
     test_sleep_and_wakeup();
+    test_sleep_with_another_running();
+    test_sleep_alone();
 }
 
 // Test programs for test_user_processes.  Each is copied to UTZERO from
@@ -599,7 +601,7 @@ fn test_fp_state() {
 fn test_sleep_and_wakeup() {
     static R: port::dat::Rendez<Arm64> = port::dat::Rendez::new();
     static WOKEN: AtomicBool = AtomicBool::new(false);
-    static WAKER: Timer = Timer::new(Mode::Relative(Duration::from_millis(50)), || {
+    static WAKER: Timer = Timer::new(Mode::Relative(Duration::from_millis(50)), |_| {
         WOKEN.store(true, Ordering::Relaxed);
         port::proc::wakeup(&R);
     });
@@ -615,6 +617,60 @@ fn test_sleep_and_wakeup() {
     assert!(status.is_empty(), "sleep test: exited with {status:?}");
     assert!(took >= counts(Duration::from_millis(50)), "sleep test: woke after {took} counts");
     println!("sleep test: ok");
+}
+
+/// SLEEP(100) holds the process for at least 100 ms by the counter, while a
+/// spinning process runs meanwhile, so the sleep, not the spin, timed it.
+fn test_sleep_with_another_running() {
+    static HELD: AtomicU64 = AtomicU64::new(0);
+    let (used_before, _) = port::pagealloc::usage_bytes();
+    let spin =
+        port::proc::newproc::<Arm64>(|| run_user(usertext!(usertest_spin, usertest_spin_end)))
+            .expect("couldn't create process");
+    let sleeper = port::proc::newproc::<Arm64>(|| {
+        let start = port::clock::now().expect("no clock");
+        let r = port::syscall::syscall::<Arm64>(sys::SLEEP, [100, 0, 0, 0, 0, 0]);
+        HELD.store(port::clock::now().expect("no clock") - start, Ordering::Relaxed);
+        port::proc::pexit::<Arm64>(if r == 0 { b"" } else { b"sleep(100)" });
+    })
+    .expect("couldn't create process");
+    let sleeper_pid = sleeper.pid;
+    port::proc::ready(spin);
+    port::proc::ready(sleeper);
+    let exits = port::proc::schedule::<Arm64>();
+    assert_eq!(exits.len(), 2, "sleep test: {} exits", exits.len());
+    let status =
+        &exits.iter().find(|(pid, _)| *pid == sleeper_pid).expect("sleep test: sleeper exited").1;
+    assert!(status.is_empty(), "sleep test: exited with {status:?}");
+    let held = HELD.load(Ordering::Relaxed);
+    assert!(
+        held >= counts(Duration::from_millis(100)),
+        "sleep test: SLEEP(100) held {held} counts"
+    );
+    assert_eq!(port::pagealloc::usage_bytes().0, used_before, "sleep test: leaked");
+    println!("sleep test: ok");
+}
+
+/// SLEEP(100) with nothing else ready: the run queue stays empty, so the
+/// scheduler idles, and only the sleep's timer ends the idle and wakes the
+/// process at its deadline.
+fn test_sleep_alone() {
+    let (used_before, _) = port::pagealloc::usage_bytes();
+    let p = port::proc::newproc::<Arm64>(|| {
+        let r = port::syscall::syscall::<Arm64>(sys::SLEEP, [100, 0, 0, 0, 0, 0]);
+        port::proc::pexit::<Arm64>(if r == 0 { b"" } else { b"sleep(100)" });
+    })
+    .expect("couldn't create process");
+    let start = now();
+    let status = port::proc::run(p);
+    let took = now() - start;
+    assert!(status.is_empty(), "sleep alone test: exited with {status:?}");
+    assert!(
+        took >= counts(Duration::from_millis(100)),
+        "sleep alone test: woke after {took} counts"
+    );
+    assert_eq!(port::pagealloc::usage_bytes().0, used_before, "sleep alone test: leaked");
+    println!("sleep alone test: ok");
 }
 
 /// The FP state test program's start, with `args`: its pattern is how many
@@ -841,7 +897,7 @@ fn test_ticks() {
 fn test_one_shot_timer() {
     static FIRED: AtomicUsize = AtomicUsize::new(0);
     static AT: AtomicU64 = AtomicU64::new(0);
-    static ONE_SHOT: Timer = Timer::new(Mode::Relative(Duration::from_millis(20)), || {
+    static ONE_SHOT: Timer = Timer::new(Mode::Relative(Duration::from_millis(20)), |_| {
         FIRED.fetch_add(1, Ordering::Relaxed);
         AT.store(now(), Ordering::Relaxed);
     });

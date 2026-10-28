@@ -8,12 +8,13 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::ptr;
 use core::sync::atomic::{AtomicU64, Ordering};
+use core::time::Duration;
 
 use crate::dat::{Proc, ProcArch, Rendez, State};
 use crate::irq;
 use crate::mcslock::LockNode;
 use crate::pagealloc::{PageAllocError, free_physpage};
-use crate::timer;
+use crate::timer::{self, Mode, Timer};
 
 static NEXT_PID: AtomicU64 = AtomicU64::new(1);
 
@@ -56,6 +57,9 @@ pub fn newproc<A: ProcArch>(start: fn()) -> Result<Box<Proc<A>>, NewprocError> {
         fp: A::Fp::default(),
         quantum_end: 0,
         next: ptr::null_mut(),
+        sleep: Rendez::new(),
+        timer: Timer::new(Mode::Relative(Duration::from_millis(1)), |_| {}),
+        trend: ptr::null(),
     }))
 }
 
@@ -216,6 +220,44 @@ pub fn wakeup<A: ProcArch>(r: &Rendez<A>) -> bool {
     true
 }
 
+/// Sleep on `r` until `cond` holds or `d` has passed, as Plan 9's tsleep:
+/// the process's own timer wakes it at the deadline.  A process can't exit
+/// while it's here, so the timer is always removed before it's reaped.
+pub fn tsleep<A: ProcArch>(r: &Rendez<A>, cond: impl Fn() -> bool, d: Duration) {
+    let up = A::up();
+    assert!(!up.is_null(), "tsleep: no current process");
+    // SAFETY: up is the running process, set by schedule, which resumes it
+    // here.  trend and timer are the process's own: while trend is set, the
+    // process is asleep, and only its own timer's twakeup touches them.
+    unsafe {
+        (*up).trend = r;
+        (*up).timer = Timer::with_arg(Mode::Relative(d), twakeup::<A>, up as *mut ());
+        // SAFETY: the process can't exit before the timer's removed, so the
+        // timer is removed before up is freed.
+        timer::add_unowned(&(*up).timer);
+        // SAFETY: as above.
+        sleep(r, || (*up).trend.is_null() || cond());
+        timer::remove(&(*up).timer);
+    }
+}
+
+/// Wake the process the timer `arg` is set to wake, as Plan 9's twakeup:
+/// clear its trend, so its sleep's condition holds, then wake it.  Runs in
+/// interrupt context, when the timer fires.
+pub(crate) fn twakeup<A: ProcArch>(arg: *mut ()) {
+    // SAFETY: arg is the process its own tsleep set, and while its trend is
+    // set it's asleep, so it's alive, and only its own timer reads and
+    // clears its trend.
+    unsafe {
+        let up = arg as *mut Proc<A>;
+        let trend = (*up).trend;
+        (*up).trend = ptr::null();
+        if !trend.is_null() {
+            wakeup(&*trend);
+        }
+    }
+}
+
 /// Whether the running process has used its quantum while another is ready,
 /// as Plan 9's hzsched decides.
 pub fn preempt_due<A: ProcArch>() -> bool {
@@ -275,8 +317,16 @@ mod tests {
     use super::*;
     use crate::dat::ProcArch;
     use crate::fake::{Fake, NO_STACKS, held};
+    use std::cell::Cell;
 
     fn start() {}
+
+    /// A 1 kHz clock for tsleep's timeout, recording whether it's armed.
+    static CLOCK: crate::clock::Ops =
+        crate::clock::Ops { now: || 0, frequency: || 1000, set_timer: |when| ARMED.set(when) };
+    thread_local! {
+        static ARMED: Cell<Option<u64>> = const { Cell::new(None) };
+    }
 
     #[test]
     fn reaping_frees_what_newproc_took() {
@@ -354,6 +404,21 @@ mod tests {
     fn wakeup_with_no_sleeper_wakes_nothing() {
         static R: Rendez<Fake> = Rendez::new();
         assert!(!wakeup(&R));
+    }
+
+    #[test]
+    fn tsleep_whose_condition_holds_leaves_no_timer_queued() {
+        crate::clock::init(&CLOCK);
+        static R: Rendez<Fake> = Rendez::new();
+        let mut p = newproc::<Fake>(start).unwrap();
+        Fake::set_up(&mut *p);
+        // The fake can't switch, so the condition must already hold: tsleep
+        // returns without sleeping, and leaves its timeout unqueued.
+        tsleep(&R, || true, Duration::from_millis(10));
+        assert_eq!(ARMED.with(|a| a.get()), None, "tsleep's timer is still queued");
+        Fake::set_up(ptr::null_mut());
+        // SAFETY: nothing runs in the fake process.
+        unsafe { reap(*p) };
     }
 
     #[test]

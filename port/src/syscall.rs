@@ -3,16 +3,21 @@
 //! registers, and calls syscall.
 
 use alloc::vec::Vec;
+use core::time::Duration;
 
 use crate::dat::{Access, ProcArch};
 use crate::devcons::putstrn;
 use crate::error::{EBADARG, EBADFD};
 use crate::println;
-use crate::proc::pexit;
+use crate::proc::{pexit, tsleep, yield_now};
 use crate::segment::ibrk;
+use crate::timer;
 use crate::uaccess::{copy_from_user, copy_str_from_user, copy_to_user, validate_user_range};
 
-use sys::{BRK_, ERRMAX, ERRSTR, EXITS, PWRITE, SYSR1};
+use sys::{BRK_, ERRMAX, ERRSTR, EXITS, PWRITE, SLEEP, SYSR1};
+
+/// One tick, as Plan 9's TK2MS(1): the shortest SLEEP can sleep.
+const TICK: Duration = Duration::from_nanos(1_000_000_000 / timer::HZ);
 
 /// Run syscall `nr` with `args`, and return its result, or -1 if it failed,
 /// with its error string recorded in the current process for errstr, as Plan
@@ -25,6 +30,7 @@ pub fn syscall<A: ProcArch>(nr: u64, args: [u64; 6]) -> u64 {
         BRK_ => sysbrk_::<A>(&args),
         ERRSTR => syserrstr::<A>(&args),
         PWRITE => syspwrite::<A>(&args),
+        SLEEP => syssleep::<A>(&args),
         _ => {
             println!("bad sys call number {nr}");
             pexit::<A>(b"sys: bad sys call")
@@ -121,6 +127,24 @@ fn exits_status<A: ProcArch>(ptr: usize) -> Vec<u8> {
     let mut buf = [0; ERRMAX - 1];
     let n = copy_str_from_user::<A>(&mut buf, ptr);
     buf[..n].to_vec()
+}
+
+/// sleep(ms): yield if zero or negative, else sleep at least one tick, as
+/// Plan 9's syssleep.  Only its timeout wakes it, and it returns 0.
+fn syssleep<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
+    let up = A::up();
+    assert!(!up.is_null(), "syssleep: no current process");
+    let n = args[0] as i64;
+    if n <= 0 {
+        yield_now::<A>();
+    } else {
+        // SAFETY: up is the running process, set by schedule, which resumes
+        // it here.  Its sleep Rendez is its own, and its syscalls run one at
+        // a time.
+        let r = unsafe { &(*up).sleep };
+        tsleep(r, || false, Duration::from_millis(n as u64).max(TICK));
+    }
+    Ok(0)
 }
 
 #[cfg(test)]
