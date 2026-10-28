@@ -13,6 +13,10 @@ pub struct Ops {
     pub fastticks: fn() -> u64,
     /// The counter's frequency, in Hz.
     pub fasthz: fn() -> u64,
+    /// Arm the timer to interrupt once the counter reaches a deadline, or
+    /// disarm it, as Plan 9's timerset.  A deadline in the future quietens
+    /// the interrupt before it returns.
+    pub timerset: fn(Option<u64>),
 }
 
 #[cfg(not(test))]
@@ -51,6 +55,14 @@ pub fn fastticks() -> Option<u64> {
 /// The counter's frequency, in Hz, or None if there's no clock.
 pub fn fasthz() -> Option<u64> {
     ops().map(|o| (o.fasthz)())
+}
+
+/// Arm the timer for a deadline in fastticks, or disarm it.  Without a clock
+/// there's no timer, so it does nothing.
+pub fn timerset(when: Option<u64>) {
+    if let Some(o) = ops() {
+        (o.timerset)(when);
+    }
 }
 
 const NS_PER_SEC: u128 = 1_000_000_000;
@@ -125,7 +137,7 @@ mod tests {
 
     #[test]
     fn registered_ops_are_used() {
-        static OPS: Ops = Ops { fastticks: || 42, fasthz: || PI4 };
+        static OPS: Ops = Ops { fastticks: || 42, fasthz: || PI4, timerset: |_| {} };
         init(&OPS);
         assert_eq!(fastticks(), Some(42));
         assert_eq!(fasthz(), Some(PI4));
@@ -134,7 +146,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "frequency is 0")]
     fn zero_frequency_panics() {
-        static OPS: Ops = Ops { fastticks: || 0, fasthz: || 0 };
+        static OPS: Ops = Ops { fastticks: || 0, fasthz: || 0, timerset: |_| {} };
         init(&OPS);
     }
 }

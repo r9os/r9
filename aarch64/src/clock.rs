@@ -1,7 +1,9 @@
 //! The generic timer.  l.S puts the timer's controls in a known state.
 
 #[cfg(not(test))]
-use aarch64_cpu::registers::{CNTFRQ_EL0, CNTVCT_EL0, Readable};
+use aarch64_cpu::registers::{
+    CNTFRQ_EL0, CNTV_CTL_EL0, CNTV_CVAL_EL0, CNTVCT_EL0, Readable, Writeable,
+};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use port::fdt::DeviceTree;
 
@@ -12,7 +14,11 @@ static VTIMER_INTID: AtomicUsize = AtomicUsize::new(0);
 /// relative to each other, but can be taken ahead of earlier instructions
 /// (Arm ARM DDI 0487 M.d, D12.2.2), so an isb keeps a time read after some
 /// work from being read before it, as Linux's __arch_counter_get_cntvct
-/// does.  Firmware sets CNTFRQ_EL0 (D24.10.1).
+/// does.  Firmware sets CNTFRQ_EL0 (D24.10.1).  The virtual timer interrupts
+/// while it's enabled and the counter has reached CNTV_CVAL_EL0 (D24.10.28,
+/// D24.10.29).  Its interrupt is level-triggered, so timerset's isb makes
+/// sure a new deadline, or disabling it, has quietened it before the GIC's
+/// EOI, as Linux's arch_timer_reg_write does.
 #[cfg(not(test))]
 static CLOCK: port::clock::Ops = port::clock::Ops {
     fastticks: || {
@@ -20,6 +26,16 @@ static CLOCK: port::clock::Ops = port::clock::Ops {
         CNTVCT_EL0.get()
     },
     fasthz: || CNTFRQ_EL0.get(),
+    timerset: |when| {
+        match when {
+            Some(when) => {
+                CNTV_CVAL_EL0.set(when);
+                CNTV_CTL_EL0.set(1);
+            }
+            None => CNTV_CTL_EL0.set(0),
+        }
+        aarch64_cpu::asm::barrier::isb(aarch64_cpu::asm::barrier::SY);
+    },
 };
 
 /// Register the counter with port::clock, and find the virtual timer's

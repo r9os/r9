@@ -25,6 +25,7 @@ pub mod pagealloc;
 pub mod proc;
 pub mod segment;
 pub mod syscall;
+pub mod timer;
 pub mod uaccess;
 
 pub type Result<T> = core::result::Result<T, &'static str>;
