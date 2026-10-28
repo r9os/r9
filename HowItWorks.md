@@ -31,7 +31,7 @@ We're now in rust, in `main9`, and at a high level we:
 4. Set up the page allocator, with every page not used by the kernel image or the DTB.
 5. Initialise the [console](#devcons), ensuring we can use `port::println` to write to the UART. Then register the generic timer's virtual counter with `port::clock`, which panics if firmware left its frequency at 0, now that the panic can be seen.
 6. Set up the mailbox (rpi-specific, but allows us to extract more information from the hardware, and interact directly in certain ways).
-7. Write out some useful system information, and the kernel page tables.
+7. Write out some useful system information. Set up the interrupt controller, the GIC-400 (`gic.rs`), with every interrupt disabled, as Linux does. Write out the kernel page tables.
 8. Continue on a newly allocated kernel stack (`on_kernel_stack`): unlike the boot stack, it has an unmapped guard below it, so an overflow faults and is reported. Then run the boot tests in `boottest.rs`, panicking if one fails: that the counter runs and never goes backwards, `kmap`, switching between kernel contexts with `swtch`, releasing an address space, and a [process](#processes) for each of a set of small assembled test programs and `user/elftest`. These make syscalls, write to the console and exit, and the tests check each one's exit status and that everything it allocated is freed.
 9. Run [echo](#userspace) as a process, with argv `["echo", "hello", "world"]`, and print how it exited: `echo: exited` if it succeeded.
 

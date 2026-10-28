@@ -13,6 +13,7 @@ mod boottest;
 mod clock;
 mod devcons;
 mod deviceutil;
+mod gic;
 mod io;
 mod kmap;
 mod kmem;
@@ -219,11 +220,11 @@ pub extern "C" fn main9(dtb_pa: usize) {
     });
 
     print_stacks();
-
     print_binary_sections();
-
     print_board_info();
     print_memory_info();
+
+    gic::init(&dt);
 
     vmdebug::print_recursive_tables(RootPageTableType::Kernel);
 
