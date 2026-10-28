@@ -195,6 +195,10 @@ pub trait ProcArch: MMU + Sized + 'static {
     /// A kernel stack.
     type KStack;
 
+    /// A process's FP/SIMD registers, saved while it isn't running.  Its
+    /// default is the state a new process starts with.
+    type Fp: Default;
+
     /// Allocate a kernel stack.
     fn kstack_alloc() -> Result<Self::KStack, PageAllocError>;
 
@@ -225,6 +229,12 @@ pub trait ProcArch: MMU + Sized + 'static {
     /// This CPU's scheduler context (Plan 9's `m->sched`), which a process
     /// switches back to when it yields or exits.
     fn sched() -> *mut Self::Label;
+
+    /// Save this CPU's FP/SIMD registers into `fp`.
+    fn fp_save(fp: &mut Self::Fp);
+
+    /// Load this CPU's FP/SIMD registers from `fp`.
+    fn fp_restore(fp: &Self::Fp);
 
     /// The run queue.  It's the architecture's to hold, since Proc is
     /// generic over it.
@@ -260,6 +270,8 @@ pub struct Proc<A: ProcArch> {
     /// Plan 9's syserrstr.  errstr swaps it with the caller's buffer.
     pub(crate) errstr: [u8; sys::ERRMAX],
     pub(crate) state: State,
+    /// Its FP/SIMD registers, while it isn't running.
+    pub(crate) fp: A::Fp,
     /// The tick at which its quantum runs out, set when it's dispatched.
     pub(crate) quantum_end: u64,
     /// The next process on the run queue.
