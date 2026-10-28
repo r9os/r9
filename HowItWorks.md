@@ -185,6 +185,7 @@ User programs live in `user/`, and are built for aarch64 only, by xtask, for the
 
 - `user/libc` (the `r9-libc` package) is the user library, after Plan 9's libc. `_start` is entered like a call, with x0 = argc and x1 = argv, and calls the program's `main(argc, argv)`, then `exits("main")` if it returns, as Plan 9's `_main` does. It has the system calls (`exits`, `pwrite` and `write`, `brk_`, `brk` and `sbrk`, from `end`, and `errstr`), Plan 9's `rerrstr`, which reads the error string without changing it, and `Errstr`, which formats it as Plan 9's `%r`. It also has a global allocator over `sbrk` that never frees, `fprint` and `print!`, and a panic handler that prints the message and exits with `panic`. On any target but r9 it's empty, so a crate that uses it can test its library on the host.
 - `user/echo` is Plan 9's `echo.c`, ported line by line. Its logic (`split`, `size`, `fill`) is a library, tested on the host.
+- `user/sleep` is Plan 9's `sleep.c`, ported line by line. Its argument parsing (`parse`) is a library, tested on the host.
 - `user/elftest` is the ELF loader's test program: its data spans two pages, and its bss runs onto another.
 
 User programs use FP/SIMD freely: EL0 may (`CPACR_EL1.FPEN`), and `to_user` zeroes the state, which isn't saved, as only one process runs at a time.
