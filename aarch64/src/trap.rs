@@ -110,9 +110,9 @@ const _: () = assert!(offset_of!(TrapFrame, sp_el0) == 16 * 17 + 8);
 const _: () = assert!(offset_of!(TrapFrame, spsr_el1) == 16 * 18);
 const _: () = assert!(size_of::<TrapFrame>() == 16 * 19);
 
-/// SPSR_EL1 for entering EL0: EL0t with debug, SError, IRQ and FIQ masked.
-/// Unmask each as it's needed.
-const SPSR_EL0T_MASKED: u64 = 0b1111 << 6;
+/// SPSR_EL1 for entering EL0: EL0t with IRQs unmasked, and debug, SError
+/// and FIQ masked (D, A and F, bits 9, 8 and 6).  Unmask each as it's needed.
+const SPSR_EL0T: u64 = 0b1101 << 6;
 
 impl TrapFrame {
     /// The exception level the trap was taken from.
@@ -273,7 +273,7 @@ pub unsafe fn to_user(kstack_top: usize, regs: &UserRegs) -> ! {
     tf.sp_el0 = regs.sp as u64;
     tf.x0 = regs.argc as u64;
     tf.x1 = regs.argv as u64;
-    tf.spsr_el1 = SPSR_EL0T_MASKED;
+    tf.spsr_el1 = SPSR_EL0T;
     unsafe { frame.write(tf) };
 
     #[cfg(not(test))]

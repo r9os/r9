@@ -10,8 +10,10 @@ use crate::vm::{
     self, AddressSpace, Entry, PageSize, PageTableError, PhysPageAllocator, RootPageTableType,
     VaMapping, VmTraitImpl,
 };
+use port::dat::RunQueue;
 use port::dat::{Access, MMU, Perm, Proc, ProcArch, PutError};
 use port::exec::UserRegs;
+use port::mcslock::Lock;
 use port::mem::{PAGE_SIZE_4K, PhysAddr, PhysRange};
 use port::pagealloc::PageAllocError;
 
@@ -127,6 +129,11 @@ impl ProcArch for Arm64 {
     fn sched() -> *mut Label {
         // SAFETY: as above.
         unsafe { &raw mut (*mach()).sched }
+    }
+
+    fn run_queue() -> &'static Lock<RunQueue<Arm64>> {
+        static RUN_QUEUE: Lock<RunQueue<Arm64>> = Lock::new("run_queue", RunQueue::new());
+        &RUN_QUEUE
     }
 }
 

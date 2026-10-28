@@ -134,11 +134,11 @@ mod tests {
     /// Run `f` as a new process, which is then reaped.
     fn as_proc<R>(f: impl FnOnce() -> R) -> R {
         let mut p = newproc::<Fake>(|| {}).expect("newproc failed");
-        Fake::set_up(&mut p);
+        Fake::set_up(&mut *p);
         let r = f();
         Fake::set_up(core::ptr::null_mut());
         // SAFETY: nothing runs in the fake process.
-        unsafe { reap(p) };
+        unsafe { reap(*p) };
         r
     }
 

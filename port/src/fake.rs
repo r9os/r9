@@ -3,8 +3,10 @@
 //! permissions, and a console that records what's written to it.  Tests run in
 //! parallel threads, so its state is per thread.
 
+use crate::dat::RunQueue;
 use crate::dat::{Access, MMU, Perm, Proc, ProcArch, PutError};
 use crate::devcons::{Console, Uart};
+use crate::mcslock::Lock;
 use crate::mem::{PAGE_SIZE_4K, PhysAddr};
 use crate::pagealloc::PageAllocError;
 use std::cell::{Cell, RefCell};
@@ -32,6 +34,7 @@ thread_local! {
     static CONS_MASKED: RefCell<Vec<bool>> = const { RefCell::new(Vec::new()) };
     /// The current process, set by set_up.
     static UP: Cell<*mut Proc<Fake>> = const { Cell::new(core::ptr::null_mut()) };
+    static RUN_QUEUE: &'static Lock<RunQueue<Fake>> = Box::leak(Box::new(Lock::new("run_queue", RunQueue::new())));
     /// What put has mapped and unput hasn't unmapped: each page's address,
     /// physical page and permission.
     static MAPPED: RefCell<Vec<(usize, PhysAddr, Perm)>> = const { RefCell::new(Vec::new()) };
@@ -193,5 +196,9 @@ impl ProcArch for Fake {
 
     fn sched() -> *mut () {
         core::ptr::null_mut()
+    }
+
+    fn run_queue() -> &'static Lock<RunQueue<Fake>> {
+        RUN_QUEUE.with(|q| *q)
     }
 }
