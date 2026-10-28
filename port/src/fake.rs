@@ -204,6 +204,10 @@ impl ProcArch for Fake {
 
     fn fp_restore(_fp: &()) {}
 
+    fn idle() {
+        unreachable!("host tests don't idle")
+    }
+
     fn run_queue() -> &'static Lock<RunQueue<Fake>> {
         RUN_QUEUE.with(|q| *q)
     }

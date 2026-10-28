@@ -14,7 +14,7 @@ use crate::vm;
 use aarch64_cpu::registers::{CNTV_CTL_EL0, CNTV_CVAL_EL0, CNTVCT_EL0, Readable, Writeable};
 use core::cell::SyncUnsafeCell;
 use core::hint::black_box;
-use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use core::time::Duration;
 use port::dat::{MMU, Perm, PutError};
 use port::exec::UserRegs;
@@ -42,6 +42,7 @@ pub fn run() {
     test_user_processes();
     test_preemption();
     test_fp_state();
+    test_sleep_and_wakeup();
 }
 
 // Test programs for test_user_processes.  Each is copied to UTZERO from
@@ -591,6 +592,29 @@ fn test_fp_state() {
     assert!(lost.is_empty(), "fp state test: lost by {lost:?}");
     assert_eq!(port::pagealloc::usage_bytes().0, used_before, "fp state test: leaked");
     println!("fp state test: ok");
+}
+
+/// A process asleep alone is woken by an interrupt: with nothing else to run,
+/// the scheduler idles until a 50 ms timer wakes it.
+fn test_sleep_and_wakeup() {
+    static R: port::dat::Rendez<Arm64> = port::dat::Rendez::new();
+    static WOKEN: AtomicBool = AtomicBool::new(false);
+    static WAKER: Timer = Timer::new(Mode::Relative(Duration::from_millis(50)), || {
+        WOKEN.store(true, Ordering::Relaxed);
+        port::proc::wakeup(&R);
+    });
+    let p = port::proc::newproc::<Arm64>(|| {
+        port::proc::sleep(&R, || WOKEN.load(Ordering::Relaxed));
+        port::proc::pexit::<Arm64>(b"");
+    })
+    .expect("couldn't create process");
+    let start = now();
+    timer::add(&WAKER);
+    let status = port::proc::run(p);
+    let took = now() - start;
+    assert!(status.is_empty(), "sleep test: exited with {status:?}");
+    assert!(took >= counts(Duration::from_millis(50)), "sleep test: woke after {took} counts");
+    println!("sleep test: ok");
 }
 
 /// The FP state test program's start, with `args`: its pattern is how many

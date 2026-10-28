@@ -236,6 +236,10 @@ pub trait ProcArch: MMU + Sized + 'static {
     /// Load this CPU's FP/SIMD registers from `fp`.
     fn fp_restore(fp: &Self::Fp);
 
+    /// Wait for an interrupt, with IRQs masked: a pending IRQ ends the wait
+    /// anyway, and the caller unmasks to take it.
+    fn idle();
+
     /// The run queue.  It's the architecture's to hold, since Proc is
     /// generic over it.
     fn run_queue() -> &'static Lock<RunQueue<Self>>;
@@ -248,6 +252,8 @@ pub enum State {
     Ready,
     /// Running, or switched back to the scheduler to be re-queued.
     Running,
+    /// Asleep on a Rendez, until a wakeup.
+    Sleeping,
     /// Exited, to be reaped.
     Exited,
 }
@@ -291,11 +297,14 @@ impl<A: ProcArch> Proc<A> {
 pub struct RunQueue<A: ProcArch> {
     head: *mut Proc<A>,
     tail: *mut Proc<A>,
+    /// How many processes are asleep, so the scheduler can tell nothing to
+    /// run yet from nothing left.
+    pub(crate) asleep: usize,
 }
 
 impl<A: ProcArch> RunQueue<A> {
     pub const fn new() -> Self {
-        RunQueue { head: ptr::null_mut(), tail: ptr::null_mut() }
+        RunQueue { head: ptr::null_mut(), tail: ptr::null_mut(), asleep: 0 }
     }
 
     pub(crate) fn push(&mut self, p: Box<Proc<A>>) {
@@ -334,6 +343,25 @@ impl<A: ProcArch> RunQueue<A> {
 }
 
 impl<A: ProcArch> Default for RunQueue<A> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Where a process waits to be woken, as Plan 9's Rendez: the one process
+/// asleep here, or null.  While it sleeps, the process is owned through this
+/// pointer, from Box::into_raw, as the run queue owns a ready one.
+pub struct Rendez<A: ProcArch> {
+    pub(crate) sleeper: Lock<*mut Proc<A>>,
+}
+
+impl<A: ProcArch> Rendez<A> {
+    pub const fn new() -> Self {
+        Rendez { sleeper: Lock::new("rendez", ptr::null_mut()) }
+    }
+}
+
+impl<A: ProcArch> Default for Rendez<A> {
     fn default() -> Self {
         Self::new()
     }
