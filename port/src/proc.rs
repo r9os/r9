@@ -10,8 +10,9 @@ use core::ptr;
 use core::sync::atomic::{AtomicU64, Ordering};
 use core::time::Duration;
 
-use crate::chan::NOPEN;
+use crate::chan::{NOPEN, OWRITE};
 use crate::dat::{Proc, ProcArch, Rendez, State};
+use crate::dev::open_name;
 use crate::irq;
 use crate::mcslock::LockNode;
 use crate::pagealloc::{PageAllocError, free_physpage};
@@ -32,7 +33,9 @@ pub enum NewprocError {
 
 /// Create a process.  When it's first run, it calls `start`, as Plan 9's
 /// kproc runs a function in a new process.  `start` loads the process's
-/// program and enters user mode, and returns only if that fails.
+/// program and enters user mode, and returns only if that fails.  Before
+/// it runs, the process's standard files are open: the console on 0, 1 and
+/// 2, all OWRITE, as Plan 9's opencons.
 pub fn newproc<A: ProcArch>(start: fn()) -> Result<Box<Proc<A>>, NewprocError> {
     let pmmu = A::newpmmu().map_err(NewprocError::AddressSpace)?;
     let kstack = match A::kstack_alloc() {
@@ -45,6 +48,18 @@ pub fn newproc<A: ProcArch>(start: fn()) -> Result<Box<Proc<A>>, NewprocError> {
     };
     let label = A::new_context(proc_start::<A>, &kstack);
     let pid = NEXT_PID.fetch_add(1, Ordering::Relaxed);
+    // The standard files, as Plan 9's opencons: the console on 0, 1 and 2,
+    // all OWRITE, without the bind, since there's no namespace yet, and
+    // without the OREAD on 0, since there's no read path until input.
+    let mut fds = [const { None }; NOPEN];
+    for slot in &mut fds[..3] {
+        *slot = Some(
+            open_name("#c/cons", OWRITE).expect(
+                "newproc: opening #c/cons OWRITE can't fail: attach has nothing \
+                 to fail it, cons is in the table, and 0220's group bits grant it",
+            ),
+        );
+    }
     Ok(Box::new(Proc {
         pid,
         start,
@@ -52,7 +67,7 @@ pub fn newproc<A: ProcArch>(start: fn()) -> Result<Box<Proc<A>>, NewprocError> {
         kstack,
         label,
         bss: None,
-        fds: [const { None }; NOPEN],
+        fds,
         exit_status: Vec::new(),
         errstr: [0; sys::ERRMAX],
         state: State::Ready,
@@ -316,7 +331,9 @@ pub(crate) unsafe fn reap<A: ProcArch>(p: Proc<A>) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
+    use alloc::sync::Arc;
     use super::*;
+    use crate::chan::QTFILE;
     use crate::dat::ProcArch;
     use crate::fake::{Fake, NO_STACKS, held};
     use std::cell::Cell;
@@ -344,6 +361,26 @@ mod tests {
         assert_eq!(unsafe { reap(*p) }, b"bye");
         // SAFETY: as above.
         unsafe { reap(*q) };
+        assert_eq!(held(), (0, 0));
+    }
+
+    #[test]
+    fn newproc_opens_the_console_on_the_standard_fds() {
+        let p = newproc::<Fake>(start).expect("newproc failed");
+        // The console channel on each of 0, 1 and 2, all OWRITE.
+        for slot in &p.fds[..3] {
+            let c = slot.as_ref().expect("a standard fd");
+            assert_eq!(c.qid().path, 1, "the channel's qid path");
+            assert_eq!(c.qid().kind, QTFILE, "the channel's qid kind");
+            assert_eq!(c.mode(), OWRITE, "the channel's mode");
+        }
+        // The fds are real channels: reap frees the process's references,
+        // and the channel kept across it is left with only the caller's Arc.
+        let keep = p.fds[0].clone().expect("fd 0");
+        assert_eq!(Arc::strong_count(&keep), 2);
+        // SAFETY: nothing runs in the fake process.
+        unsafe { reap(*p) };
+        assert_eq!(Arc::strong_count(&keep), 1);
         assert_eq!(held(), (0, 0));
     }
 
