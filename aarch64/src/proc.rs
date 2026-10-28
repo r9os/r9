@@ -218,6 +218,12 @@ impl ProcArch for Arm64 {
         }
     }
 
+    /// wfi ends on a pending IRQ even with IRQs masked: an IRQ is a wakeup
+    /// event regardless of PSTATE.I (Arm ARM DDI 0487 M.d, D1.7.2.1).
+    fn idle() {
+        aarch64_cpu::asm::wfi();
+    }
+
     fn run_queue() -> &'static Lock<RunQueue<Arm64>> {
         static RUN_QUEUE: Lock<RunQueue<Arm64>> = Lock::new("run_queue", RunQueue::new());
         &RUN_QUEUE
