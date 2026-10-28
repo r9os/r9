@@ -1,8 +1,13 @@
-use crate::clock;
-use crate::irq;
-use crate::mcslock::{Lock, LockGuard, LockNode};
+use alloc::sync::Arc;
 use core::time::Duration;
 use core::{fmt, hint};
+
+use crate::chan::{Chan, OREAD, Qid, QTDIR, QTFILE};
+use crate::clock;
+use crate::dev::{self, Dev};
+use crate::error::{ENONEXIST, ENOTDIR, ENOTSUP, EPERM};
+use crate::irq;
+use crate::mcslock::{Lock, LockGuard, LockNode};
 
 const fn ctrl(b: u8) -> u8 {
     b - b'@'
@@ -164,6 +169,73 @@ fn puts(uart: &dyn Uart, s: &[u8]) {
         }
         uart.putb(b);
     }
+}
+
+/// The console device, as Plan 9's devcons: the only device, reached as #c,
+/// with the root directory and cons, the console's output, as its files.
+pub struct Cons;
+
+/// The console device, the only member of the device table.
+pub static CONS: Cons = Cons;
+
+/// The mode of the root directory, as the mode of `.` in Plan 9's consdir.
+const ROOT_MODE: u32 = 0o555;
+
+/// The mode of the console's file: write-only until the read path arrives in
+/// the console-input task, which makes it Plan 9's 0660.
+const CONS_MODE: u32 = 0o220;
+
+impl Dev for Cons {
+    fn dc(&self) -> char {
+        'c'
+    }
+
+    fn attach(&self) -> crate::Result<Arc<Chan>> {
+        Ok(Chan::new(&CONS, Qid { path: 0, kind: QTDIR }))
+    }
+
+    fn walk(&self, c: &Arc<Chan>, elems: &[&str]) -> crate::Result<Arc<Chan>> {
+        let mut c = c.clone();
+        for elem in elems {
+            if elem.is_empty() {
+                return Err(ENONEXIST);
+            }
+            if c.qid().kind != QTDIR {
+                return Err(ENOTDIR);
+            }
+            if *elem != "cons" {
+                return Err(ENONEXIST);
+            }
+            c = Chan::new(&CONS, Qid { path: 1, kind: QTFILE });
+        }
+        Ok(c)
+    }
+
+    fn open(&self, c: &Arc<Chan>, omode: u32) -> crate::Result<Arc<Chan>> {
+        let mode = if c.qid().kind == QTDIR { ROOT_MODE } else { CONS_MODE };
+        // The permission check, as Plan 9's devpermcheck, comes before the
+        // directory check, as devopen's order.
+        if !dev::perm_ok(mode, omode) {
+            return Err(EPERM);
+        }
+        // A directory opens OREAD only, as Plan 9's devopen, which errors
+        // Eperm where it is not.
+        if c.qid().kind == QTDIR && omode != OREAD {
+            return Err(EPERM);
+        }
+        Ok(Chan::opened(&CONS, *c.qid(), omode, 0))
+    }
+
+    fn read(&self, _c: &Arc<Chan>, _buf: &mut [u8], _offset: u64) -> crate::Result<u64> {
+        Err(ENOTSUP)
+    }
+
+    fn write(&self, _c: &Arc<Chan>, buf: &[u8], _offset: u64) -> crate::Result<u64> {
+        putstrn(buf);
+        Ok(buf.len() as u64)
+    }
+
+    fn close(&self, _c: &Chan) {}
 }
 
 #[cfg(test)]

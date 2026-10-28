@@ -10,6 +10,7 @@ use core::ptr;
 use core::sync::atomic::{AtomicU64, Ordering};
 use core::time::Duration;
 
+use crate::chan::NOPEN;
 use crate::dat::{Proc, ProcArch, Rendez, State};
 use crate::irq;
 use crate::mcslock::LockNode;
@@ -51,6 +52,7 @@ pub fn newproc<A: ProcArch>(start: fn()) -> Result<Box<Proc<A>>, NewprocError> {
         kstack,
         label,
         bss: None,
+        fds: [const { None }; NOPEN],
         exit_status: Vec::new(),
         errstr: [0; sys::ERRMAX],
         state: State::Ready,

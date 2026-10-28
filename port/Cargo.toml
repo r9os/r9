@@ -4,5 +4,4 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bitflags = "2.5"
 r9-sys = { path = "../sys" }
