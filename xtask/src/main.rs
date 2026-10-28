@@ -211,8 +211,9 @@ fn main() {
             ]),
         )
         .subcommand(
-            clap::Command::new("smoke").about("Boot r9 under QEMU, and check that echo runs").args(
-                &[
+            clap::Command::new("smoke")
+                .about("Boot r9 under QEMU, and check that sleep, factor and echo run")
+                .args(&[
                     clap::arg!(--release "Build a release version").conflicts_with("debug"),
                     clap::arg!(--debug "Build a debug version").conflicts_with("release"),
                     clap::arg!(--arch <arch> "Target architecture")
@@ -224,8 +225,7 @@ fn main() {
                     clap::arg!(
                         --semihosting "Build with QEMU semihosting, and take QEMU's exit status as the result.  The image this leaves in target/ is for QEMU only: on hardware, semihosting is an undefined instruction"
                     ),
-                ],
-            ),
+                ]),
         )
         .subcommand(clap::Command::new("clean").about("Cargo clean"))
         .get_matches();
@@ -632,14 +632,15 @@ impl QemuStep {
     }
 }
 
-/// How long the smoke test waits for echo to exit.
+/// How long the smoke test waits for the user programs to exit.
 const SMOKE_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// Boot r9 under QEMU, and check that echo runs: the output must have the
-/// lines "hello world" and "echo: exited", and no panic.  QEMU doesn't exit by
-/// itself, so it's killed once echo has exited, the kernel has panicked, or
-/// SMOKE_TIMEOUT has passed.  With semihosting, the kernel makes QEMU exit,
-/// with status 0 only if echo succeeded, and that status must be 0 too.
+/// Boot r9 under QEMU, and check that the user programs run: factor's output
+/// must be exactly right, sleep and factor must both exit, and echo must run
+/// after, all with no panic.  QEMU doesn't exit by itself, so it's killed
+/// once echo has exited, the kernel has panicked, or SMOKE_TIMEOUT has passed.
+/// With semihosting, the kernel makes QEMU exit, with status 0 only if all
+/// three succeeded, and that status must be 0 too.
 struct SmokeStep {
     qemu: QemuStep,
 }
@@ -716,7 +717,20 @@ impl SmokeStep {
         let _ = child.kill();
         let status = child.wait();
 
+        // Whether `want` is an exact line, and where, so the order of the
+        // exit lines can be checked too.
         let has = |want: &str| lines.iter().any(|l| l == want);
+        let at = |want: &str| lines.iter().position(|l| l == want);
+        let before = |a: &str, b: &str| match (at(a), at(b)) {
+            (Some(x), Some(y)) => x < y,
+            _ => false,
+        };
+        // factor's whole output, in order: its argument, its factors, and the
+        // blank line it prints after them.
+        let factor_exact = has("9007195909437503")
+            && has("     94906247")
+            && has("     94906249")
+            && at("     94906249").is_some_and(|i| lines.get(i + 1).is_some_and(|l| l.is_empty()));
         let qemu_exited = |status: &std::io::Result<process::ExitStatus>| match status {
             Ok(s) => format!("QEMU exited with {s}"),
             Err(e) => format!("QEMU exited: {e}"),
@@ -737,6 +751,14 @@ impl SmokeStep {
             } else {
                 "echo didn't exit successfully".to_string()
             })
+        } else if !factor_exact {
+            Some("factor's output isn't exactly right".to_string())
+        } else if !has("factor: exited") {
+            Some("factor didn't exit successfully".to_string())
+        } else if !has("sleep: exited") {
+            Some("sleep didn't exit successfully".to_string())
+        } else if !before("factor: exited", "echo: exited") {
+            Some("echo didn't run after factor".to_string())
         } else {
             None
         };

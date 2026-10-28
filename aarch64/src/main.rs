@@ -233,14 +233,15 @@ pub extern "C" fn main9(dtb_pa: usize) {
     on_kernel_stack(main9_rest);
 }
 
-/// The rest of main9, on a kernel stack: the boot tests, then echo.
+/// The rest of main9, on a kernel stack: the boot tests, then the user
+/// programs.
 extern "C" fn main9_rest() -> ! {
     boottest::gic();
     clock::start();
     unmask_irqs();
     boottest::run();
 
-    shutdown(run_echo())
+    shutdown(run_user())
 }
 
 /// Run `f` on a newly allocated kernel stack.  The boot context isn't resumed.
@@ -299,10 +300,61 @@ mod runtime;
 /// echo, built by xtask (user/echo).
 static ECHO: &[u8] = include_bytes!(concat!(env!("R9_USER_BIN"), "/echo"));
 
-/// Run echo with argv ["echo", "hello", "world"], as the system's one
-/// program, print how it exited, and return whether it exited successfully.  A
-/// failure is reported rather than asserted: this is the system running its
-/// program, not a test.
+/// sleep and factor, built by xtask (user/sleep and user/factor).
+static SLEEP: &[u8] = include_bytes!(concat!(env!("R9_USER_BIN"), "/sleep"));
+static FACTOR: &[u8] = include_bytes!(concat!(env!("R9_USER_BIN"), "/factor"));
+
+/// factor's argument: 94906249 times 94906247, the largest product of two
+/// primes below 2 to the 53, so it's exact as a double.  The largest such
+/// argument keeps factor dividing longest.
+const FACTOR_ARG: &[u8] = b"9007195909437503";
+
+/// Run sleep and factor together, then echo, and return whether all three
+/// exited successfully.  Both are readied before either runs, so sleep sleeps
+/// its second while factor divides: the scheduler must put sleep to sleep and
+/// wake it on its tick, and keep factor's FP state across the switches of its
+/// long run.  Each exit status is printed as it's collected.  A failure is
+/// reported rather than asserted: this is the system running its programs,
+/// not a test.
+fn run_user() -> bool {
+    let sleep = match port::proc::newproc::<Arm64>(sleep_start) {
+        Ok(p) => p,
+        Err(err) => {
+            println!("sleep: couldn't create a process: {err:?}");
+            return false;
+        }
+    };
+    let factor = match port::proc::newproc::<Arm64>(factor_start) {
+        Ok(p) => p,
+        Err(err) => {
+            println!("factor: couldn't create a process: {err:?}");
+            return false;
+        }
+    };
+    // Only two processes run, so the pid that isn't sleep's is factor's.
+    let sleep_pid = sleep.pid;
+    port::proc::ready(sleep);
+    port::proc::ready(factor);
+    let mut ok = true;
+    for (pid, status) in port::proc::schedule::<Arm64>() {
+        let name = if pid == sleep_pid { "sleep" } else { "factor" };
+        if status.is_empty() {
+            println!("{name}: exited");
+        } else {
+            println!(
+                "{name}: exited with status {}",
+                alloc::string::String::from_utf8_lossy(&status)
+            );
+            ok = false;
+        }
+    }
+    ok && run_echo()
+}
+
+/// Run echo with argv ["echo", "hello", "world"], after sleep and factor,
+/// print how it exited, and return whether it exited successfully.  A failure
+/// is reported rather than asserted: this is the system running its program,
+/// not a test.
 fn run_echo() -> bool {
     let p = match port::proc::newproc::<Arm64>(echo_start) {
         Ok(p) => p,
@@ -318,6 +370,24 @@ fn run_echo() -> bool {
         println!("echo: exited with status {}", alloc::string::String::from_utf8_lossy(&status));
     }
     status.is_empty()
+}
+
+/// sleep's start: exec it with its argument, and enter it.
+fn sleep_start() {
+    let regs = match port::exec::exec::<Arm64>(SLEEP, &[b"sleep", b"1"]) {
+        Ok(regs) => regs,
+        Err(err) => port::proc::pexit::<Arm64>(err.as_bytes()),
+    };
+    enter_user(regs)
+}
+
+/// factor's start: exec it with its argument, and enter it.
+fn factor_start() {
+    let regs = match port::exec::exec::<Arm64>(FACTOR, &[b"factor", FACTOR_ARG]) {
+        Ok(regs) => regs,
+        Err(err) => port::proc::pexit::<Arm64>(err.as_bytes()),
+    };
+    enter_user(regs)
 }
 
 /// echo's start: exec it with its arguments, and enter it.

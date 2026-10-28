@@ -96,9 +96,9 @@ mod tests {
 
     #[test]
     fn below_two_fifty_three() {
-        // The smoke test's scale: two primes near 2 to the 26, exact as a
-        // double; a wheel that skipped a candidate would leave the product
-        // unbroken.
-        assert_eq!(factor(4503600298459061.0), vec![67108859.0, 67108879.0]);
+        // The smoke test's scale: the largest product of two primes below 2 to
+        // the 53, exact as a double; a wheel that skipped a candidate would
+        // leave the product unbroken.
+        assert_eq!(factor(9007195909437503.0), vec![94906247.0, 94906249.0]);
     }
 }
