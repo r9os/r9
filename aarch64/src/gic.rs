@@ -118,7 +118,7 @@ fn iar_intid(iar: u32) -> usize {
 }
 
 /// Call `f` for interrupt `intid`, and enable it, as Plan 9's intrenable.
-pub fn intrenable(intid: usize, f: fn()) {
+pub fn attach(intid: usize, f: fn()) {
     let node = LockNode::new();
     let mut gic = GIC.ilock(&node);
     let regs = valid(&gic, intid);
@@ -128,7 +128,7 @@ pub fn intrenable(intid: usize, f: fn()) {
 }
 
 /// Disable interrupt `intid`, and forget its handler.
-pub fn intrdisable(intid: usize) {
+pub fn detach(intid: usize) {
     let node = LockNode::new();
     let mut gic = GIC.ilock(&node);
     let regs = valid(&gic, intid);

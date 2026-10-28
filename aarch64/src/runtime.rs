@@ -10,6 +10,7 @@ use port::iprintln;
 
 #[panic_handler]
 pub fn panic(info: &PanicInfo) -> ! {
+    crate::mask_interrupts();
     iprintln!("{}\n", info);
     crate::shutdown(false)
 }

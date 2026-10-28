@@ -16,17 +16,17 @@ static VTIMER_INTID: AtomicUsize = AtomicUsize::new(0);
 /// work from being read before it, as Linux's __arch_counter_get_cntvct
 /// does.  Firmware sets CNTFRQ_EL0 (D24.10.1).  The virtual timer interrupts
 /// while it's enabled and the counter has reached CNTV_CVAL_EL0 (D24.10.28,
-/// D24.10.29).  Its interrupt is level-triggered, so timerset's isb makes
+/// D24.10.29).  Its interrupt is level-triggered, so set_timer's isb makes
 /// sure a new deadline, or disabling it, has quietened it before the GIC's
 /// EOI, as Linux's arch_timer_reg_write does.
 #[cfg(not(test))]
 static CLOCK: port::clock::Ops = port::clock::Ops {
-    fastticks: || {
+    now: || {
         aarch64_cpu::asm::barrier::isb(aarch64_cpu::asm::barrier::SY);
         CNTVCT_EL0.get()
     },
-    fasthz: || CNTFRQ_EL0.get(),
-    timerset: |when| {
+    frequency: || CNTFRQ_EL0.get(),
+    set_timer: |when| {
         match when {
             Some(when) => {
                 CNTV_CVAL_EL0.set(when);

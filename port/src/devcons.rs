@@ -102,16 +102,16 @@ pub fn iprint(args: fmt::Arguments) {
 fn iprintcanlock(node: &LockNode) -> Option<LockGuard<'_, ()>> {
     const IPRINT_TIMEOUT: Duration = Duration::from_millis(100);
 
-    let (Some(now), Some(hz)) = (clock::fastticks(), clock::fasthz()) else {
+    let (Some(now), Some(hz)) = (clock::now(), clock::frequency()) else {
         return IPRINTLOCK.try_lock(node);
     };
 
-    let deadline = now.saturating_add(clock::ns2fastticks(IPRINT_TIMEOUT, hz));
+    let deadline = now.saturating_add(clock::to_counts(IPRINT_TIMEOUT, hz));
     loop {
         if let Some(guard) = IPRINTLOCK.try_lock(node) {
             return Some(guard);
         }
-        if clock::fastticks().is_none_or(|t| t >= deadline) {
+        if clock::now().is_none_or(|t| t >= deadline) {
             return None;
         }
         hint::spin_loop();
@@ -196,9 +196,9 @@ mod tests {
         }
         // A 1 kHz clock that advances a tick each time it's read.
         static FAKE: clock::Ops = clock::Ops {
-            fastticks: || NOW.replace(NOW.get() + 1),
-            fasthz: || 1000,
-            timerset: |_| {},
+            now: || NOW.replace(NOW.get() + 1),
+            frequency: || 1000,
+            set_timer: |_| {},
         };
         clock::init(&FAKE);
         fake_cons();

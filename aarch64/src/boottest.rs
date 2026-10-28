@@ -612,13 +612,13 @@ fn test_user_access() {
     println!("user access test: ok");
 }
 
-/// The counter is running, and fastticks never goes backwards.
+/// The counter is running, and the clock never goes backwards.
 fn test_clock() {
-    let fastticks = || port::clock::fastticks().expect("clock test: no clock");
-    let first = fastticks();
+    let now = || port::clock::now().expect("clock test: no clock");
+    let first = now();
     let mut last = first;
     for _ in 0..100_000 {
-        let t = fastticks();
+        let t = now();
         assert!(t >= last, "clock test: went backwards from {last} to {t}");
         last = t;
     }
@@ -634,10 +634,10 @@ fn test_timer_interrupt() {
         TAKEN.fetch_add(1, Ordering::Relaxed);
     }
     let intid = clock::vtimer_intid();
-    gic::intrenable(intid, handler);
+    gic::attach(intid, handler);
     arm_timer();
     take_irqs_for(Duration::from_millis(10));
-    gic::intrdisable(intid);
+    gic::detach(intid);
     let taken = TAKEN.load(Ordering::Relaxed);
     assert_eq!(taken, 1, "timer interrupt test: taken {taken} times");
     assert!(!gic::active(intid), "timer interrupt test: not ended");
@@ -671,14 +671,14 @@ fn disarm_timer() {
 
 /// Unmask IRQs at EL1 for `d`, then mask them again.
 fn take_irqs_for(d: Duration) {
-    let hz = port::clock::fasthz().expect("no clock");
-    let fastticks = || port::clock::fastticks().expect("no clock");
-    let end = fastticks() + port::clock::ns2fastticks(d, hz);
+    let hz = port::clock::frequency().expect("no clock");
+    let now = || port::clock::now().expect("no clock");
+    let end = now() + port::clock::to_counts(d, hz);
     // SAFETY: unmasking IRQs lets the GIC's enabled interrupts in, and only
     // the test's is enabled.  Neither asm! says it leaves memory alone, so
     // each is a compiler barrier.
     unsafe { core::arch::asm!("msr daifclr, #2", options(nostack)) };
-    while fastticks() < end {
+    while now() < end {
         core::hint::spin_loop();
     }
     unsafe { core::arch::asm!("msr daifset, #2", options(nostack)) };

@@ -213,7 +213,7 @@ pub extern "C" fn main9(dtb_pa: usize) {
     println!("r9 from the Internet");
     println!("DTB found at: {:#x}", dtb_va);
     println!("midr_el1: {:?}", MidrEl1::read());
-    println!("Counter frequency: {} Hz", port::clock::fasthz().expect("no clock"));
+    println!("Counter frequency: {} Hz", port::clock::frequency().expect("no clock"));
     println!("sctlr_el1: {:#x}", {
         use aarch64_cpu::registers::{Readable, SCTLR_EL1};
         SCTLR_EL1.get()
@@ -266,8 +266,18 @@ pub fn shutdown(_ok: bool) -> ! {
     halt()
 }
 
+/// Mask IRQs and FIQs on this CPU, for good, so a CPU that's stopping
+/// doesn't take timer interrupts.  It doesn't use port::irq, which does
+/// nothing until trap::init registers its functions, as a panic can come
+/// before.
+pub fn mask_interrupts() {
+    // SAFETY: masking only defers interrupts.
+    unsafe { core::arch::asm!("msr daifset, #3", options(nostack)) };
+}
+
 /// Stop this CPU for good, waiting for events rather than spinning.
 pub fn halt() -> ! {
+    mask_interrupts();
     loop {
         aarch64_cpu::asm::wfe();
     }
