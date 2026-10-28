@@ -206,7 +206,7 @@ pub extern "C" fn main9(dtb_pa: usize) {
     }
 
     devcons::init(&dt);
-    clock::init();
+    clock::init(&dt);
     mailbox::init(&dt);
 
     println!();
