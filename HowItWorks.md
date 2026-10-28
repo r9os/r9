@@ -68,6 +68,7 @@ A process is a `port::dat::Proc<A>`, and its lifecycle is in `port/src/proc.rs`,
 - `schedule()` runs in the caller's context, which becomes the scheduler context, until the queue is empty. For each process it takes, it gives it a quantum of 100 ms, switches to its address space and then to it, with IRQs masked across the switch. When the process switches back, `schedule` re-queues it if it yielded (`yield_now`), or reaps it if it exited. It returns each exit's pid and status. Every switch goes through the scheduler context, so a process is reaped off its own stack, and re-queued only once its context is saved. `run(p)` readies `p`, schedules, and returns `p`'s status.
 - `proc_start` calls `start`, as Plan 9's `kproc` runs a function in a new process. `start` loads the program and enters EL0 with `enter_user` (`proc.rs`), which calls `to_user` on the process's kernel stack.
 - `pexit(status)` records the exit status and switches back to the scheduler context, which reaps the process: its address space is released, every page mapped in it is freed, and its kernel stack is freed.
+- A process is preempted on its way back to EL0, from a syscall or an IRQ, once its quantum has run out and another process is ready (`preempt_due`). `trap` calls `yield_now` after the IRQ's EOI, since a GICv2 holds the CPU interface's running priority until then. The kernel itself isn't preempted.
 
 ### User Address Space
 

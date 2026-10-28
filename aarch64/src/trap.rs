@@ -199,9 +199,9 @@ fn trap(frame: &mut TrapFrame) {
         EL0T_64_SYNC => {
             if frame.esr_el1.exception_class_enum() == Ok(ExceptionClass::Svc64) {
                 syscall(frame);
-                return;
+            } else {
+                port::proc::pexit::<Arm64>(user_fault(frame).as_bytes());
             }
-            port::proc::pexit::<Arm64>(user_fault(frame).as_bytes());
         }
         EL1H_64_IRQ | EL0T_64_IRQ => {
             port::irq::enter_interrupt();
@@ -212,6 +212,14 @@ fn trap(frame: &mut TrapFrame) {
             iprintln!("{:#?}", frame);
             panic!("Unhandled exception from EL{}", frame.exception_level());
         }
+    }
+    // Preempt only a process on its way back to EL0, and so after any IRQ's
+    // EOI: a GICv2 keeps the CPU interface's running priority raised until
+    // GICC_EOIR is written, which would block the timer while the next
+    // process ran.  The frame holds everything the process returns to, a
+    // syscall's result included, so it's resumed just as it would have been.
+    if frame.exception_level() == 0 && port::proc::preempt_due::<Arm64>() {
+        port::proc::yield_now::<Arm64>();
     }
 }
 
