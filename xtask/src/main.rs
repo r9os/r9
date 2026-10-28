@@ -272,29 +272,29 @@ fn cargo() -> String {
 }
 
 fn objcopy() -> String {
-    let llvm_objcopy = {
-        let toolchain = env_or("RUSTUP_TOOLCHAIN", "nightly-x86_64-unknown-none");
+    let toolchain = env_or("RUSTUP_TOOLCHAIN", "nightly-x86_64-unknown-none");
+    let home = env_or("RUSTUP_HOME", "");
+    let segments: Vec<&str> = toolchain.split('-').collect();
 
-        // find host architecture by taking last 3 segments from toolchain
-        let mut arch_segments: Box<[_]> = toolchain.split('-').rev().take(3).collect();
-        arch_segments.reverse();
-        let host = arch_segments.join("-");
+    // The toolchain dir is named `<channel>-<host triple>`, and the triple
+    // has 3 or 4 dash-separated parts (aarch64-apple-darwin,
+    // x86_64-unknown-linux-gnu), so try both lengths.  A name with fewer
+    // parts, such as a bare channel, matches no dir and falls back to PATH.
+    let llvm_objcopy = (3..=4)
+        .find_map(|n| {
+            let host = segments[segments.len().saturating_sub(n)..].join("-");
+            let mut path = PathBuf::from(&home);
+            path.push("toolchains");
+            path.push(&toolchain);
+            path.push("lib");
+            path.push("rustlib");
+            path.push(host);
+            path.push("bin");
+            path.push("llvm-objcopy");
+            path.exists().then(|| path.into_os_string().into_string().unwrap())
+        })
+        .unwrap_or_else(|| "llvm-objcopy".to_string());
 
-        let home = env_or("RUSTUP_HOME", "");
-        let mut path = PathBuf::from(home);
-        path.push("toolchains");
-        path.push(toolchain);
-        path.push("lib");
-        path.push("rustlib");
-        path.push(host);
-        path.push("bin");
-        path.push("llvm-objcopy");
-        if path.exists() {
-            path.into_os_string().into_string().unwrap()
-        } else {
-            "llvm-objcopy".into()
-        }
-    };
     env_or("OBJCOPY", &llvm_objcopy)
 }
 
