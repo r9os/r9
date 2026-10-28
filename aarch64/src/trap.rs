@@ -187,22 +187,32 @@ pub extern "C" fn stack_overflow_unsafe(frame: *const TrapFrame, sp: u64) -> ! {
     panic!("kernel stack overflow: sp={:#x}", sp + size_of::<TrapFrame>() as u64);
 }
 
-/// trap.S's interrupt_type for a synchronous exception from 64-bit EL0.
+// trap.S's interrupt_type for the vectors trap handles.
+const EL1H_64_IRQ: u64 = 5;
 const EL0T_64_SYNC: u64 = 8;
+const EL0T_64_IRQ: u64 = 9;
 
 fn trap(frame: &mut TrapFrame) {
-    // Only synchronous exceptions and SErrors write ESR_EL1 (Arm ARM DDI 0487
-    // M.d, D1.4.2), so an IRQ or FIQ from EL0 isn't taken as a fault.
-    if frame.interrupt_type == EL0T_64_SYNC {
-        if frame.esr_el1.exception_class_enum() == Ok(ExceptionClass::Svc64) {
-            syscall(frame);
-            return;
+    match frame.interrupt_type {
+        // Only synchronous exceptions and SErrors write ESR_EL1 (Arm ARM DDI
+        // 0487 M.d, D1.4.2), so an IRQ or FIQ from EL0 isn't taken as a fault.
+        EL0T_64_SYNC => {
+            if frame.esr_el1.exception_class_enum() == Ok(ExceptionClass::Svc64) {
+                syscall(frame);
+                return;
+            }
+            port::proc::pexit::<Arm64>(user_fault(frame).as_bytes());
         }
-        port::proc::pexit::<Arm64>(user_fault(frame).as_bytes());
+        EL1H_64_IRQ | EL0T_64_IRQ => {
+            port::irq::enter_interrupt();
+            crate::gic::irq();
+            port::irq::exit_interrupt();
+        }
+        _ => {
+            iprintln!("{:#?}", frame);
+            panic!("Unhandled exception from EL{}", frame.exception_level());
+        }
     }
-
-    iprintln!("{:#?}", frame);
-    panic!("Unhandled exception from EL{}", frame.exception_level());
 }
 
 /// The status a process exits with when it takes an exception other than a

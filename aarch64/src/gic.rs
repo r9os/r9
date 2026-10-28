@@ -5,6 +5,8 @@ use crate::deviceutil::map_device_register;
 use crate::io::{read_reg, write_reg};
 use crate::vm::PageSize;
 use port::fdt::{DeviceTree, TranslatedReg};
+use port::iprintln;
+use port::mcslock::{Lock, LockNode};
 use port::mem::{PhysRange, VirtRange};
 use port::println;
 
@@ -12,8 +14,10 @@ use port::println;
 // interrupts, a byte for each of 4, or 2 bits for each of 16.
 const GICD_CTLR: usize = 0x000; // 4.3.1
 const GICD_TYPER: usize = 0x004; // 4.3.2
+const GICD_ISENABLER: usize = 0x100; // 4.3.5
 const GICD_ICENABLER: usize = 0x180; // 4.3.6
 const GICD_ICPENDR: usize = 0x280; // 4.3.8
+const GICD_ISACTIVER: usize = 0x300; // 4.3.9
 const GICD_ICACTIVER: usize = 0x380; // 4.3.10
 const GICD_IPRIORITYR: usize = 0x400; // 4.3.11
 const GICD_ITARGETSR: usize = 0x800; // 4.3.12
@@ -22,6 +26,8 @@ const GICD_ICFGR: usize = 0xc00; // 4.3.13
 // CPU interface registers.
 const GICC_CTLR: usize = 0x00; // 4.4.1
 const GICC_PMR: usize = 0x04; // 4.4.2
+const GICC_IAR: usize = 0x0c; // 4.4.4
+const GICC_EOIR: usize = 0x10; // 4.4.5
 const GICC_IIDR: usize = 0xfc; // 4.4.14
 
 /// INTIDs 0-31 are each CPU's SGIs and PPIs, and SPIs start here (2.2.1).
@@ -36,6 +42,22 @@ const MAXINTID: usize = 1020;
 /// values still leave every interrupt above the mask.
 const PRIORITY: u32 = 0xa0;
 const PRIORITY_MASK: u32 = 0xf0;
+
+/// The GIC's mapped registers, and the handler for each interrupt.  The lock
+/// is taken with IRQs masked, and held only to copy them out.
+static GIC: Lock<Gic> = Lock::new("gic", Gic { regs: None, handlers: [None; MAXINTID] });
+
+struct Gic {
+    regs: Option<Regs>,
+    handlers: [Option<fn()>; MAXINTID],
+}
+
+#[derive(Clone, Copy)]
+struct Regs {
+    dist: VirtRange,
+    cpu: VirtRange,
+    nintid: usize,
+}
 
 /// Find the GIC in the device tree, check it's a GICv2, and set it up with
 /// every interrupt disabled.  Writing 1 to each CTLR enables delivery
@@ -56,7 +78,99 @@ pub fn init(dt: &DeviceTree) {
 
     init_dist(&dist, nintid);
     init_cpu(&dist, &cpu);
+    let node = LockNode::new();
+    GIC.ilock(&node).regs = Some(Regs { dist, cpu, nintid });
     println!("GIC: {nintid} interrupts");
+}
+
+/// Handle the interrupt that's pending, as Plan 9's irq: acknowledge it, call
+/// its handler, and end it, one interrupt per exception.  A handler runs with
+/// IRQs masked, mustn't allocate, and must quieten a level-triggered source
+/// before it returns, or it's taken again at once.  An interrupt with no
+/// handler is disabled, so it can't recur, then reported.
+pub fn irq() {
+    let node = LockNode::new();
+    let (regs, iar, handler) = {
+        let gic = GIC.ilock(&node);
+        let regs = gic.regs.expect("gic: interrupt before init");
+        let iar = read_reg(&regs.cpu, GICC_IAR);
+        let handler = gic.handlers.get(iar_intid(iar)).copied().flatten();
+        (regs, iar, handler)
+    };
+    let intid = iar_intid(iar);
+    // 1020-1023 are special, and need no EOI: 1023 is spurious (1.4.4).
+    if intid >= MAXINTID {
+        return;
+    }
+    match handler {
+        Some(f) => f(),
+        None => {
+            set_bit(&regs.dist, GICD_ICENABLER, intid);
+            iprintln!("gic: interrupt {intid} has no handler: disabled");
+        }
+    }
+    write_reg(&regs.cpu, GICC_EOIR, iar);
+}
+
+/// The INTID in a GICC_IAR value, without the source CPU of an SGI (4.4.4).
+fn iar_intid(iar: u32) -> usize {
+    (iar & 0x3ff) as usize
+}
+
+/// Call `f` for interrupt `intid`, and enable it, as Plan 9's intrenable.
+pub fn intrenable(intid: usize, f: fn()) {
+    let node = LockNode::new();
+    let mut gic = GIC.ilock(&node);
+    let regs = valid(&gic, intid);
+    assert!(gic.handlers[intid].is_none(), "gic: interrupt {intid} already has a handler");
+    gic.handlers[intid] = Some(f);
+    set_bit(&regs.dist, GICD_ISENABLER, intid);
+}
+
+/// Disable interrupt `intid`, and forget its handler.
+pub fn intrdisable(intid: usize) {
+    let node = LockNode::new();
+    let mut gic = GIC.ilock(&node);
+    let regs = valid(&gic, intid);
+    set_bit(&regs.dist, GICD_ICENABLER, intid);
+    gic.handlers[intid] = None;
+}
+
+/// Enable interrupt `intid` without a handler, so that taking it disables it.
+pub fn enable(intid: usize) {
+    let node = LockNode::new();
+    let regs = valid(&GIC.ilock(&node), intid);
+    set_bit(&regs.dist, GICD_ISENABLER, intid);
+}
+
+/// Whether interrupt `intid` is enabled.
+pub fn enabled(intid: usize) -> bool {
+    get_bit(GICD_ISENABLER, intid)
+}
+
+/// Whether interrupt `intid` is active: taken, and not yet ended.
+pub fn active(intid: usize) -> bool {
+    get_bit(GICD_ISACTIVER, intid)
+}
+
+/// The GIC's registers, once `intid` is checked to be one of its interrupts.
+fn valid(gic: &Gic, intid: usize) -> Regs {
+    let regs = gic.regs.expect("gic: used before init");
+    assert!(intid < regs.nintid, "gic: no interrupt {intid}");
+    regs
+}
+
+/// Write interrupt `intid`'s bit in a register that has one bit for each of
+/// 32 interrupts, and where writing 0 has no effect, such as GICD_ISENABLERn.
+fn set_bit(dist: &VirtRange, reg: usize, intid: usize) {
+    write_reg(dist, reg + intid / 32 * 4, 1 << (intid % 32));
+}
+
+/// Read interrupt `intid`'s bit in a one-bit-per-interrupt register.
+fn get_bit(reg: usize, intid: usize) -> bool {
+    let node = LockNode::new();
+    let regs = valid(&GIC.ilock(&node), intid);
+    read_reg(&regs.dist, reg + intid / 32 * 4) & 1 << (intid % 32) != 0
 }
 
 /// Map the first page of one of the GIC's reg ranges, which is all r9 uses:

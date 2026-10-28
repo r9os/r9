@@ -2,14 +2,19 @@
 //! and a set of test processes, most of them small assembled programs, which
 //! check the syscalls, user memory access and the ELF loader.
 
+use crate::clock;
+use crate::gic;
 use crate::kmap;
 use crate::kstack;
 use crate::param::{self, USTKSIZE, USTKTOP, UTZERO};
 use crate::proc::{Arm64, enter_user};
 use crate::swtch::{self, Label};
 use crate::vm;
+use aarch64_cpu::registers::{CNTV_CTL_EL0, CNTV_CVAL_EL0, CNTVCT_EL0, Readable, Writeable};
 use core::cell::SyncUnsafeCell;
 use core::hint::black_box;
+use core::sync::atomic::{AtomicUsize, Ordering};
+use core::time::Duration;
 use port::dat::{MMU, Perm, PutError};
 use port::exec::UserRegs;
 use port::mem::{PAGE_SIZE_4K, PhysAddr, VirtRange};
@@ -19,6 +24,8 @@ use port::segment;
 /// Run the tests, panicking if one fails.
 pub fn run() {
     test_clock();
+    test_timer_interrupt();
+    test_unhandled_interrupt();
     test_kmap();
     test_swtch();
     test_release();
@@ -616,6 +623,65 @@ fn test_clock() {
         last = t;
     }
     assert!(last > first, "clock test: the counter isn't running");
+}
+
+/// The virtual timer's interrupt is taken once by its handler, which
+/// disables the timer, and is ended: no longer active at the GIC.
+fn test_timer_interrupt() {
+    static TAKEN: AtomicUsize = AtomicUsize::new(0);
+    fn handler() {
+        disarm_timer();
+        TAKEN.fetch_add(1, Ordering::Relaxed);
+    }
+    let intid = clock::vtimer_intid();
+    gic::intrenable(intid, handler);
+    arm_timer();
+    take_irqs_for(Duration::from_millis(10));
+    gic::intrdisable(intid);
+    let taken = TAKEN.load(Ordering::Relaxed);
+    assert_eq!(taken, 1, "timer interrupt test: taken {taken} times");
+    assert!(!gic::active(intid), "timer interrupt test: not ended");
+}
+
+/// The virtual timer's interrupt, with no handler, is disabled when taken.
+fn test_unhandled_interrupt() {
+    let intid = clock::vtimer_intid();
+    gic::enable(intid);
+    arm_timer();
+    take_irqs_for(Duration::from_millis(10));
+    disarm_timer();
+    assert!(!gic::enabled(intid), "unhandled interrupt test: still enabled");
+    assert!(!gic::active(intid), "unhandled interrupt test: not ended");
+}
+
+/// Arm the virtual timer to fire now: its condition holds once the counter
+/// reaches CNTV_CVAL_EL0 (Arm ARM DDI 0487 M.d, D24.10.29).
+fn arm_timer() {
+    CNTV_CVAL_EL0.set(CNTVCT_EL0.get());
+    CNTV_CTL_EL0.set(1);
+}
+
+/// Disable the virtual timer.  Its interrupt is level-triggered, so the isb
+/// makes sure it has dropped before the GIC's EOI, as Linux's
+/// arch_timer_reg_write does.
+fn disarm_timer() {
+    CNTV_CTL_EL0.set(0);
+    aarch64_cpu::asm::barrier::isb(aarch64_cpu::asm::barrier::SY);
+}
+
+/// Unmask IRQs at EL1 for `d`, then mask them again.
+fn take_irqs_for(d: Duration) {
+    let hz = port::clock::fasthz().expect("no clock");
+    let fastticks = || port::clock::fastticks().expect("no clock");
+    let end = fastticks() + port::clock::ns2fastticks(d, hz);
+    // SAFETY: unmasking IRQs lets the GIC's enabled interrupts in, and only
+    // the test's is enabled.  Neither asm! says it leaves memory alone, so
+    // each is a compiler barrier.
+    unsafe { core::arch::asm!("msr daifclr, #2", options(nostack)) };
+    while fastticks() < end {
+        core::hint::spin_loop();
+    }
+    unsafe { core::arch::asm!("msr daifset, #2", options(nostack)) };
 }
 
 /// Write a page that's mapped nowhere else through one kmap, and read it back
