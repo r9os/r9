@@ -11,12 +11,14 @@ use crate::dat::{Access, ProcArch};
 use crate::dev::open_name;
 use crate::error::{EBADARG, EBADFD, EISDIR, ENAMETOOLONG, ENEGOFF};
 use crate::println;
-use crate::proc::{pexit, tsleep, yield_now};
+use crate::proc::{pexit, pwait, tsleep, yield_now};
 use crate::segment::ibrk;
 use crate::timer;
 use crate::uaccess::{copy_from_user, copy_str_from_user, copy_to_user, peek_user_byte, validate_user_range};
 
-use sys::{BRK_, CLOSE, DUP, ERRMAX, ERRSTR, EXITS, OPEN, PREAD, PWRITE, SEEK, SLEEP, SYSR1};
+use sys::{
+    AWAIT, BRK_, CLOSE, DUP, ERRMAX, ERRSTR, EXITS, OPEN, PREAD, PWRITE, SEEK, SLEEP, SYSR1,
+};
 
 /// One tick, as Plan 9's TK2MS(1): the shortest SLEEP can sleep.
 const TICK: Duration = Duration::from_nanos(1_000_000_000 / timer::HZ);
@@ -35,6 +37,7 @@ pub fn syscall<A: ProcArch>(nr: u64, args: [u64; 6]) -> u64 {
         BRK_ => sysbrk_::<A>(&args),
         SEEK => sysseek::<A>(&args),
         ERRSTR => syserrstr::<A>(&args),
+        AWAIT => sysawait::<A>(&args),
         PREAD => syspread::<A>(&args),
         PWRITE => syspwrite::<A>(&args),
         SLEEP => syssleep::<A>(&args),
@@ -97,6 +100,45 @@ fn syserrstr<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
         errstr[..n].copy_from_slice(&tmp[..n]);
     });
     Ok(0)
+}
+
+/// await(buf, n): wait for a child's exit, and write it into `buf` as Plan
+/// 9's sysawait does: "pid utime stime rtime msg", the message quoted as %q
+/// quotes it, truncated and NUL-terminated in n bytes, as snprint does.
+/// Return the length written, or for n of 0, -1 with the error string as it
+/// was, as snprint returns -1 for no room, and the exit is still taken.  r9
+/// doesn't account for time, so the times are 0.
+fn sysawait<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
+    let (buf, n) = (args[0] as usize, args[1] as usize);
+    validate_user_range::<A>(buf, n, Access::Write);
+    let w = pwait::<A>()?;
+    let mut text = alloc::format!("{} 0 0 0 ", w.pid).into_bytes();
+    quote(&w.msg, &mut text);
+    if n == 0 {
+        return Ok(u64::MAX);
+    }
+    let m = text.len().min(n - 1);
+    copy_to_user::<A>(buf, &text[..m]);
+    copy_to_user::<A>(buf + m, &[0]);
+    Ok(m as u64)
+}
+
+/// Append `s` to `out` as Plan 9's %q quotes it: in single quotes, with each
+/// quote doubled, if it's empty or holds a quote or a byte at or below a
+/// space, else as it is.
+fn quote(s: &[u8], out: &mut Vec<u8>) {
+    if !s.is_empty() && !s.iter().any(|&b| b <= b' ' || b == b'\'') {
+        out.extend_from_slice(s);
+        return;
+    }
+    out.push(b'\'');
+    for &b in s {
+        out.push(b);
+        if b == b'\'' {
+            out.push(b);
+        }
+    }
+    out.push(b'\'');
 }
 
 fn sysr1(_args: &[u64; 6]) -> crate::Result<u64> {
@@ -317,6 +359,7 @@ mod tests {
     use crate::chan::ORDWR;
     use crate::error::{ENONEXIST, ENOFD, EBADUSEFD, ENOTSUP};
     use crate::fake::{Fake, cons_output, fake_cons, user_mem};
+    use crate::mcslock::LockNode;
     use crate::mem::PAGE_SIZE_4K;
     use crate::proc::{newproc, reap};
 
@@ -635,6 +678,58 @@ mod tests {
             let pid = unsafe { (*Fake::up()).pid };
             assert_eq!(pread(4, 600, 0), 12);
             assert_eq!(&mem.0[..12], format!("{pid:>11} ").as_bytes());
+        });
+    }
+
+    #[test]
+    fn quotes_as_percent_q() {
+        let q = |s: &[u8]| {
+            let mut out = Vec::new();
+            quote(s, &mut out);
+            out
+        };
+        assert_eq!(q(b"plain"), b"plain");
+        assert_eq!(q(b""), b"''", "empty");
+        assert_eq!(q(b"two words"), b"'two words'");
+        assert_eq!(q(b"it's"), b"'it''s'", "a quote doubled");
+        assert_eq!(q(b"tab\there"), b"'tab\there'", "a byte below a space");
+    }
+
+    #[test]
+    fn await_writes_plan_9s_text() {
+        as_proc(|| {
+            let mem = user_mem();
+            let base = mem.base();
+            let queue = |pid, msg: &[u8]| {
+                // SAFETY: as_proc set up the current process.
+                let q = unsafe { (*Fake::up()).waitq.clone() };
+                let node = LockNode::new();
+                q.state.ilock(&node).exits.push_front(crate::dat::Waitmsg { pid, msg: msg.to_vec() });
+            };
+            let await_ = |n| syscall::<Fake>(AWAIT, [base as u64, n, 0, 0, 0, 0]);
+
+            queue(7, b"");
+            assert_eq!(await_(64), 10, "a success");
+            assert_eq!(&mem.0[..11], b"7 0 0 0 ''\0");
+
+            queue(8, b"factor 8: no factors");
+            let text = b"8 0 0 0 'factor 8: no factors'";
+            assert_eq!(await_(64), text.len() as u64, "a failure, quoted");
+            assert_eq!(&mem.0[..=text.len()], [&text[..], b"\0"].concat());
+
+            // Truncated to fit, and NUL-terminated, as snprint does.
+            queue(9, b"");
+            assert_eq!(await_(4), 3);
+            assert_eq!(&mem.0[..4], b"9 0\0");
+
+            // No room is -1, as snprint's, with the error string as it was,
+            // and the exit taken.
+            queue(10, b"");
+            assert_eq!(await_(0), u64::MAX, "no room");
+            assert_eq!(current_errstr(), b"", "the error string as it was");
+
+            assert_eq!(await_(64), u64::MAX, "nothing left");
+            assert_eq!(current_errstr(), crate::error::ENOCHILD.as_bytes());
         });
     }
 

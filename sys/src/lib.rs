@@ -13,6 +13,7 @@ pub const SLEEP: u64 = 17;
 pub const BRK_: u64 = 24;
 pub const SEEK: u64 = 39;
 pub const ERRSTR: u64 = 41;
+pub const AWAIT: u64 = 47;
 pub const PREAD: u64 = 50;
 pub const PWRITE: u64 = 51;
 
