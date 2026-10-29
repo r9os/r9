@@ -1,12 +1,12 @@
-//! Devices, and the resolution of a #c/... name to an open channel, as
-//! Plan 9's dev.c and the # branch of namec in chan.c.
+//! Devices, and the resolution of a name to an open channel, as Plan 9's
+//! dev.c and namec in chan.c.
 
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use crate::chan::{self, Chan, OREAD};
+use crate::chan::{self, Chan, OREAD, QTDIR};
 use crate::devcons;
-use crate::error::EBADSHARP;
+use crate::error::{EBADSHARP, ENONEXIST, ENOTDIR};
 
 /// A device's operations for the files it holds, as Plan 9's Device, with
 /// the six this kernel needs; Plan 9's other eleven have no caller until the
@@ -54,43 +54,66 @@ fn devno(dc: char) -> Option<&'static dyn Dev> {
     DEVS.iter().find(|d| d.dc() == dc).copied()
 }
 
-/// The device and path a name names, as the # branch of Plan 9's namec: the
-/// name must be a #, a device's letter, and either nothing, a bare #c, or a
-/// / and the path from the device's root; any other name is EBADSHARP, as
-/// the device is unknown.
+/// The names in the root that stand for a device's root, as Plan 9's
+/// /lib/namespace binds #c on /dev.  There's no bind yet, so every process
+/// sees this one table.
+static BINDS: &[(&str, &dyn Dev)] = &[("dev", &devcons::CONS)];
+
+/// The device and path a # name names, from what follows its #, as the #
+/// branch of Plan 9's namec: a device's letter, then either nothing or a /
+/// and the path from the device's root; anything else is EBADSHARP, as the
+/// device is unknown.
 fn devpath(name: &str) -> crate::Result<(&'static dyn Dev, &str)> {
-    let after_hash = name.strip_prefix('#').ok_or(EBADSHARP)?;
-    let mut chars = after_hash.chars();
-    let Some(dc) = chars.next() else {
+    let Some(dc) = name.chars().next() else {
         return Err(EBADSHARP);
     };
-    let path = match after_hash.get(dc.len_utf8()..).ok_or(EBADSHARP)? {
+    let path = match &name[dc.len_utf8()..] {
         "" => "",
-        p if p.starts_with('/') => &p[1..],
-        _ => return Err(EBADSHARP),
+        p => p.strip_prefix('/').ok_or(EBADSHARP)?,
     };
     devno(dc).ok_or(EBADSHARP).map(|d| (d, path))
 }
 
-/// The elements of a path: the names between its slashes.  An empty path has
-/// none, and a doubled or trailing slash is an empty element, which a walk
-/// turns into ENONEXIST, as Plan 9's devstat errors.
-fn split(path: &str) -> Vec<&str> {
-    if path.is_empty() {
-        return Vec::new();
-    }
-    path.split('/').collect()
+/// The elements of a path, and whether it must name a directory, as Plan 9's
+/// parsename: the names between its slashes, skipping empty ones and ., as
+/// its skipslash does, so a doubled slash is a single one.  A path that ends
+/// after its last element, in / or /., must name a directory.
+fn parse(path: &str) -> (Vec<&str>, bool) {
+    let elems = path.split('/').filter(|e| !matches!(*e, "" | ".")).collect();
+    let mustbedir = matches!(path.rsplit('/').next(), Some("" | "."));
+    (elems, mustbedir)
 }
 
-/// The channel `name` opens for the access `omode`, as the # branch of Plan
-/// 9's namec: the mode is checked first, as Plan 9's openmode, then the
-/// device is attached, the path walked, and the channel opened.
+/// The device a name starts from, the elements to walk from its root, and
+/// whether they must name a directory: a # name's device, or for a name from
+/// the root, the device bound on its first element.  Any other name is
+/// ENONEXIST, as there's nothing else in the root, and no current directory.
+fn resolve(name: &str) -> crate::Result<(&'static dyn Dev, Vec<&str>, bool)> {
+    if let Some(rest) = name.strip_prefix('#') {
+        let (dev, path) = devpath(rest)?;
+        let (elems, mustbedir) = parse(path);
+        return Ok((dev, elems, mustbedir));
+    }
+    if !name.starts_with('/') {
+        return Err(ENONEXIST);
+    }
+    let (mut elems, mustbedir) = parse(name);
+    let first = if elems.is_empty() { None } else { Some(elems.remove(0)) };
+    let dev = BINDS.iter().find(|(n, _)| Some(*n) == first).ok_or(ENONEXIST)?.1;
+    Ok((dev, elems, mustbedir))
+}
+
+/// The channel `name` opens for the access `omode`, as Plan 9's namec: the
+/// mode is checked first, as Plan 9's openmode, then the name resolved, the
+/// device attached, the path walked, and the channel opened.
 pub(crate) fn open_name(name: &str, omode: u32) -> crate::Result<Arc<Chan>> {
     let omode = chan::openmode(omode)?;
-    let (dev, path) = devpath(name)?;
-    let elems = split(path);
+    let (dev, elems, mustbedir) = resolve(name)?;
     let c = dev.attach()?;
     let c = dev.walk(&c, &elems)?;
+    if mustbedir && c.qid().kind != QTDIR {
+        return Err(ENOTDIR);
+    }
     dev.open(&c, omode)
 }
 
@@ -127,7 +150,7 @@ mod tests {
     use crate::error::{EBADARG, ENONEXIST, ENOTSUP, ENOTDIR, EPERM};
     use crate::fake::{cons_output, fake_cons};
 
-    /// The path and device a name resolves to, as devpath does.
+    /// The device and path what follows a # names, as devpath does.
     fn path_of(name: &str) -> Result<(char, &str), &'static str> {
         devpath(name).map(|(d, p)| (d.dc(), p))
     }
@@ -139,24 +162,27 @@ mod tests {
 
     #[test]
     fn devpaths() {
-        assert_eq!(path_of("#c"), Ok(('c', "")), "bare");
-        assert_eq!(path_of("#c/cons"), Ok(('c', "cons")));
-        assert_eq!(path_of("#c/cons/"), Ok(('c', "cons/")));
-        assert_eq!(path_of("#c//cons"), Ok(('c', "/cons")));
-        assert_eq!(path_of("#c/"), Ok(('c', "")), "a trailing slash is a no walk");
-        assert_eq!(path_of("#x"), Err(EBADSHARP), "an unknown device");
-        assert_eq!(path_of("#ccons"), Err(EBADSHARP), "no slash after the letter");
-        assert_eq!(path_of("c"), Err(EBADSHARP), "no #");
-        assert_eq!(path_of("#"), Err(EBADSHARP), "no letter");
-        assert_eq!(path_of(""), Err(EBADSHARP), "nothing");
+        assert_eq!(path_of("c"), Ok(('c', "")), "bare");
+        assert_eq!(path_of("c/cons"), Ok(('c', "cons")));
+        assert_eq!(path_of("c/cons/"), Ok(('c', "cons/")));
+        assert_eq!(path_of("c//cons"), Ok(('c', "/cons")));
+        assert_eq!(path_of("c/"), Ok(('c', "")));
+        assert_eq!(path_of("x"), Err(EBADSHARP), "an unknown device");
+        assert_eq!(path_of("ccons"), Err(EBADSHARP), "no slash after the letter");
+        assert_eq!(path_of(""), Err(EBADSHARP), "no letter");
     }
 
     #[test]
-    fn splits() {
-        assert!(split("").is_empty(), "an empty path has no elements");
-        assert_eq!(split("cons"), vec!["cons"]);
-        assert_eq!(split("cons/"), vec!["cons", ""], "a trailing slash");
-        assert_eq!(split("/cons"), vec!["", "cons"], "a doubled slash");
+    fn parses() {
+        assert_eq!(parse(""), (vec![], true), "an empty path is the root");
+        assert_eq!(parse("cons"), (vec!["cons"], false));
+        assert_eq!(parse("cons/"), (vec!["cons"], true), "a trailing slash");
+        assert_eq!(parse("cons/."), (vec!["cons"], true), "a trailing .");
+        assert_eq!(parse("/cons"), (vec!["cons"], false), "a doubled slash");
+        assert_eq!(parse("./cons"), (vec!["cons"], false), "a .");
+        assert_eq!(parse("a//./b"), (vec!["a", "b"], false));
+        assert_eq!(parse("../cons"), (vec!["..", "cons"], false), "a .. is kept");
+        assert_eq!(parse("//./"), (vec![], true));
     }
 
     #[test]
@@ -208,13 +234,58 @@ mod tests {
     fn walks() {
         // The walk's error ordering, as Plan 9's devwalk has it.
         assert_eq!(err("#c/nope", OREAD), ENONEXIST, "a missing name");
-        assert_eq!(err("#c/cons/", OWRITE), ENONEXIST, "a trailing slash");
-        assert_eq!(err("#c//cons", OWRITE), ENONEXIST, "a doubled slash");
+        assert_eq!(err("#c/..", OREAD), ENONEXIST, "no ..");
         assert_eq!(err("#c/cons/extra", OREAD), ENOTDIR, "past the file");
+
+        // A trailing slash or . must name a directory, as Plan 9's namec
+        // checks after the walk; a doubled slash or a . is skipped.
+        assert_eq!(err("#c/cons/", OWRITE), ENOTDIR, "a trailing slash");
+        assert_eq!(err("#c/cons/.", OWRITE), ENOTDIR, "a trailing .");
+        open_name("#c//cons", OWRITE).expect("a doubled slash");
+        open_name("#c/./cons", OWRITE).expect("a .");
+        open_name("#c/", OREAD).expect("the root, with a trailing slash");
 
         // A bad # prefix.
         assert_eq!(err("#x/cons", OWRITE), EBADSHARP, "an unknown device");
-        assert_eq!(err("cons", OWRITE), EBADSHARP, "no #");
+    }
+
+    /// The device and elements a name resolves to, as resolve does.
+    fn resolved(name: &str) -> Result<(char, Vec<&str>), &'static str> {
+        resolve(name).map(|(d, e, _)| (d.dc(), e))
+    }
+
+    #[test]
+    fn resolves() {
+        assert_eq!(resolved("#c/cons"), Ok(('c', vec!["cons"])), "a # name");
+        assert_eq!(resolved("#x/cons"), Err(EBADSHARP), "an unknown device");
+        assert_eq!(resolved("#"), Err(EBADSHARP), "no letter");
+        assert_eq!(resolved("/dev"), Ok(('c', vec![])), "the bound directory");
+        assert_eq!(resolved("/dev/"), Ok(('c', vec![])));
+        assert_eq!(resolved("/dev/cons"), Ok(('c', vec!["cons"])));
+        assert_eq!(resolved("//dev//cons"), Ok(('c', vec!["cons"])), "doubled slashes");
+        assert_eq!(resolved("/./dev/./cons"), Ok(('c', vec!["cons"])), "dots");
+        assert_eq!(resolved("/devcons"), Err(ENONEXIST), "not below /dev");
+        assert_eq!(resolved("/"), Err(ENONEXIST), "no root");
+        assert_eq!(resolved("/env"), Err(ENONEXIST), "nothing bound there");
+        assert_eq!(resolved("cons"), Err(ENONEXIST), "no current directory");
+        assert_eq!(resolved(""), Err(ENONEXIST), "nothing");
+    }
+
+    #[test]
+    fn opens_through_dev() {
+        fake_cons();
+        let c = open_name("/dev/cons", OWRITE).expect("/dev/cons");
+        assert_eq!(c.qid().path, 1, "the same file as #c/cons");
+        assert_eq!(c.dev().write(&c, b"dev\n", 0).expect("a write"), 4);
+        assert_eq!(cons_output(), b"dev\r\n", "through the console");
+
+        let root = open_name("/dev", OREAD).expect("/dev");
+        assert_eq!(root.qid().kind, QTDIR, "the console's root");
+
+        assert_eq!(err("/dev/cons", OREAD), EPERM, "cons's permissions");
+        assert_eq!(err("/dev/nope", OWRITE), ENONEXIST, "a missing name");
+        assert_eq!(err("/dev/cons/x", OWRITE), ENOTDIR, "past the file");
+        assert_eq!(err("cons", OWRITE), ENONEXIST, "no current directory");
     }
 
     #[test]
