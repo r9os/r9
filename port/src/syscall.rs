@@ -76,8 +76,8 @@ fn with_fds<A: ProcArch, R>(f: impl FnOnce(&mut [Option<Arc<Chan>>; NOPEN]) -> R
     let up = A::up();
     assert!(!up.is_null(), "syscall: no current process");
     // SAFETY: up is the running process, and only its own syscalls, one at a
-    // time, use its descriptors.
-    f(unsafe { &mut (*up).fds })
+    // time, replace its table, which f can't reach.
+    unsafe { (*up).fds() }.with(f)
 }
 
 /// errstr(buf, nbuf): swap the current process's error string with the
@@ -205,11 +205,12 @@ fn sysopen<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
 /// dropped, as Plan 9's close.
 fn sysclose<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
     let fd = args[0];
-    with_fds::<A, _>(|fds| {
+    let c = with_fds::<A, _>(|fds| {
         fdtochan(fds, fd, None)?;
-        fds[fd as usize] = None;
-        Ok(0)
-    })
+        Ok(fds[fd as usize].take())
+    })?;
+    drop(c);
+    Ok(0)
 }
 
 /// dup(old, new): the channel of `old`, of any mode, copied onto `new`, as
@@ -218,14 +219,14 @@ fn sysclose<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
 /// copy, so a dup over an open fd closes the old occupant.
 fn sysdup<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
     let (old, new) = (args[0], args[1]);
-    with_fds::<A, _>(|fds| {
+    let (new, oc) = with_fds::<A, _>(|fds| {
         let c = fdtochan(fds, old, None)?;
         let new = if new == u64::MAX { freefd(fds)? } else { new as usize };
         let slot = fds.get_mut(new).ok_or(EBADFD)?;
-        let oc = slot.replace(c);
-        drop(oc);
-        Ok(new as u64)
-    })
+        Ok((new, slot.replace(c)))
+    })?;
+    drop(oc);
+    Ok(new as u64)
 }
 
 /// pread(fd, buf, len, offset): the buffer checked first, as Plan 9's read,
@@ -447,7 +448,7 @@ mod tests {
             // here to watch its count.
             let keep = {
                 // SAFETY: as_proc set up the current process.
-                let c = unsafe { (*Fake::up()).fds[3].clone() }.expect("fd 3");
+                let c = unsafe { (*Fake::up()).fds().with(|fds| fds[3].clone()) }.expect("fd 3");
                 assert_eq!(Arc::strong_count(&c), 2, "the slot and the keep");
                 c
             };
@@ -586,7 +587,7 @@ mod tests {
             let qid = crate::chan::Qid { path: 0, kind: crate::chan::QTFILE };
             // SAFETY: as_proc set up the current process, and its syscalls
             // run one at a time.
-            unsafe { (*Fake::up()).fds[3] = Some(Chan::opened(&ShortDev, qid, ORDWR, 0)) };
+            unsafe { (*Fake::up()).fds().with(|fds| fds[3] = Some(Chan::opened(&ShortDev, qid, ORDWR, 0))) };
             let seek = |off, whence| syscall::<Fake>(SEEK, [3, off, whence, 0, 0, 0]);
 
             // A read longer than a chunk gets what the device's one short

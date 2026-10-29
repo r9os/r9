@@ -11,7 +11,7 @@ use core::ptr;
 use core::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
 use core::time::Duration;
 
-use crate::chan::{NOPEN, OREAD, OWRITE};
+use crate::chan::{Fds, NOPEN, OREAD, OWRITE};
 use crate::dat::{MAXWAIT, Proc, ProcArch, Rendez, State, WaitQueue, Waitmsg};
 use crate::dev::open_name;
 use crate::error::{EINUSE, ENOCHILD};
@@ -150,7 +150,7 @@ pub fn newproc<A: ProcArch>(start: fn()) -> Result<Box<Proc<A>>, NewprocError> {
         label,
         segments: Vec::new(),
         bss: None,
-        fds,
+        fds: Some(Arc::new(Fds::new(fds))),
         exit_status: Vec::new(),
         errstr: [0; sys::ERRMAX],
         state: State::Ready,
@@ -392,7 +392,7 @@ pub fn pexit<A: ProcArch>(status: &[u8]) -> ! {
     assert!(!up.is_null(), "pexit: no current process");
     // SAFETY: up is the running process, set by schedule.
     unsafe {
-        (*up).fds = [const { None }; NOPEN];
+        (*up).fds = None;
         tell_parent::<A>(&*up, status);
         (*up).exit_status = status.to_vec();
         (*up).state = State::Exited;
@@ -539,7 +539,8 @@ mod tests {
     fn newproc_opens_the_console_on_the_standard_fds() {
         let p = newproc::<Fake>(start).expect("newproc failed");
         // The console channel on 0, OREAD, and on 1 and 2, OWRITE.
-        for (slot, mode) in p.fds[..3].iter().zip([OREAD, OWRITE, OWRITE]) {
+        let fds = p.fds().with(|fds| fds.clone());
+        for (slot, mode) in fds[..3].iter().zip([OREAD, OWRITE, OWRITE]) {
             let c = slot.as_ref().expect("a standard fd");
             assert_eq!(c.qid().path, 1, "the channel's qid path");
             assert_eq!(c.qid().kind, QTFILE, "the channel's qid kind");
@@ -547,7 +548,8 @@ mod tests {
         }
         // The fds are real channels: reap frees the process's references,
         // and the channel kept across it is left with only the caller's Arc.
-        let keep = p.fds[0].clone().expect("fd 0");
+        let keep = fds[0].clone().expect("fd 0");
+        drop(fds);
         assert_eq!(Arc::strong_count(&keep), 2);
         // SAFETY: nothing runs in the fake process.
         unsafe { reap(*p) };

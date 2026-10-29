@@ -7,7 +7,7 @@ use alloc::vec::Vec;
 use core::ptr;
 use core::result::Result;
 
-use crate::chan::{Chan, NOPEN};
+use crate::chan::Fds;
 use crate::mcslock::Lock;
 use crate::mem::{PhysAddr, VirtRange};
 use crate::pagealloc::PageAllocError;
@@ -183,10 +183,10 @@ pub struct Proc<A: ProcArch> {
     /// The bss, which brk_ grows and shrinks (Plan 9's BSEG): every page from
     /// its start, rounded up, to its end is mapped.  None until it's set.
     pub(crate) bss: Option<VirtRange>,
-    /// The process's file descriptors, as Plan 9's up->fd: the channel of
-    /// each open file, or None where the descriptor is closed.  newproc
-    /// opens the console on 0, 1 and 2.
-    pub(crate) fds: [Option<Arc<Chan>>; NOPEN],
+    /// The process's file descriptors, as Plan 9's up->fgrp, which it may
+    /// share with other processes.  newproc opens the console on 0, 1 and 2.
+    /// None once it has exited, so pexit can let them go without allocating.
+    pub(crate) fds: Option<Arc<Fds>>,
     /// Set by pexit.  Empty means success, as in Plan 9.
     pub(crate) exit_status: Vec<u8>,
     /// The error string of the last syscall that failed, NUL-terminated, as
@@ -283,6 +283,11 @@ impl<A: ProcArch> Proc<A> {
     /// The process's bss, if it's set.
     pub fn bss(&self) -> Option<VirtRange> {
         self.bss
+    }
+
+    /// The process's file descriptors.
+    pub(crate) fn fds(&self) -> &Arc<Fds> {
+        self.fds.as_ref().expect("a process that has exited has no descriptors")
     }
 }
 
