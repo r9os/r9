@@ -212,7 +212,7 @@ fn main() {
         )
         .subcommand(
             clap::Command::new("smoke")
-                .about("Boot r9 under QEMU, and check that sleep, factor and echo run")
+                .about("Boot r9 under QEMU, and check that sleep, factor, cat and echo run")
                 .args(&[
                     clap::arg!(--release "Build a release version").conflicts_with("debug"),
                     clap::arg!(--debug "Build a debug version").conflicts_with("release"),
@@ -636,11 +636,11 @@ impl QemuStep {
 const SMOKE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Boot r9 under QEMU, and check that the user programs run: factor's output
-/// must be exactly right, sleep and factor must both exit, and echo must run
-/// after, all with no panic.  QEMU doesn't exit by itself, so it's killed
-/// once echo has exited, the kernel has panicked, or SMOKE_TIMEOUT has passed.
-/// With semihosting, the kernel makes QEMU exit, with status 0 only if all
-/// three succeeded, and that status must be 0 too.
+/// must be exactly right, sleep and factor must both exit, cat must print the
+/// time, and echo must run after, all with no panic.  QEMU doesn't exit by
+/// itself, so it's killed once echo has exited, the kernel has panicked, or
+/// SMOKE_TIMEOUT has passed.  With semihosting, the kernel makes QEMU exit,
+/// with status 0 only if all four succeeded, and that status must be 0 too.
 struct SmokeStep {
     qemu: QemuStep,
 }
@@ -692,11 +692,14 @@ impl SmokeStep {
         loop {
             match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
                 Ok(line) => {
-                    // echo has exited, successfully or not, or the kernel
-                    // has panicked: there's nothing more to wait for, unless
-                    // the kernel will make QEMU exit.
+                    // echo has exited, successfully or not, a program has
+                    // failed, which stops the rest running, or the kernel has
+                    // panicked: there's nothing more to wait for, unless the
+                    // kernel will make QEMU exit.
                     let done = !self.qemu.semihosting
-                        && (line.starts_with("echo: exited") || line.contains("panicked"));
+                        && (line.starts_with("echo: exited")
+                            || line.contains(": exited with status")
+                            || line.contains("panicked"));
                     lines.push(line);
                     if done {
                         break;
@@ -731,6 +734,23 @@ impl SmokeStep {
             && has("     94906247")
             && has("     94906249")
             && at("     94906249").is_some_and(|i| lines.get(i + 1).is_some_and(|l| l.is_empty()));
+        // cat /dev/time's output: Plan 9's time text, four numbers each
+        // right-aligned in its width and followed by a space, and no newline,
+        // so the kernel's "cat: exited" follows it on its line.  The last
+        // number is the counter's frequency, which the kernel prints at boot.
+        let hz = lines.iter().find_map(|l| {
+            l.strip_prefix("Counter frequency: ")?.strip_suffix(" Hz")?.parse::<u64>().ok()
+        });
+        let cat_time = lines.iter().any(|l| {
+            let Some(text) = l.strip_suffix("cat: exited") else {
+                return false;
+            };
+            let fields: Vec<u64> = text.split_whitespace().filter_map(|f| f.parse().ok()).collect();
+            text.len() == 78
+                && [11, 33, 55, 77].iter().all(|&i| text.as_bytes()[i] == b' ')
+                && fields.len() == 4
+                && Some(fields[3]) == hz
+        });
         let qemu_exited = |status: &std::io::Result<process::ExitStatus>| match status {
             Ok(s) => format!("QEMU exited with {s}"),
             Err(e) => format!("QEMU exited: {e}"),
@@ -743,6 +763,14 @@ impl SmokeStep {
             Some("timed out before QEMU exited".to_string())
         } else if self.qemu.semihosting && !matches!(&status, Ok(s) if s.success()) {
             Some(qemu_exited(&status))
+        } else if !factor_exact {
+            Some("factor's output isn't exactly right".to_string())
+        } else if !has("factor: exited") {
+            Some("factor didn't exit successfully".to_string())
+        } else if !has("sleep: exited") {
+            Some("sleep didn't exit successfully".to_string())
+        } else if !cat_time {
+            Some("cat didn't print the time, or didn't exit successfully".to_string())
         } else if !has("hello world") {
             Some("echo didn't print \"hello world\"".to_string())
         } else if !has("echo: exited") {
@@ -751,12 +779,6 @@ impl SmokeStep {
             } else {
                 "echo didn't exit successfully".to_string()
             })
-        } else if !factor_exact {
-            Some("factor's output isn't exactly right".to_string())
-        } else if !has("factor: exited") {
-            Some("factor didn't exit successfully".to_string())
-        } else if !has("sleep: exited") {
-            Some("sleep didn't exit successfully".to_string())
         } else if !before("factor: exited", "echo: exited") {
             Some("echo didn't run after factor".to_string())
         } else {
@@ -1156,7 +1178,7 @@ fn workspace() -> PathBuf {
 /// The user libraries and programs, which are aarch64-only.  The programs are
 /// what the kernel and port's tests embed.
 const USER_LIBS: [&str; 1] = ["r9-libc"];
-const USER_PROGRAMS: [&str; 4] = ["echo", "elftest", "factor", "sleep"];
+const USER_PROGRAMS: [&str; 5] = ["cat", "echo", "elftest", "factor", "sleep"];
 
 /// The target user programs are built for.
 const USER_TARGET: &str = "aarch64-unknown-none";

@@ -298,8 +298,9 @@ pub fn halt() -> ! {
 
 mod runtime;
 
-/// echo, built by xtask (user/echo).
+/// echo and cat, built by xtask (user/echo and user/cat).
 static ECHO: &[u8] = include_bytes!(concat!(env!("R9_USER_BIN"), "/echo"));
+static CAT: &[u8] = include_bytes!(concat!(env!("R9_USER_BIN"), "/cat"));
 
 /// sleep and factor, built by xtask (user/sleep and user/factor).
 static SLEEP: &[u8] = include_bytes!(concat!(env!("R9_USER_BIN"), "/sleep"));
@@ -310,11 +311,12 @@ static FACTOR: &[u8] = include_bytes!(concat!(env!("R9_USER_BIN"), "/factor"));
 /// argument keeps factor dividing longest.
 const FACTOR_ARG: &[u8] = b"9007195909437503";
 
-/// Run sleep and factor together, then echo, and return whether all three
-/// exited successfully.  Both are readied before either runs, so sleep sleeps
-/// its second while factor divides: the scheduler must put sleep to sleep and
-/// wake it on its tick, and keep factor's FP state across the switches of its
-/// long run.  Each exit status is printed as it's collected.  A failure is
+/// Run sleep and factor together, then cat and echo, and return whether all
+/// four exited successfully.  sleep and factor are readied before either
+/// runs, so sleep sleeps its second while factor divides: the scheduler must
+/// put sleep to sleep and wake it on its tick, and keep factor's FP state
+/// across the switches of its long run.  Each exit status is printed as it's
+/// collected.  A failure is
 /// reported rather than asserted: this is the system running its programs,
 /// not a test.
 fn run_user() -> bool {
@@ -349,26 +351,25 @@ fn run_user() -> bool {
             ok = false;
         }
     }
-    ok && run_echo()
+    ok && run_program("cat", cat_start) && run_program("echo", echo_start)
 }
 
-/// Run echo with argv ["echo", "hello", "world"], after sleep and factor,
-/// print how it exited, and return whether it exited successfully.  A failure
-/// is reported rather than asserted: this is the system running its program,
-/// not a test.
-fn run_echo() -> bool {
-    let p = match port::proc::newproc::<Arm64>(echo_start) {
+/// Run the program `start` starts, as `name`, print how it exited, and
+/// return whether it exited successfully.  A failure is reported rather than
+/// asserted: this is the system running its program, not a test.
+fn run_program(name: &str, start: fn()) -> bool {
+    let p = match port::proc::newproc::<Arm64>(start) {
         Ok(p) => p,
         Err(err) => {
-            println!("echo: couldn't create a process: {err:?}");
+            println!("{name}: couldn't create a process: {err:?}");
             return false;
         }
     };
     let status = port::proc::run(p);
     if status.is_empty() {
-        println!("echo: exited");
+        println!("{name}: exited");
     } else {
-        println!("echo: exited with status {}", alloc::string::String::from_utf8_lossy(&status));
+        println!("{name}: exited with status {}", alloc::string::String::from_utf8_lossy(&status));
     }
     status.is_empty()
 }
@@ -385,6 +386,15 @@ fn sleep_start() {
 /// factor's start: exec it with its argument, and enter it.
 fn factor_start() {
     let regs = match port::exec::exec::<Arm64>(FACTOR, &[b"factor", FACTOR_ARG]) {
+        Ok(regs) => regs,
+        Err(err) => port::proc::pexit::<Arm64>(err.as_bytes()),
+    };
+    enter_user(regs)
+}
+
+/// cat's start: exec it to print the time, and enter it.
+fn cat_start() {
+    let regs = match port::exec::exec::<Arm64>(CAT, &[b"cat", b"/dev/time"]) {
         Ok(regs) => regs,
         Err(err) => port::proc::pexit::<Arm64>(err.as_bytes()),
     };
