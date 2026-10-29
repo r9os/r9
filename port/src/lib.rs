@@ -13,6 +13,7 @@ pub mod clock;
 pub mod console;
 pub mod dat;
 pub mod dev;
+pub mod devcons;
 pub mod elf;
 pub mod error;
 pub mod exec;
