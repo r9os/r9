@@ -115,16 +115,6 @@ pub(crate) fn openmode(o: u32) -> crate::Result<u32> {
     Ok(if o == OEXEC { OREAD } else { o })
 }
 
-/// The channel at descriptor `fd` of a process's table, or None if the slot
-/// is empty or `fd` is out of range.
-fn chan_at(fds: &[Option<Arc<Chan>>], fd: u64) -> Option<&Arc<Chan>> {
-    let fd = fd as usize;
-    match fds.get(fd) {
-        Some(slot) => slot.as_ref(),
-        None => None,
-    }
-}
-
 /// The channel at descriptor `fd` for an access of `want`, as Plan 9's
 /// fdtochan, which takes a -1 mode that accepts any channel and an access
 /// that doesn't, and OREAD is 0: r9's unsigned arguments can't carry the -1,
@@ -133,14 +123,16 @@ fn chan_at(fds: &[Option<Arc<Chan>>], fd: u64) -> Option<&Arc<Chan>> {
 /// be open ORDWR or exactly `want`, and OTRUNC asked of a read-only channel
 /// is EBADUSEFD, as Plan 9's check is.
 pub(crate) fn fdtochan(fds: &[Option<Arc<Chan>>], fd: u64, want: Option<u32>) -> crate::Result<Arc<Chan>> {
-    let c = chan_at(fds, fd).ok_or(EBADFD)?;
-    if let Some(want) = want {
-        if c.mode() != ORDWR && want & OTRUNC != 0 && c.mode() == OREAD {
-            return Err(EBADUSEFD);
-        }
-        if c.mode() != ORDWR && want & !OTRUNC != c.mode() {
-            return Err(EBADUSEFD);
-        }
+    let c = fds.get(fd as usize).and_then(Option::as_ref).ok_or(EBADFD)?;
+    let want = match want {
+        Some(want) if c.mode() != ORDWR => want,
+        _ => return Ok(c.clone()),
+    };
+    if want & OTRUNC != 0 && c.mode() == OREAD {
+        return Err(EBADUSEFD);
+    }
+    if want & !OTRUNC != c.mode() {
+        return Err(EBADUSEFD);
     }
     Ok(c.clone())
 }
