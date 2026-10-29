@@ -8,6 +8,7 @@ use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::dev::Dev;
 use crate::error::{EBADARG, EBADFD, EBADUSEFD, ENOFD};
+use crate::mcslock::{Lock, LockNode};
 
 /// The number of file descriptors a process has.  Plan 9's table grows, as
 /// its Fgrp, by DELTAFD at a time, because rfork shares one table between
@@ -94,6 +95,26 @@ impl Drop for Chan {
     /// reference count reaches zero.
     fn drop(&mut self) {
         self.dev.close(self);
+    }
+}
+
+/// A process's file descriptors, as Plan 9's Fgrp: the channel of each open
+/// descriptor, or None where it's closed.  Processes share one, through an
+/// Arc, when one rforks without RFFDG or RFCFDG, and the last to let it go
+/// closes its files, as Plan 9's closefgrp.
+pub struct Fds(Lock<[Option<Arc<Chan>>; NOPEN]>);
+
+impl Fds {
+    pub(crate) fn new(fds: [Option<Arc<Chan>>; NOPEN]) -> Fds {
+        Fds(Lock::new("fds", fds))
+    }
+
+    /// Run `f` with the table locked.  A channel `f` takes out of it should
+    /// be dropped after, so a device's close doesn't run with the table
+    /// locked.
+    pub(crate) fn with<R>(&self, f: impl FnOnce(&mut [Option<Arc<Chan>>; NOPEN]) -> R) -> R {
+        let node = LockNode::new();
+        f(&mut self.0.lock(&node))
     }
 }
 
