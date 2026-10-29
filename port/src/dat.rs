@@ -182,7 +182,6 @@ pub struct Proc<A: ProcArch> {
     /// The process's file descriptors, as Plan 9's up->fd: the channel of
     /// each open file, or None where the descriptor is closed.  newproc
     /// opens the console on 0, 1 and 2.
-    #[cfg_attr(not(test), expect(dead_code, reason = "the file syscalls use it"))]
     pub(crate) fds: [Option<Arc<Chan>>; NOPEN],
     /// Set by pexit.  Empty means success, as in Plan 9.
     pub(crate) exit_status: Vec<u8>,

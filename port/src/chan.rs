@@ -48,7 +48,6 @@ pub struct Chan {
     /// The access the file was opened with: the result of openmode, 0 to 3.
     mode: u32,
     /// The file's length, set by the device on open.
-    #[cfg_attr(not(test), expect(dead_code, reason = "seek's whence 2 reads it"))]
     length: u64,
     offset: AtomicU64,
 }
@@ -69,7 +68,6 @@ impl Chan {
     }
 
     /// The file's device.
-    #[cfg_attr(not(test), expect(dead_code, reason = "the file syscalls use it"))]
     pub(crate) fn dev(&self) -> &'static dyn Dev {
         self.dev
     }
@@ -85,17 +83,14 @@ impl Chan {
     }
 
     /// The file's length, as the device set it on open.
-    #[cfg_attr(not(test), expect(dead_code, reason = "seek's whence 2 reads it"))]
     pub(crate) fn length(&self) -> u64 {
         self.length
     }
 
-    #[cfg_attr(not(test), expect(dead_code, reason = "the file syscalls use it"))]
     pub(crate) fn offset(&self) -> u64 {
         self.offset.load(Ordering::Relaxed)
     }
 
-    #[expect(dead_code, reason = "the file syscalls use it")]
     pub(crate) fn set_offset(&self, off: u64) {
         self.offset.store(off, Ordering::Relaxed)
     }
@@ -137,7 +132,6 @@ fn chan_at(fds: &[Option<Arc<Chan>>], fd: u64) -> Option<&Arc<Chan>> {
 /// An out-of-range fd or an empty slot is EBADFD; otherwise the channel must
 /// be open ORDWR or exactly `want`, and OTRUNC asked of a read-only channel
 /// is EBADUSEFD, as Plan 9's check is.
-#[cfg_attr(not(test), expect(dead_code, reason = "the file syscalls use it"))]
 pub(crate) fn fdtochan(fds: &[Option<Arc<Chan>>], fd: u64, want: Option<u32>) -> crate::Result<Arc<Chan>> {
     let c = chan_at(fds, fd).ok_or(EBADFD)?;
     if let Some(want) = want {
@@ -153,7 +147,6 @@ pub(crate) fn fdtochan(fds: &[Option<Arc<Chan>>], fd: u64, want: Option<u32>) ->
 
 /// The lowest empty descriptor of a process's table, as Plan 9's newfd, or
 /// ENOFD if the table is full.
-#[cfg_attr(not(test), expect(dead_code, reason = "the file syscalls use it"))]
 pub(crate) fn freefd(fds: &mut [Option<Arc<Chan>>; NOPEN]) -> crate::Result<usize> {
     for (i, slot) in fds.iter_mut().enumerate() {
         if slot.is_none() {
