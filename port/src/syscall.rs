@@ -11,13 +11,14 @@ use crate::dat::{Access, ProcArch};
 use crate::dev::open_name;
 use crate::error::{EBADARG, EBADFD, EISDIR, ENAMETOOLONG, ENEGOFF};
 use crate::println;
-use crate::proc::{pexit, pwait, tsleep, yield_now};
+use crate::proc::{pexit, pwait, rfork, tsleep, yield_now};
 use crate::segment::ibrk;
 use crate::timer;
 use crate::uaccess::{copy_from_user, copy_str_from_user, copy_to_user, peek_user_byte, validate_user_range};
 
 use sys::{
-    AWAIT, BRK_, CLOSE, DUP, ERRMAX, ERRSTR, EXITS, OPEN, PREAD, PWRITE, SEEK, SLEEP, SYSR1,
+    AWAIT, BRK_, CLOSE, DUP, ERRMAX, ERRSTR, EXITS, OPEN, PREAD, PWRITE, RFORK, SEEK, SLEEP,
+    SYSR1,
 };
 
 /// One tick, as Plan 9's TK2MS(1): the shortest SLEEP can sleep.
@@ -41,6 +42,7 @@ pub fn syscall<A: ProcArch>(nr: u64, args: [u64; 6]) -> u64 {
         PREAD => syspread::<A>(&args),
         PWRITE => syspwrite::<A>(&args),
         SLEEP => syssleep::<A>(&args),
+        RFORK => sysrfork::<A>(&args),
         _ => {
             println!("bad sys call number {nr}");
             pexit::<A>(b"sys: bad sys call")
@@ -78,6 +80,16 @@ fn with_fds<A: ProcArch, R>(f: impl FnOnce(&mut [Option<Arc<Chan>>; NOPEN]) -> R
     // SAFETY: up is the running process, and only its own syscalls, one at a
     // time, replace its table, which f can't reach.
     unsafe { (*up).fds() }.with(f)
+}
+
+/// rfork(flags).  A new child runs first, as Plan 9's sysrfork calls sched
+/// once it's ready.
+fn sysrfork<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
+    let pid = rfork::<A>(args[0] as u32)?;
+    if pid != 0 {
+        yield_now::<A>();
+    }
+    Ok(pid)
 }
 
 /// errstr(buf, nbuf): swap the current process's error string with the
