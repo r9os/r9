@@ -2,10 +2,11 @@
 //! architecture's trap handler takes the number and arguments from its
 //! registers, and calls syscall.
 
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::time::Duration;
 
-use crate::chan::{fdtochan, freefd, openmode, Chan, OREAD, OWRITE, QTDIR};
+use crate::chan::{fdtochan, freefd, openmode, Chan, NOPEN, OREAD, OWRITE, QTDIR};
 use crate::dat::{Access, ProcArch};
 use crate::dev::open_name;
 use crate::error::{EBADARG, EBADFD, EISDIR, ENAMETOOLONG, ENEGOFF};
@@ -67,6 +68,15 @@ fn set_errstr<A: ProcArch>(err: &str) {
     });
 }
 
+/// Run `f` on the current process's file descriptors.
+fn with_fds<A: ProcArch, R>(f: impl FnOnce(&mut [Option<Arc<Chan>>; NOPEN]) -> R) -> R {
+    let up = A::up();
+    assert!(!up.is_null(), "syscall: no current process");
+    // SAFETY: up is the running process, and only its own syscalls, one at a
+    // time, use its descriptors.
+    f(unsafe { &mut (*up).fds })
+}
+
 /// errstr(buf, nbuf): swap the current process's error string with the
 /// NUL-terminated string in `buf`, as Plan 9's generrstr.  Both are truncated
 /// to fit, and NUL-terminated, in min(nbuf, ERRMAX) bytes.
@@ -112,19 +122,16 @@ const CHUNK: usize = 256;
 
 /// The offset a pread or pwrite uses, as Plan 9's offp: the -1 sentinel,
 /// u64::MAX, resolves to the channel's offset and maintains it; any other
-/// value is the user's signed offset, passed through and leaving the
-/// channel's untouched, and a negative one is Enegoff.  The callers add to
-/// the result with wrapping arithmetic, as Plan 9's vlong offset does: a seek
-/// can park the channel's offset at the top of u64, and a write from there
-/// must wrap, not trap.
+/// value is the user's offset, passed through and leaving the channel's
+/// untouched.  Offsets are signed, as Plan 9's vlong, so either one past
+/// i64::MAX is Enegoff.  The callers add a user range's length to the result,
+/// which then can't overflow u64.
 fn offset(c: &Chan, off: u64) -> crate::Result<(u64, bool)> {
-    if off == u64::MAX {
-        return Ok((c.offset(), true));
-    }
+    let (off, maintain) = if off == u64::MAX { (c.offset(), true) } else { (off, false) };
     if (off as i64) < 0 {
         return Err(ENEGOFF);
     }
-    Ok((off, false))
+    Ok((off, maintain))
 }
 
 /// open(name, mode): the mode checked, as openmode, the name copied out of
@@ -143,43 +150,38 @@ fn sysopen<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
     }
     let name = core::str::from_utf8(&buf[..n]).map_err(|_| EBADARG)?;
     let c = open_name(name, omode)?;
-    let up = A::up();
-    assert!(!up.is_null(), "sysopen: no current process");
-    // SAFETY: up is the running process, and its syscalls run one at a time.
-    let fd = freefd(unsafe { &mut (*up).fds })?;
-    unsafe { (*up).fds[fd] = Some(c) };
-    Ok(fd as u64)
+    with_fds::<A, _>(|fds| {
+        let fd = freefd(fds)?;
+        fds[fd] = Some(c);
+        Ok(fd as u64)
+    })
 }
 
 /// close(fd): the descriptor's channel, of any mode, taken from the table and
 /// dropped, as Plan 9's close.
 fn sysclose<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
     let fd = args[0];
-    let up = A::up();
-    assert!(!up.is_null(), "sysclose: no current process");
-    // SAFETY: up is the running process, and its syscalls run one at a time.
-    let fds = unsafe { &mut (*up).fds };
-    fdtochan(fds, fd, None)?;
-    fds[fd as usize] = None;
-    Ok(0)
+    with_fds::<A, _>(|fds| {
+        fdtochan(fds, fd, None)?;
+        fds[fd as usize] = None;
+        Ok(0)
+    })
 }
 
-/// dup(old, new): the channel of `old`, of any mode, copied onto `new`, which
-/// must be in range, and whatever `new` held dropped after the copy, as Plan
-/// 9's sysdup, so a dup over an open fd closes the old occupant.
+/// dup(old, new): the channel of `old`, of any mode, copied onto `new`, as
+/// Plan 9's sysdup.  A `new` of -1 is the lowest free descriptor, else Enofd;
+/// any other must be in range, and whatever it held is dropped after the
+/// copy, so a dup over an open fd closes the old occupant.
 fn sysdup<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
     let (old, new) = (args[0], args[1]);
-    let up = A::up();
-    assert!(!up.is_null(), "sysdup: no current process");
-    // SAFETY: up is the running process, and its syscalls run one at a time.
-    let fds = unsafe { &mut (*up).fds };
-    let c = fdtochan(fds, old, None)?;
-    if new as usize >= fds.len() {
-        return Err(EBADFD);
-    }
-    let oc = fds[new as usize].replace(c);
-    drop(oc);
-    Ok(new)
+    with_fds::<A, _>(|fds| {
+        let c = fdtochan(fds, old, None)?;
+        let new = if new == u64::MAX { freefd(fds)? } else { new as usize };
+        let slot = fds.get_mut(new).ok_or(EBADFD)?;
+        let oc = slot.replace(c);
+        drop(oc);
+        Ok(new as u64)
+    })
 }
 
 /// pread(fd, buf, len, offset): the buffer checked first, as Plan 9's read,
@@ -189,24 +191,23 @@ fn sysdup<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
 fn syspread<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
     let (fd, buf, len) = (args[0], args[1] as usize, args[2] as usize);
     validate_user_range::<A>(buf, len, Access::Write);
-    let up = A::up();
-    assert!(!up.is_null(), "syspread: no current process");
-    // SAFETY: up is the running process, and its syscalls run one at a time.
-    let c = fdtochan(unsafe { &(*up).fds }, fd, Some(OREAD))?;
+    let c = with_fds::<A, _>(|fds| fdtochan(fds, fd, Some(OREAD)))?;
     let (off, maintain) = offset(&c, args[3])?;
     let mut total = 0;
     let mut chunk = [0u8; CHUNK];
     for pos in (0..len).step_by(CHUNK) {
         let n = CHUNK.min(len - pos);
-        let m = c.dev().read(&c, &mut chunk[..n], off.wrapping_add(pos as u64))?;
-        if m == 0 {
+        let m = c.dev().read(&c, &mut chunk[..n], off + pos as u64)? as usize;
+        copy_to_user::<A>(buf + pos, &chunk[..m]);
+        total += m;
+        // A short read is where the device stopped, as one call of Plan 9's
+        // read: a console line, or the end of the file.
+        if m < n {
             break;
         }
-        copy_to_user::<A>(buf + pos, &chunk[..m as usize]);
-        total += m as usize;
     }
     if maintain {
-        c.set_offset(off.wrapping_add(total as u64));
+        c.set_offset(off + total as u64);
     }
     Ok(total as u64)
 }
@@ -219,16 +220,13 @@ fn syspread<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
 fn syspwrite<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
     let (fd, buf, len) = (args[0], args[1] as usize, args[2] as usize);
     validate_user_range::<A>(buf, len, Access::Read);
-    let up = A::up();
-    assert!(!up.is_null(), "syspwrite: no current process");
-    // SAFETY: up is the running process, and its syscalls run one at a time.
-    let c = fdtochan(unsafe { &(*up).fds }, fd, Some(OWRITE))?;
+    let c = with_fds::<A, _>(|fds| fdtochan(fds, fd, Some(OWRITE)))?;
     if c.qid().kind == QTDIR {
         return Err(EISDIR);
     }
     let (off, maintain) = offset(&c, args[3])?;
     if maintain {
-        c.set_offset(off.wrapping_add(len as u64));
+        c.set_offset(off + len as u64);
     }
     let mut total = 0;
     let mut err = None;
@@ -236,8 +234,15 @@ fn syspwrite<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
     for pos in (0..len).step_by(CHUNK) {
         let n = CHUNK.min(len - pos);
         copy_from_user::<A>(&mut chunk[..n], buf + pos);
-        match c.dev().write(&c, &chunk[..n], off.wrapping_add(pos as u64)) {
-            Ok(m) => total += m as usize,
+        match c.dev().write(&c, &chunk[..n], off + pos as u64) {
+            Ok(m) => {
+                total += m as usize;
+                // A short write is where the device stopped, as one call of
+                // Plan 9's write.
+                if (m as usize) < n {
+                    break;
+                }
+            }
             Err(e) => {
                 err = Some(e);
                 break;
@@ -252,7 +257,7 @@ fn syspwrite<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
                 c.set_offset(off);
                 return Err(e);
             }
-            None if total < len => c.set_offset(off.wrapping_add(total as u64)),
+            None if total < len => c.set_offset(off + total as u64),
             None => {}
         }
     } else if let Some(e) = err {
@@ -262,26 +267,21 @@ fn syspwrite<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
 }
 
 /// seek(fd, off, whence): the channel of any mode, the base 0, the current
-/// offset, or the file's length, for whence 0, 1 or 2, the offset added in
-/// i128, as Plan 9's sseek, and the result stored on the channel.  A result
-/// below 0 is Enegoff, above u64::MAX is Ebadarg, and a bad whence is Ebadarg.
+/// offset, or the file's length, for whence 0, 1 or 2, plus the offset, as
+/// Plan 9's sseek, and the result stored on the channel and returned.
+/// Offsets are signed, as Plan 9's vlong, so a result below 0 or past
+/// i64::MAX is Enegoff, and the result can't be the -1 of a failed syscall.
+/// A bad whence is Ebadarg.
 fn sysseek<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
     let (fd, off, whence) = (args[0], args[1], args[2]);
-    let up = A::up();
-    assert!(!up.is_null(), "sysseek: no current process");
-    // SAFETY: up is the running process, and its syscalls run one at a time.
-    let c = fdtochan(unsafe { &(*up).fds }, fd, None)?;
+    let c = with_fds::<A, _>(|fds| fdtochan(fds, fd, None))?;
     let base = match whence {
         0 => 0,
-        1 => c.offset() as i128,
-        2 => c.length() as i128,
+        1 => c.offset() as i64,
+        2 => c.length() as i64,
         _ => return Err(EBADARG),
     };
-    let r = base + off as i64 as i128;
-    if r < 0 {
-        return Err(ENEGOFF);
-    }
-    let r = u64::try_from(r).map_err(|_| EBADARG)?;
+    let r = base.checked_add(off as i64).filter(|r| *r >= 0).ok_or(ENEGOFF)? as u64;
     c.set_offset(r);
     Ok(r)
 }
@@ -320,7 +320,8 @@ mod tests {
     use alloc::sync::Arc;
     use super::*;
     use crate::dat::ProcArch;
-    use crate::error::{ENONEXIST, EBADUSEFD, ENOTSUP};
+    use crate::chan::ORDWR;
+    use crate::error::{ENONEXIST, ENOFD, EBADUSEFD, ENOTSUP};
     use crate::fake::{Fake, cons_output, fake_cons, user_mem};
     use crate::mem::PAGE_SIZE_4K;
     use crate::proc::{newproc, reap};
@@ -473,35 +474,112 @@ mod tests {
             assert_eq!(seek(1, u64::MAX, 1), u64::MAX, "below 0, from the offset");
             assert_eq!(current_errstr(), ENEGOFF.as_bytes());
 
-            // A result above u64's range: an offset only the kernel can set,
-            // with any offset added to it.
-            {
-                // SAFETY: as_proc set up the current process, and its
-                // syscalls run one at a time.
-                unsafe { (*Fake::up()).fds[1].clone() }.expect("fd 1").set_offset(u64::MAX);
-            }
-            assert_eq!(seek(1, 1, 1), u64::MAX, "above u64's range");
-            assert_eq!(current_errstr(), EBADARG.as_bytes());
+            // Past i64::MAX, which Plan 9's vlong can't hold, and the
+            // offset where the last good seek left it.
+            assert_eq!(seek(1, i64::MAX as u64, 0), i64::MAX as u64, "to i64::MAX");
+            assert_eq!(seek(1, 1, 1), u64::MAX, "past i64::MAX");
+            assert_eq!(current_errstr(), ENEGOFF.as_bytes());
+            assert_eq!(seek(1, 0, 1), i64::MAX as u64, "an unchanged offset");
         });
     }
 
     #[test]
-    fn a_write_from_the_top_of_u64_wraps() {
+    fn an_offset_past_i64_max_is_negative() {
         as_proc(|| {
             let mut mem = user_mem();
             let base = mem.base();
+            fake_cons();
             let seek = |fd, off, whence| syscall::<Fake>(SEEK, [fd, off, whence, 0, 0, 0]);
-
-            // A user can park the channel's offset at the top of u64: seek
-            // to i64::MAX, then add i64::MAX more, sseek's i128 allowing it.
-            assert_eq!(seek(1, i64::MAX as u64, 0), i64::MAX as u64, "to i64::MAX");
-            assert_eq!(seek(1, i64::MAX as u64, 1), u64::MAX - 1, "i64::MAX past it");
-
-            // A -1-offset write from there must wrap, as Plan 9's vlong does,
-            // not trap the kernel's checked arithmetic.
+            let pwrite = |off| syscall::<Fake>(PWRITE, [1, base as u64, 6, off, 0, 0]);
             mem.0[..6].copy_from_slice(b"hello\n");
-            assert_eq!(syscall::<Fake>(PWRITE, [1, base as u64, 6, u64::MAX, 0, 0]), 6, "the wrap");
-            assert_eq!(seek(1, 0, 1), 4, "2^64 - 2 + 6, mod 2^64");
+
+            // A -1-offset write at i64::MAX succeeds, and leaves the channel's
+            // offset past it, as Plan 9's vlong would go negative.
+            assert_eq!(seek(1, i64::MAX as u64, 0), i64::MAX as u64);
+            assert_eq!(pwrite(u64::MAX), 6, "a write at i64::MAX");
+
+            // From there, every use of the offset is Enegoff.
+            assert_eq!(pwrite(u64::MAX), u64::MAX, "a write past i64::MAX");
+            assert_eq!(current_errstr(), ENEGOFF.as_bytes());
+            assert_eq!(seek(1, 0, 1), u64::MAX, "a seek from past i64::MAX");
+            assert_eq!(current_errstr(), ENEGOFF.as_bytes());
+
+            // An explicit offset is unaffected, and a seek from 0 recovers.
+            assert_eq!(pwrite(0), 6, "an explicit offset");
+            assert_eq!(seek(1, 0, 0), 0, "a seek from 0");
+            assert_eq!(cons_output(), b"hello\r\nhello\r\n");
+        });
+    }
+
+    /// A device whose every read and write transfers at most SHORT bytes, as
+    /// a console line or a file's end would.
+    struct ShortDev;
+
+    const SHORT: usize = 5;
+
+    impl crate::dev::Dev for ShortDev {
+        fn dc(&self) -> char {
+            's'
+        }
+        fn attach(&self) -> crate::Result<Arc<Chan>> {
+            Err(ENOTSUP)
+        }
+        fn walk(&self, _c: &Arc<Chan>, _elems: &[&str]) -> crate::Result<Arc<Chan>> {
+            Err(ENOTSUP)
+        }
+        fn open(&self, _c: &Arc<Chan>, _omode: u32) -> crate::Result<Arc<Chan>> {
+            Err(ENOTSUP)
+        }
+        fn read(&self, _c: &Arc<Chan>, buf: &mut [u8], _offset: u64) -> crate::Result<u64> {
+            let n = buf.len().min(SHORT);
+            buf[..n].fill(b's');
+            Ok(n as u64)
+        }
+        fn write(&self, _c: &Arc<Chan>, buf: &[u8], _offset: u64) -> crate::Result<u64> {
+            Ok(buf.len().min(SHORT) as u64)
+        }
+        fn close(&self, _c: &Chan) {}
+    }
+
+    #[test]
+    fn a_short_transfer_ends_the_call() {
+        as_proc(|| {
+            let mut mem = user_mem();
+            let base = mem.base();
+            let qid = crate::chan::Qid { path: 0, kind: crate::chan::QTFILE };
+            // SAFETY: as_proc set up the current process, and its syscalls
+            // run one at a time.
+            unsafe { (*Fake::up()).fds[3] = Some(Chan::opened(&ShortDev, qid, ORDWR, 0)) };
+            let seek = |off, whence| syscall::<Fake>(SEEK, [3, off, whence, 0, 0, 0]);
+
+            // A read longer than a chunk gets what the device's one short
+            // read gave, and nothing after it is touched.
+            mem.0[..600].fill(0);
+            assert_eq!(syscall::<Fake>(PREAD, [3, base as u64, 600, u64::MAX, 0, 0]), 5);
+            assert_eq!(&mem.0[..5], b"sssss");
+            assert!(mem.0[5..600].iter().all(|&b| b == 0), "the rest of the buffer");
+            assert_eq!(seek(0, 1), 5, "the offset, by the bytes read");
+
+            // A write the same: the offset is where the short write left it.
+            assert_eq!(syscall::<Fake>(PWRITE, [3, base as u64, 600, u64::MAX, 0, 0]), 5);
+            assert_eq!(seek(0, 1), 10, "the offset, by the bytes written");
+        });
+    }
+
+    #[test]
+    fn a_dup_onto_minus_1_takes_the_lowest_free_fd() {
+        as_proc(|| {
+            let dup = |old, new| syscall::<Fake>(DUP, [old, new, 0, 0, 0, 0]);
+            assert_eq!(dup(1, u64::MAX), 3, "the first free fd");
+            assert_eq!(dup(1, 5), 5);
+            assert_eq!(dup(1, u64::MAX), 4, "below the one just taken");
+            for fd in 6..NOPEN as u64 {
+                assert_eq!(dup(1, u64::MAX), fd);
+            }
+            assert_eq!(dup(1, u64::MAX), u64::MAX, "a full table");
+            assert_eq!(current_errstr(), ENOFD.as_bytes());
+            assert_eq!(dup(1, NOPEN as u64), u64::MAX, "out of range");
+            assert_eq!(current_errstr(), EBADFD.as_bytes());
         });
     }
 
