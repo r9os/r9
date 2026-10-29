@@ -2,7 +2,7 @@ use crate::config::Configuration;
 use config::{apply_to_build_step, apply_to_clippy_step, apply_to_qemu_step};
 use std::{
     env, fmt,
-    io::{BufRead, BufReader},
+    io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
     process::{self, Command, Stdio},
     str::FromStr,
@@ -212,7 +212,7 @@ fn main() {
         )
         .subcommand(
             clap::Command::new("smoke")
-                .about("Boot r9 under QEMU, and check that sleep, factor, cat and echo run")
+                .about("Boot r9 under QEMU, type at its console, and check that the user programs run")
                 .args(&[
                     clap::arg!(--release "Build a release version").conflicts_with("debug"),
                     clap::arg!(--debug "Build a debug version").conflicts_with("release"),
@@ -635,6 +635,25 @@ impl QemuStep {
 /// How long the smoke test waits for the user programs to exit.
 const SMOKE_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// What the smoke test types at the console for cat, then for factor: a line
+/// each, ended by a return, as a terminal sends it, then ^D, the end of the
+/// file.
+const CAT_INPUT: &[u8] = b"typed at the console\r\x04";
+const FACTOR_INPUT: &[u8] = b"1001\r\x04";
+
+/// The four numbers of `line`, if it's cat's output of /dev/time: Plan 9's
+/// time text, each number right-aligned in its width and followed by a
+/// space, and no newline, so the kernel's "cat: exited" follows it on its
+/// line.
+fn time_line(line: &str) -> Option<Vec<u64>> {
+    let text = line.strip_suffix("cat: exited")?;
+    let fields: Vec<u64> = text.split_whitespace().filter_map(|f| f.parse().ok()).collect();
+    (text.len() == 78
+        && [11, 33, 55, 77].iter().all(|&i| text.as_bytes()[i] == b' ')
+        && fields.len() == 4)
+        .then_some(fields)
+}
+
 /// Boot r9 under QEMU, and check that the user programs run: factor's output
 /// must be exactly right, sleep and factor must both exit, cat must print the
 /// time, and echo must run after, all with no panic.  QEMU doesn't exit by
@@ -666,9 +685,10 @@ impl SmokeStep {
             return Err("smoke test: only aarch64 runs user programs".into());
         }
         let mut cmd = self.qemu.command()?;
-        cmd.stdin(Stdio::null()).stdout(Stdio::piped());
+        cmd.stdin(Stdio::piped()).stdout(Stdio::piped());
         let mut child = cmd.spawn().map_err(|e| format!("{}: {e}", cmd.get_program().display()))?;
         let stdout = child.stdout.take().ok_or("smoke test: no stdout from QEMU")?;
+        let mut stdin = child.stdin.take().ok_or("smoke test: no stdin to QEMU")?;
 
         // Read QEMU's output on another thread, so the wait can time out.
         let (tx, rx) = mpsc::channel();
@@ -677,7 +697,11 @@ impl SmokeStep {
             let mut r = BufReader::new(stdout);
             let mut buf = Vec::new();
             while matches!(r.read_until(b'\n', &mut buf), Ok(n) if n > 0) {
-                let line = String::from_utf8_lossy(&buf).trim_end_matches(['\n', '\r']).to_string();
+                // The console echoes the ^Ds typed at it, which a terminal
+                // doesn't show, so they're dropped.
+                let line = String::from_utf8_lossy(&buf)
+                    .trim_end_matches(['\n', '\r'])
+                    .replace('\x04', "");
                 if tx.send(line).is_err() {
                     break;
                 }
@@ -689,9 +713,23 @@ impl SmokeStep {
         let mut lines: Vec<String> = Vec::new();
         let mut timed_out = false;
         let mut exited = false;
+        let mut typed = 0;
         loop {
             match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
                 Ok(line) => {
+                    // Type cat's input once cat has printed the time, and
+                    // factor's once cat has exited, so that the echo doesn't
+                    // land in the middle of other output.  Errors are
+                    // ignored: QEMU may have exited, which is reported below.
+                    let input = match typed {
+                        0 if time_line(&line).is_some() => Some(CAT_INPUT),
+                        1 if line == "cat: exited" => Some(FACTOR_INPUT),
+                        _ => None,
+                    };
+                    if let Some(input) = input {
+                        let _ = stdin.write_all(input).and_then(|_| stdin.flush());
+                        typed += 1;
+                    }
                     // echo has exited, successfully or not, a program has
                     // failed, which stops the rest running, or the kernel has
                     // panicked: there's nothing more to wait for, unless the
@@ -734,22 +772,29 @@ impl SmokeStep {
             && has("     94906247")
             && has("     94906249")
             && at("     94906249").is_some_and(|i| lines.get(i + 1).is_some_and(|l| l.is_empty()));
-        // cat /dev/time's output: Plan 9's time text, four numbers each
-        // right-aligned in its width and followed by a space, and no newline,
-        // so the kernel's "cat: exited" follows it on its line.  The last
-        // number is the counter's frequency, which the kernel prints at boot.
+        // cat /dev/time's output, whose last number is the counter's
+        // frequency, which the kernel prints at boot.
         let hz = lines.iter().find_map(|l| {
             l.strip_prefix("Counter frequency: ")?.strip_suffix(" Hz")?.parse::<u64>().ok()
         });
-        let cat_time = lines.iter().any(|l| {
-            let Some(text) = l.strip_suffix("cat: exited") else {
-                return false;
-            };
-            let fields: Vec<u64> = text.split_whitespace().filter_map(|f| f.parse().ok()).collect();
-            text.len() == 78
-                && [11, 33, 55, 77].iter().all(|&i| text.as_bytes()[i] == b' ')
-                && fields.len() == 4
-                && Some(fields[3]) == hz
+        let time_at = lines.iter().position(|l| time_line(l).is_some_and(|f| Some(f[3]) == hz));
+        // Then cat and factor on what was typed: each line is echoed as it's
+        // typed, then read and printed, and factor's output is its number,
+        // 1001's factors and a blank line.
+        const TYPED: [&str; 10] = [
+            "typed at the console",
+            "typed at the console",
+            "cat: exited",
+            "1001",
+            "1001",
+            "     7",
+            "     11",
+            "     13",
+            "",
+            "factor: exited",
+        ];
+        let typed_read = time_at.is_some_and(|i| {
+            lines.len() > i + TYPED.len() && lines[i + 1..=i + TYPED.len()] == TYPED
         });
         let qemu_exited = |status: &std::io::Result<process::ExitStatus>| match status {
             Ok(s) => format!("QEMU exited with {s}"),
@@ -769,8 +814,10 @@ impl SmokeStep {
             Some("factor didn't exit successfully".to_string())
         } else if !has("sleep: exited") {
             Some("sleep didn't exit successfully".to_string())
-        } else if !cat_time {
+        } else if time_at.is_none() {
             Some("cat didn't print the time, or didn't exit successfully".to_string())
+        } else if !typed_read {
+            Some("cat and factor didn't read what was typed at the console".to_string())
         } else if !has("hello world") {
             Some("echo didn't print \"hello world\"".to_string())
         } else if !has("echo: exited") {

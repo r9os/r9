@@ -312,14 +312,14 @@ static FACTOR: &[u8] = include_bytes!(concat!(env!("R9_USER_BIN"), "/factor"));
 /// argument keeps factor dividing longest.
 const FACTOR_ARG: &[u8] = b"9007195909437503";
 
-/// Run sleep and factor together, then cat and echo, and return whether all
-/// four exited successfully.  sleep and factor are readied before either
-/// runs, so sleep sleeps its second while factor divides: the scheduler must
-/// put sleep to sleep and wake it on its tick, and keep factor's FP state
-/// across the switches of its long run.  Each exit status is printed as it's
-/// collected.  A failure is
-/// reported rather than asserted: this is the system running its programs,
-/// not a test.
+/// Run sleep and factor together, then cat on the time, cat and factor on
+/// the console's input, and echo, and return whether all exited
+/// successfully.  sleep and factor are readied before either runs, so sleep
+/// sleeps its second while factor divides: the scheduler must put sleep to
+/// sleep and wake it on its tick, and keep factor's FP state across the
+/// switches of its long run.  Each exit status is printed as it's collected.
+/// A failure is reported rather than asserted: this is the system running
+/// its programs, not a test.
 fn run_user() -> bool {
     let sleep = match port::proc::newproc::<Aarch64>(sleep_start) {
         Ok(p) => p,
@@ -352,7 +352,10 @@ fn run_user() -> bool {
             ok = false;
         }
     }
-    ok && run_program("cat", cat_start) && run_program("echo", echo_start)
+    ok && run_program("cat", cat_time_start)
+        && run_program("cat", cat_start)
+        && run_program("factor", factor_input_start)
+        && run_program("echo", echo_start)
 }
 
 /// Run the program `start` starts, as `name`, print how it exited, and
@@ -375,38 +378,37 @@ fn run_program(name: &str, start: fn()) -> bool {
     status.is_empty()
 }
 
-/// sleep's start: exec it with its argument, and enter it.
+/// Exec `image` with `args`, and enter it, or exit with exec's error.
+fn exec(image: &[u8], args: &[&[u8]]) -> ! {
+    let regs = match port::exec::exec::<Aarch64>(image, args) {
+        Ok(regs) => regs,
+        Err(err) => port::proc::pexit::<Aarch64>(err.as_bytes()),
+    };
+    enter_user(regs)
+}
+
 fn sleep_start() {
-    let regs = match port::exec::exec::<Aarch64>(SLEEP, &[b"sleep", b"1"]) {
-        Ok(regs) => regs,
-        Err(err) => port::proc::pexit::<Aarch64>(err.as_bytes()),
-    };
-    enter_user(regs)
+    exec(SLEEP, &[b"sleep", b"1"])
 }
 
-/// factor's start: exec it with its argument, and enter it.
 fn factor_start() {
-    let regs = match port::exec::exec::<Aarch64>(FACTOR, &[b"factor", FACTOR_ARG]) {
-        Ok(regs) => regs,
-        Err(err) => port::proc::pexit::<Aarch64>(err.as_bytes()),
-    };
-    enter_user(regs)
+    exec(FACTOR, &[b"factor", FACTOR_ARG])
 }
 
-/// cat's start: exec it to print the time, and enter it.
+/// cat, printing the time.
+fn cat_time_start() {
+    exec(CAT, &[b"cat", b"/dev/time"])
+}
+
+/// cat and factor with no arguments, reading the console.
 fn cat_start() {
-    let regs = match port::exec::exec::<Aarch64>(CAT, &[b"cat", b"/dev/time"]) {
-        Ok(regs) => regs,
-        Err(err) => port::proc::pexit::<Aarch64>(err.as_bytes()),
-    };
-    enter_user(regs)
+    exec(CAT, &[b"cat"])
 }
 
-/// echo's start: exec it with its arguments, and enter it.
+fn factor_input_start() {
+    exec(FACTOR, &[b"factor"])
+}
+
 fn echo_start() {
-    let regs = match port::exec::exec::<Aarch64>(ECHO, &[b"echo", b"hello", b"world"]) {
-        Ok(regs) => regs,
-        Err(err) => port::proc::pexit::<Aarch64>(err.as_bytes()),
-    };
-    enter_user(regs)
+    exec(ECHO, &[b"echo", b"hello", b"world"])
 }
