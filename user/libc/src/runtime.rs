@@ -2,12 +2,13 @@
 //! heap, present only on r9.
 
 use core::alloc::{GlobalAlloc, Layout};
+use core::ffi::CStr;
 use core::fmt::{self, Write};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use sys::{BRK_, ERRSTR, EXITS, PWRITE, SLEEP};
+use sys::{BRK_, CLOSE, DUP, ERRSTR, EXITS, OPEN, PREAD, PWRITE, SEEK, SLEEP};
 
-pub use sys::ERRMAX;
+pub use sys::{ERRMAX, OCEXEC, OEXEC, OREAD, ORCLOSE, ORDWR, OTRUNC, OWRITE};
 
 /// Make system call `nr`: svc #0, with the number in x8, the arguments in x0
 /// to x3 and the result in x0.  The kernel preserves every other register.
@@ -59,6 +60,42 @@ pub fn exits(status: &str) -> ! {
     loop {
         core::hint::spin_loop();
     }
+}
+
+/// Open `file` for `mode`, an access from OREAD to OEXEC with any of OTRUNC,
+/// OCEXEC and ORCLOSE or'ed in, as Plan 9's open.  Return the lowest free
+/// fd, or -1.
+pub fn open(file: &CStr, mode: u32) -> i32 {
+    syscall(OPEN, file.as_ptr().addr() as u64, mode.into(), 0, 0) as i32
+}
+
+/// Close `fd`, as Plan 9's close.  Return 0, or -1.
+pub fn close(fd: i32) -> i32 {
+    syscall(CLOSE, fd as u64, 0, 0, 0) as i32
+}
+
+/// Make `new` refer to what `old` does, closing what `new` did, or if `new`
+/// is -1, the lowest free fd, as Plan 9's dup.  Return the new fd, or -1.
+pub fn dup(old: i32, new: i32) -> i32 {
+    syscall(DUP, old as u64, new as u64, 0, 0) as i32
+}
+
+/// Set `fd`'s offset to `n` from the start, for `kind` 0, from the current
+/// offset, for 1, or from the end, for 2, as Plan 9's seek.  Return the new
+/// offset, or -1.
+pub fn seek(fd: i32, n: i64, kind: i32) -> i64 {
+    syscall(SEEK, fd as u64, n as u64, kind as u64, 0) as i64
+}
+
+/// Read into `buf` from `fd` at offset `off`, or at the current offset if
+/// it's -1.  Return the count read, 0 at the end of the file, or -1.
+pub fn pread(fd: i32, buf: &mut [u8], off: i64) -> isize {
+    syscall(PREAD, fd as u64, buf.as_mut_ptr().addr() as u64, buf.len() as u64, off as u64) as isize
+}
+
+/// Read into `buf` from `fd`, as Plan 9's read: pread at the current offset.
+pub fn read(fd: i32, buf: &mut [u8]) -> isize {
+    pread(fd, buf, -1)
 }
 
 /// Write `buf` to `fd` at offset `off`, or at the current offset if it's -1.

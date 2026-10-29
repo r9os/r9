@@ -18,4 +18,7 @@ mod runtime;
 pub use math::{modf, sqrt};
 pub use parse::{atof, strtol};
 #[cfg(target_os = "none")]
-pub use runtime::{Errstr, brk, brk_, errstr, exits, fprint, pwrite, rerrstr, sbrk, sleep, write};
+pub use runtime::{
+    Errstr, OCEXEC, OEXEC, OREAD, ORCLOSE, ORDWR, OTRUNC, OWRITE, brk, brk_, close, dup,
+    errstr, exits, fprint, open, pread, pwrite, read, rerrstr, sbrk, seek, sleep, write,
+};
