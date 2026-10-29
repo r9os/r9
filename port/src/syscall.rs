@@ -310,7 +310,7 @@ fn syssleep<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
         // it here.  Its sleep Rendez is its own, and its syscalls run one at
         // a time.
         let r = unsafe { &(*up).sleep };
-        tsleep(r, || false, Duration::from_millis(n as u64).max(TICK));
+        tsleep::<A>(r, || false, Duration::from_millis(n as u64).max(TICK));
     }
     Ok(0)
 }
@@ -615,8 +615,7 @@ mod tests {
             static CLOCK: crate::clock::Ops =
                 crate::clock::Ops { now: || 1000, frequency: || 1000, set_timer: |_| {} };
             crate::clock::init(&CLOCK);
-            static CURRENT: crate::proc::Current =
-                crate::proc::Current { pid: crate::proc::up_pid::<Fake> };
+            static CURRENT: crate::proc::Current = crate::proc::Current::of::<Fake>();
             crate::proc::init_current(&CURRENT);
             let mut open = |name: &[u8]| {
                 mem.0[..name.len()].copy_from_slice(name);

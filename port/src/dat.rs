@@ -196,13 +196,13 @@ pub struct Proc<A: ProcArch> {
     /// The next process on the run queue.
     pub(crate) next: *mut Proc<A>,
     /// The process's own Rendez, for SLEEP, as Plan 9's up->sleep.
-    pub(crate) sleep: Rendez<A>,
+    pub(crate) sleep: Rendez,
     /// Its tsleep's timeout, as Plan 9's up->t: added and removed on every
     /// tsleep, and removed before the process is reaped.
     pub(crate) timer: Timer,
     /// The Rendez its tsleep's timeout should wake, cleared when the timeout
     /// fires, as Plan 9's up->trend.
-    pub(crate) trend: *const Rendez<A>,
+    pub(crate) trend: *const Rendez,
 }
 
 impl<A: ProcArch> Proc<A> {
@@ -271,18 +271,21 @@ impl<A: ProcArch> Default for RunQueue<A> {
 
 /// Where a process waits to be woken, as Plan 9's Rendez: the one process
 /// asleep here, or null.  While it sleeps, the process is owned through this
-/// pointer, from Box::into_raw, as the run queue owns a ready one.
-pub struct Rendez<A: ProcArch> {
-    pub(crate) sleeper: Lock<*mut Proc<A>>,
+/// pointer, from Box::into_raw, as the run queue owns a ready one.  It's a
+/// Proc<A> for the one architecture the kernel runs, untyped so that code
+/// that isn't generic over the architecture, such as a device, can hold a
+/// Rendez.
+pub struct Rendez {
+    pub(crate) sleeper: Lock<*mut ()>,
 }
 
-impl<A: ProcArch> Rendez<A> {
+impl Rendez {
     pub const fn new() -> Self {
         Rendez { sleeper: Lock::new("rendez", ptr::null_mut()) }
     }
 }
 
-impl<A: ProcArch> Default for Rendez<A> {
+impl Default for Rendez {
     fn default() -> Self {
         Self::new()
     }

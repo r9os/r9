@@ -20,7 +20,7 @@ use port::pagealloc::PageAllocError;
 pub struct Aarch64;
 
 /// aarch64's current process, for port's code that isn't generic over it.
-static CURRENT: port::proc::Current = port::proc::Current { pid: port::proc::up_pid::<Aarch64> };
+static CURRENT: port::proc::Current = port::proc::Current::of::<Aarch64>();
 
 /// Register aarch64's current process with port.
 pub fn init() {

@@ -272,7 +272,8 @@ mod tests {
         let c = open_name("#c/pid", OREAD).expect("pid");
         assert_eq!(read(&c, 0, 100), Err(ENOTSUP), "without a current process");
 
-        static CURRENT: proc::Current = proc::Current { pid: || Some(42) };
+        static CURRENT: proc::Current =
+            proc::Current { pid: || Some(42), ..proc::Current::of::<crate::fake::Fake>() };
         proc::init_current(&CURRENT);
         assert_eq!(read(&c, 0, 100).expect("a read"), b"         42 ");
         assert_eq!(read(&c, 10, 100).expect("the tail"), b"2 ");
