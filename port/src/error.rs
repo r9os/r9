@@ -10,6 +10,7 @@ pub const EINUSE: &str = "device or object already in use";
 pub const EISDIR: &str = "file is a directory";
 pub const ENAMETOOLONG: &str = "name too long";
 pub const ENEGOFF: &str = "negative i/o offset";
+pub const ENOCHILD: &str = "no living children";
 pub const ENOFD: &str = "no free file descriptors";
 pub const ENONEXIST: &str = "file does not exist";
 pub const ENOTSUP: &str = "not supported";

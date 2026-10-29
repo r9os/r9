@@ -2,7 +2,7 @@
 //! There's no exec syscall yet: a start function calls exec, then enters the
 //! program with the registers it returns.
 
-use crate::dat::{MMU, Perm, ProcArch, PutError};
+use crate::dat::{KNAMELEN, MMU, Perm, ProcArch, PutError};
 use crate::elf::{self, Elf, Segment};
 use crate::error::{EBADARG, EBADEXEC, ENOVMEM};
 use crate::mem::{PAGE_SIZE_4K, VirtRange};
@@ -24,7 +24,9 @@ pub struct UserRegs {
 /// and push `argv` onto it, as Plan 9's sysexec does.  Return the registers to
 /// enter it with.  The arguments are checked first, as in sysexec, so bad
 /// ones map nothing.  As with load, a failure after that isn't undone: the
-/// caller must exit the process.
+/// caller must exit the process.  Once it's loaded, the process's text is
+/// the last element of argv[0], where sysexec takes the file's, once it
+/// can't fail, which a caller passing an image doesn't have.
 pub fn exec<A: ProcArch>(image: &[u8], argv: &[&[u8]]) -> crate::Result<UserRegs> {
     args_size::<A>(argv)?;
     let pc = load::<A>(image)?;
@@ -34,7 +36,20 @@ pub fn exec<A: ProcArch>(image: &[u8], argv: &[&[u8]]) -> crate::Result<UserRegs
             PutError::NoMemory => ENOVMEM,
         },
     )?;
-    push_args::<A>(pc, A::USTKTOP, argv)
+    let regs = push_args::<A>(pc, A::USTKTOP, argv)?;
+    set_text::<A>(argv.first().copied().unwrap_or_default());
+    Ok(regs)
+}
+
+/// Set the current process's text to the last element of `name`, truncated
+/// to KNAMELEN - 1 bytes, as Plan 9's sysexec copies elem into up->text.
+fn set_text<A: ProcArch>(name: &[u8]) {
+    let elem = name.rsplit(|&b| b == b'/').next().unwrap_or_default();
+    let up = A::up();
+    assert!(!up.is_null(), "exec: no current process");
+    // SAFETY: up is the running process, and only its own syscalls, one at a
+    // time, change its text.
+    unsafe { (*up).text = elem[..elem.len().min(KNAMELEN - 1)].to_vec() };
 }
 
 /// Check that `argv` can be pushed onto a stack, and return the size of its

@@ -5,14 +5,16 @@
 //! its context is saved.
 
 use alloc::boxed::Box;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::ptr;
 use core::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
 use core::time::Duration;
 
 use crate::chan::{NOPEN, OREAD, OWRITE};
-use crate::dat::{Proc, ProcArch, Rendez, State};
+use crate::dat::{MAXWAIT, Proc, ProcArch, Rendez, State, WaitQueue, Waitmsg};
 use crate::dev::open_name;
+use crate::error::{EINUSE, ENOCHILD};
 use crate::irq;
 use crate::mcslock::LockNode;
 use crate::pagealloc::{PageAllocError, free_physpage};
@@ -116,8 +118,8 @@ pub enum NewprocError {
 /// Create a process.  When it's first run, it calls `start`, as Plan 9's
 /// kproc runs a function in a new process.  `start` loads the process's
 /// program and enters user mode, and returns only if that fails.  Before
-/// it runs, the process's standard files are open: the console on 0, 1 and
-/// 2, all OWRITE, as Plan 9's opencons.
+/// it runs, the process's standard files are open: the console on 0, OREAD,
+/// and on 1 and 2, OWRITE, as Plan 9's opencons.
 pub fn newproc<A: ProcArch>(start: fn()) -> Result<Box<Proc<A>>, NewprocError> {
     let pmmu = A::newpmmu().map_err(NewprocError::AddressSpace)?;
     let kstack = match A::kstack_alloc() {
@@ -157,7 +159,20 @@ pub fn newproc<A: ProcArch>(start: fn()) -> Result<Box<Proc<A>>, NewprocError> {
         sleep: Rendez::new(),
         timer: Timer::new(Mode::Relative(Duration::from_millis(1)), |_| {}),
         trend: ptr::null(),
+        text: Vec::new(),
+        waitq: Arc::new(WaitQueue::new()),
+        parent: None,
     }))
+}
+
+/// Make `child` a child of `parent`: its exit goes to `parent`'s wait queue,
+/// and counts as one of `parent`'s living children until then, as Plan 9's
+/// rfork counts nchild.
+#[cfg_attr(not(test), expect(dead_code, reason = "rfork will adopt its children"))]
+pub(crate) fn adopt<A: ProcArch>(parent: &Proc<A>, child: &mut Proc<A>) {
+    let node = LockNode::new();
+    parent.waitq.state.ilock(&node).nchild += 1;
+    child.parent = Some(parent.waitq.clone());
 }
 
 /// Queue `p` to run.
@@ -369,17 +384,91 @@ pub fn preempt_due<A: ProcArch>() -> bool {
 }
 
 /// Exit the current process with `status`, switching back to the scheduler
-/// context, which reaps it.
+/// context, which reaps it.  As Plan 9's pexit does, its files are closed,
+/// then its parent, if it has one, is told.
 pub fn pexit<A: ProcArch>(status: &[u8]) -> ! {
     let up = A::up();
     assert!(!up.is_null(), "pexit: no current process");
     // SAFETY: up is the running process, set by schedule.
     unsafe {
+        (*up).fds = [const { None }; NOPEN];
+        tell_parent::<A>(&*up, status);
         (*up).exit_status = status.to_vec();
         (*up).state = State::Exited;
         A::swtch(&mut (*up).label, A::sched());
     }
     unreachable!("pexit: an exited process was resumed")
+}
+
+/// Tell `p`'s parent that `p` has exited with `status`, as Plan 9's pexit:
+/// unless the parent has exited too, it has one living child fewer, and,
+/// unless it already holds MAXWAIT, `p`'s exit goes on the front of its wait
+/// queue, newest first, and wakes it.  The message is empty for success,
+/// else `p`'s text, pid and status, truncated to ERRMAX - 1 bytes.  And
+/// `p`'s own children's exits are no longer queued, as `p` won't wait for
+/// them.
+fn tell_parent<A: ProcArch>(p: &Proc<A>, status: &[u8]) {
+    let node = LockNode::new();
+    p.waitq.state.ilock(&node).alive = false;
+    let Some(parent) = &p.parent else {
+        return;
+    };
+    let mut msg = Vec::new();
+    if !status.is_empty() {
+        msg.extend_from_slice(&p.text);
+        msg.extend_from_slice(alloc::format!(" {}: ", p.pid).as_bytes());
+        msg.extend_from_slice(status);
+        // As snprint does, cut it to fit ERRMAX with its NUL, but not in the
+        // middle of a UTF-8 character: back up over its continuation bytes.
+        if msg.len() > sys::ERRMAX - 1 {
+            let mut cut = sys::ERRMAX - 1;
+            while cut > 0 && msg[cut] & 0xc0 == 0x80 {
+                cut -= 1;
+            }
+            msg.truncate(cut);
+        }
+    }
+    let mut state = parent.state.ilock(&node);
+    if !state.alive {
+        return;
+    }
+    state.nchild -= 1;
+    if state.exits.len() < MAXWAIT {
+        state.exits.push_front(Waitmsg { pid: p.pid, msg });
+        drop(state);
+        wakeup::<A>(&parent.waitr);
+    }
+}
+
+/// Wait for one of the current process's children to exit, and return its
+/// exit, as Plan 9's pwait: the newest first.  A second waiter is Einuse, as
+/// pwait's canqlock, and a process with no living children and no exits
+/// queued is Enochild.
+pub fn pwait<A: ProcArch>() -> crate::Result<Waitmsg> {
+    let up = A::up();
+    assert!(!up.is_null(), "pwait: no current process");
+    // SAFETY: up is the running process, set by schedule, and its wait queue
+    // lives as long as it does.
+    let q = unsafe { &*(*up).waitq };
+    {
+        let node = LockNode::new();
+        let mut state = q.state.ilock(&node);
+        if state.waiting {
+            return Err(EINUSE);
+        }
+        if state.nchild == 0 && state.exits.is_empty() {
+            return Err(ENOCHILD);
+        }
+        state.waiting = true;
+    }
+    sleep::<A>(&q.waitr, || {
+        let node = LockNode::new();
+        !q.state.ilock(&node).exits.is_empty()
+    });
+    let node = LockNode::new();
+    let mut state = q.state.ilock(&node);
+    state.waiting = false;
+    Ok(state.exits.pop_front().expect("pwait: woken with no exit queued"))
 }
 
 /// The first context of every process, in its address space: run its start
@@ -548,5 +637,121 @@ mod tests {
         NO_STACKS.with(|n| n.set(false));
         assert_eq!(err, Some(NewprocError::KernelStack(PageAllocError::OutOfSpace)));
         assert_eq!(held(), (0, 0));
+    }
+
+    /// A parent and a child of it, with the child's text set, as exec sets
+    /// it.
+    fn family() -> (Box<Proc<Fake>>, Box<Proc<Fake>>) {
+        let parent = newproc::<Fake>(start).expect("newproc failed");
+        let mut child = newproc::<Fake>(start).expect("newproc failed");
+        adopt(&parent, &mut child);
+        child.text = b"factor".to_vec();
+        (parent, child)
+    }
+
+    fn state<A: ProcArch>(p: &Proc<A>) -> (Vec<Waitmsg>, usize) {
+        let node = LockNode::new();
+        let s = p.waitq.state.ilock(&node);
+        (s.exits.iter().cloned().collect(), s.nchild)
+    }
+
+    /// Reap the fake processes.
+    fn reap_all(ps: impl IntoIterator<Item = Box<Proc<Fake>>>) {
+        for p in ps {
+            // SAFETY: nothing runs in the fake processes.
+            unsafe { reap(*p) };
+        }
+    }
+
+    #[test]
+    fn a_childs_exit_reaches_its_parent() {
+        let (parent, child) = family();
+        let (_, n) = state(&parent);
+        assert_eq!(n, 1, "a living child");
+        tell_parent(&child, b"no factors");
+        let msg = alloc::format!("factor {}: no factors", child.pid).into_bytes();
+        assert_eq!(state(&parent), (vec![Waitmsg { pid: child.pid, msg }], 0));
+
+        // Success is an empty message, and the newest exit is first.
+        let mut second = newproc::<Fake>(start).expect("newproc failed");
+        adopt(&parent, &mut second);
+        tell_parent(&second, b"");
+        let (exits, _) = state(&parent);
+        assert_eq!(exits[0], Waitmsg { pid: second.pid, msg: Vec::new() }, "newest first");
+        reap_all([parent, child, second]);
+    }
+
+    #[test]
+    fn a_long_message_is_truncated() {
+        let (parent, child) = family();
+        tell_parent(&child, &[b'x'; sys::ERRMAX]);
+        let (exits, _) = state(&parent);
+        assert_eq!(exits[0].msg.len(), sys::ERRMAX - 1);
+        reap_all([parent, child]);
+    }
+
+    #[test]
+    fn a_message_isnt_cut_mid_character() {
+        let (parent, child) = family();
+        // "factor N: " then a's to one byte short of the cut, then a
+        // two-byte character across it.
+        let prefix = alloc::format!("factor {}: ", child.pid).len();
+        let mut status = vec![b'a'; sys::ERRMAX - 2 - prefix];
+        status.extend_from_slice("é".as_bytes());
+        tell_parent(&child, &status);
+        let (exits, _) = state(&parent);
+        assert_eq!(exits[0].msg.len(), sys::ERRMAX - 2, "the whole é dropped");
+        reap_all([parent, child]);
+    }
+
+    #[test]
+    fn past_maxwait_an_exit_is_dropped() {
+        let (parent, child) = family();
+        {
+            let node = LockNode::new();
+            let mut s = parent.waitq.state.ilock(&node);
+            for pid in 0..MAXWAIT as u64 {
+                s.exits.push_back(Waitmsg { pid, msg: Vec::new() });
+            }
+        }
+        tell_parent(&child, b"");
+        let (exits, n) = state(&parent);
+        assert_eq!(exits.len(), MAXWAIT, "not queued");
+        assert_eq!(n, 0, "but no longer living");
+        reap_all([parent, child]);
+    }
+
+    #[test]
+    fn a_parent_that_has_exited_hears_nothing() {
+        let (parent, child) = family();
+        tell_parent(&parent, b"");
+        tell_parent(&child, b"late");
+        assert_eq!(state(&parent), (vec![], 1), "nothing queued, and nchild as it was");
+        reap_all([parent, child]);
+    }
+
+    #[test]
+    fn pwait_takes_the_newest_exit() {
+        let (mut parent, child) = family();
+        tell_parent(&child, b"");
+        Fake::set_up(&mut *parent);
+        // The fake can't switch, so an exit must already be queued.
+        assert_eq!(pwait::<Fake>(), Ok(Waitmsg { pid: child.pid, msg: Vec::new() }));
+        assert_eq!(pwait::<Fake>(), Err(ENOCHILD), "no living children, nothing queued");
+        Fake::set_up(ptr::null_mut());
+        reap_all([parent, child]);
+    }
+
+    #[test]
+    fn a_second_waiter_is_einuse() {
+        let (mut parent, child) = family();
+        {
+            let node = LockNode::new();
+            parent.waitq.state.ilock(&node).waiting = true;
+        }
+        Fake::set_up(&mut *parent);
+        assert_eq!(pwait::<Fake>(), Err(EINUSE));
+        Fake::set_up(ptr::null_mut());
+        reap_all([parent, child]);
     }
 }

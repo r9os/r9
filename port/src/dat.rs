@@ -1,6 +1,7 @@
 extern crate alloc;
 
 use alloc::boxed::Box;
+use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::ptr;
@@ -203,6 +204,66 @@ pub struct Proc<A: ProcArch> {
     /// The Rendez its tsleep's timeout should wake, cleared when the timeout
     /// fires, as Plan 9's up->trend.
     pub(crate) trend: *const Rendez,
+    /// Its program's name, as Plan 9's up->text: at most KNAMELEN - 1 bytes,
+    /// set by exec.
+    pub(crate) text: Vec<u8>,
+    /// Its children's exits, which its children share.
+    pub(crate) waitq: Arc<WaitQueue>,
+    /// Its parent's wait queue, which its exit goes to, or None for a
+    /// process the kernel started.
+    pub(crate) parent: Option<Arc<WaitQueue>>,
+}
+
+/// The longest process text, with its NUL, as Plan 9's KNAMELEN.
+pub const KNAMELEN: usize = 28;
+
+/// A child's exit, as Plan 9's Waitmsg: its pid, and its message, empty if
+/// it succeeded.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Waitmsg {
+    pub pid: u64,
+    pub msg: Vec<u8>,
+}
+
+/// The most exits a wait queue holds, as Plan 9's pexit bounds a parent's
+/// waitq: past it, an exit is dropped, so a parent that never waits can't
+/// collect them without limit.
+pub(crate) const MAXWAIT: usize = 128;
+
+/// A process's children's exits, as Plan 9's waitq, nchild and waitr: shared,
+/// through an Arc, by the process and each child it starts, which queues its
+/// exit here, so there's no process table to find a parent in.  Once its
+/// process has exited, nothing more is queued, and it goes when its last
+/// child does.
+pub struct WaitQueue {
+    /// Taken with ilock, since a waiter's sleep checks it with IRQs masked.
+    pub(crate) state: Lock<WaitState>,
+    /// Where the process waits for an exit.
+    pub(crate) waitr: Rendez,
+}
+
+pub(crate) struct WaitState {
+    /// Its children's exits, newest first, as Plan 9's waitq.
+    pub(crate) exits: VecDeque<Waitmsg>,
+    /// How many of its children are still alive, as Plan 9's nchild.
+    pub(crate) nchild: usize,
+    /// Whether its process is alive, as Plan 9's pexit checks its parent is.
+    pub(crate) alive: bool,
+    /// Whether its process is waiting, as Plan 9's qwaitr: one waiter at a
+    /// time.
+    pub(crate) waiting: bool,
+}
+
+impl WaitQueue {
+    pub(crate) fn new() -> WaitQueue {
+        WaitQueue {
+            state: Lock::new(
+                "waitq",
+                WaitState { exits: VecDeque::new(), nchild: 0, alive: true, waiting: false },
+            ),
+            waitr: Rendez::new(),
+        }
+    }
 }
 
 impl<A: ProcArch> Proc<A> {
