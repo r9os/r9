@@ -41,7 +41,7 @@ use core::cell::SyncUnsafeCell;
 use port::fdt::DeviceTree;
 use port::mem::{PhysAddr, PhysRange, VirtRange};
 use port::println;
-use proc::{Arm64, enter_user};
+use proc::{Aarch64, enter_user};
 use reg::midr_el1::MidrEl1;
 use swtch::Label;
 use vm::RootPageTableType;
@@ -320,14 +320,14 @@ const FACTOR_ARG: &[u8] = b"9007195909437503";
 /// reported rather than asserted: this is the system running its programs,
 /// not a test.
 fn run_user() -> bool {
-    let sleep = match port::proc::newproc::<Arm64>(sleep_start) {
+    let sleep = match port::proc::newproc::<Aarch64>(sleep_start) {
         Ok(p) => p,
         Err(err) => {
             println!("sleep: couldn't create a process: {err:?}");
             return false;
         }
     };
-    let factor = match port::proc::newproc::<Arm64>(factor_start) {
+    let factor = match port::proc::newproc::<Aarch64>(factor_start) {
         Ok(p) => p,
         Err(err) => {
             println!("factor: couldn't create a process: {err:?}");
@@ -339,7 +339,7 @@ fn run_user() -> bool {
     port::proc::ready(sleep);
     port::proc::ready(factor);
     let mut ok = true;
-    for (pid, status) in port::proc::schedule::<Arm64>() {
+    for (pid, status) in port::proc::schedule::<Aarch64>() {
         let name = if pid == sleep_pid { "sleep" } else { "factor" };
         if status.is_empty() {
             println!("{name}: exited");
@@ -358,7 +358,7 @@ fn run_user() -> bool {
 /// return whether it exited successfully.  A failure is reported rather than
 /// asserted: this is the system running its program, not a test.
 fn run_program(name: &str, start: fn()) -> bool {
-    let p = match port::proc::newproc::<Arm64>(start) {
+    let p = match port::proc::newproc::<Aarch64>(start) {
         Ok(p) => p,
         Err(err) => {
             println!("{name}: couldn't create a process: {err:?}");
@@ -376,36 +376,36 @@ fn run_program(name: &str, start: fn()) -> bool {
 
 /// sleep's start: exec it with its argument, and enter it.
 fn sleep_start() {
-    let regs = match port::exec::exec::<Arm64>(SLEEP, &[b"sleep", b"1"]) {
+    let regs = match port::exec::exec::<Aarch64>(SLEEP, &[b"sleep", b"1"]) {
         Ok(regs) => regs,
-        Err(err) => port::proc::pexit::<Arm64>(err.as_bytes()),
+        Err(err) => port::proc::pexit::<Aarch64>(err.as_bytes()),
     };
     enter_user(regs)
 }
 
 /// factor's start: exec it with its argument, and enter it.
 fn factor_start() {
-    let regs = match port::exec::exec::<Arm64>(FACTOR, &[b"factor", FACTOR_ARG]) {
+    let regs = match port::exec::exec::<Aarch64>(FACTOR, &[b"factor", FACTOR_ARG]) {
         Ok(regs) => regs,
-        Err(err) => port::proc::pexit::<Arm64>(err.as_bytes()),
+        Err(err) => port::proc::pexit::<Aarch64>(err.as_bytes()),
     };
     enter_user(regs)
 }
 
 /// cat's start: exec it to print the time, and enter it.
 fn cat_start() {
-    let regs = match port::exec::exec::<Arm64>(CAT, &[b"cat", b"/dev/time"]) {
+    let regs = match port::exec::exec::<Aarch64>(CAT, &[b"cat", b"/dev/time"]) {
         Ok(regs) => regs,
-        Err(err) => port::proc::pexit::<Arm64>(err.as_bytes()),
+        Err(err) => port::proc::pexit::<Aarch64>(err.as_bytes()),
     };
     enter_user(regs)
 }
 
 /// echo's start: exec it with its arguments, and enter it.
 fn echo_start() {
-    let regs = match port::exec::exec::<Arm64>(ECHO, &[b"echo", b"hello", b"world"]) {
+    let regs = match port::exec::exec::<Aarch64>(ECHO, &[b"echo", b"hello", b"world"]) {
         Ok(regs) => regs,
-        Err(err) => port::proc::pexit::<Arm64>(err.as_bytes()),
+        Err(err) => port::proc::pexit::<Aarch64>(err.as_bytes()),
     };
     enter_user(regs)
 }

@@ -17,10 +17,10 @@ use port::mcslock::Lock;
 use port::mem::{PAGE_SIZE_4K, PhysAddr, PhysRange};
 use port::pagealloc::PageAllocError;
 
-pub struct Arm64;
+pub struct Aarch64;
 
 /// aarch64's current process, for port's code that isn't generic over it.
-static CURRENT: port::proc::Current = port::proc::Current { pid: port::proc::up_pid::<Arm64> };
+static CURRENT: port::proc::Current = port::proc::Current { pid: port::proc::up_pid::<Aarch64> };
 
 /// Register aarch64's current process with port.
 pub fn init() {
@@ -40,7 +40,7 @@ pub struct Fp {
 const _: () = assert!(core::mem::offset_of!(Fp, fpcr) == 512);
 const _: () = assert!(core::mem::offset_of!(Fp, fpsr) == 520);
 
-impl MMU for Arm64 {
+impl MMU for Aarch64 {
     type Pmmu = AddressSpace;
 
     const UADDRTOP: usize = param::UADDRTOP;
@@ -112,7 +112,7 @@ impl MMU for Arm64 {
     }
 }
 
-impl ProcArch for Arm64 {
+impl ProcArch for Aarch64 {
     type Label = Label;
     type KStack = KStack;
 
@@ -137,12 +137,12 @@ impl ProcArch for Arm64 {
         unsafe { swtch::swtch(save, next) };
     }
 
-    fn up() -> *mut Proc<Arm64> {
+    fn up() -> *mut Proc<Aarch64> {
         // SAFETY: mach is this CPU's, and only this CPU uses it.
         unsafe { (*mach()).up }
     }
 
-    fn set_up(p: *mut Proc<Arm64>) {
+    fn set_up(p: *mut Proc<Aarch64>) {
         // SAFETY: as above.
         unsafe { (*mach()).up = p };
     }
@@ -232,8 +232,8 @@ impl ProcArch for Arm64 {
         aarch64_cpu::asm::wfi();
     }
 
-    fn run_queue() -> &'static Lock<RunQueue<Arm64>> {
-        static RUN_QUEUE: Lock<RunQueue<Arm64>> = Lock::new("run_queue", RunQueue::new());
+    fn run_queue() -> &'static Lock<RunQueue<Aarch64>> {
+        static RUN_QUEUE: Lock<RunQueue<Aarch64>> = Lock::new("run_queue", RunQueue::new());
         &RUN_QUEUE
     }
 }
@@ -243,7 +243,7 @@ impl ProcArch for Arm64 {
 pub fn enter_user(regs: UserRegs) -> ! {
     // SAFETY: up is this process, which is running, and its context started
     // below the space to_user uses at the top of its stack.
-    let kstack_top = unsafe { (*Arm64::up()).kstack().top() };
+    let kstack_top = unsafe { (*Aarch64::up()).kstack().top() };
     // SAFETY: as above, and the caller mapped the text and stack.
     unsafe { trap::to_user(kstack_top, &regs) }
 }

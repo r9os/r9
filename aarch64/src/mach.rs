@@ -2,7 +2,7 @@
 //! its Mach.
 
 use crate::param::MAXMACH;
-use crate::proc::Arm64;
+use crate::proc::Aarch64;
 use crate::swtch::Label;
 #[cfg(not(test))]
 use aarch64_cpu::registers::{MPIDR_EL1, Readable, TPIDR_EL1, Writeable};
@@ -11,7 +11,7 @@ use port::dat::Proc;
 
 pub struct Mach {
     /// The current process, or null.
-    pub up: *mut Proc<Arm64>,
+    pub up: *mut Proc<Aarch64>,
     /// The scheduler's context, which a process switches back to when it
     /// exits.
     pub sched: Label,

@@ -8,7 +8,7 @@ use crate::gic;
 use crate::kmap;
 use crate::kstack;
 use crate::param::{self, USTKSIZE, USTKTOP, UTZERO};
-use crate::proc::{Arm64, enter_user};
+use crate::proc::{Aarch64, enter_user};
 use crate::swtch::{self, Label};
 use crate::vm;
 use aarch64_cpu::registers::{CNTV_CTL_EL0, CNTV_CVAL_EL0, CNTVCT_EL0, Readable, Writeable};
@@ -605,7 +605,7 @@ fn test_user_processes() {
     let mut first_kstack_top = None;
     for UserTest { name, start, status } in tests {
         let (used_before, _) = port::pagealloc::usage_bytes();
-        let p = port::proc::newproc::<Arm64>(start).expect("couldn't create process");
+        let p = port::proc::newproc::<Aarch64>(start).expect("couldn't create process");
         let kstack_top = p.kstack().top();
         assert_eq!(*first_kstack_top.get_or_insert(kstack_top), kstack_top);
         println!("Executing user process: {name}");
@@ -620,15 +620,16 @@ fn test_user_processes() {
 fn test_preemption() {
     let (used_before, _) = port::pagealloc::usage_bytes();
     let spin =
-        port::proc::newproc::<Arm64>(|| run_user(usertext!(usertest_spin, usertest_spin_end)))
+        port::proc::newproc::<Aarch64>(|| run_user(usertext!(usertest_spin, usertest_spin_end)))
             .expect("couldn't create process");
-    let bye = port::proc::newproc::<Arm64>(|| run_user(usertext!(usertest_bye, usertest_bye_end)))
-        .expect("couldn't create process");
+    let bye =
+        port::proc::newproc::<Aarch64>(|| run_user(usertext!(usertest_bye, usertest_bye_end)))
+            .expect("couldn't create process");
     let (spin_pid, bye_pid) = (spin.pid, bye.pid);
     let start = now();
     port::proc::ready(spin);
     port::proc::ready(bye);
-    let exits = port::proc::schedule::<Arm64>();
+    let exits = port::proc::schedule::<Aarch64>();
     let took = port::clock::to_duration(now() - start, port::clock::frequency().unwrap());
     let order: alloc::vec::Vec<_> = exits.iter().map(|&(pid, _)| pid).collect();
     assert_eq!(order, [bye_pid, spin_pid], "preemption test: wrong exit order");
@@ -643,17 +644,17 @@ fn test_preemption() {
 /// with its name if it doesn't.
 fn test_fp_state() {
     let (used_before, _) = port::pagealloc::usage_bytes();
-    let a = port::proc::newproc::<Arm64>(|| {
+    let a = port::proc::newproc::<Aarch64>(|| {
         run_user_args(usertext!(usertest_fp, usertest_fp_end), &[b"fpa"])
     })
     .expect("couldn't create process");
-    let b = port::proc::newproc::<Arm64>(|| {
+    let b = port::proc::newproc::<Aarch64>(|| {
         run_user_args(usertext!(usertest_fp, usertest_fp_end), &[b"fpb", b"2"])
     })
     .expect("couldn't create process");
     port::proc::ready(a);
     port::proc::ready(b);
-    let exits = port::proc::schedule::<Arm64>();
+    let exits = port::proc::schedule::<Aarch64>();
     let lost: alloc::vec::Vec<_> = exits
         .iter()
         .filter(|(_, s)| !s.is_empty())
@@ -668,15 +669,15 @@ fn test_fp_state() {
 /// A process asleep alone is woken by an interrupt: with nothing else to run,
 /// the scheduler idles until a 50 ms timer wakes it.
 fn test_sleep_and_wakeup() {
-    static R: port::dat::Rendez<Arm64> = port::dat::Rendez::new();
+    static R: port::dat::Rendez<Aarch64> = port::dat::Rendez::new();
     static WOKEN: AtomicBool = AtomicBool::new(false);
     static WAKER: Timer = Timer::new(Mode::Relative(Duration::from_millis(50)), |_| {
         WOKEN.store(true, Ordering::Relaxed);
         port::proc::wakeup(&R);
     });
-    let p = port::proc::newproc::<Arm64>(|| {
+    let p = port::proc::newproc::<Aarch64>(|| {
         port::proc::sleep(&R, || WOKEN.load(Ordering::Relaxed));
-        port::proc::pexit::<Arm64>(b"");
+        port::proc::pexit::<Aarch64>(b"");
     })
     .expect("couldn't create process");
     let start = now();
@@ -694,19 +695,19 @@ fn test_sleep_with_another_running() {
     static HELD: AtomicU64 = AtomicU64::new(0);
     let (used_before, _) = port::pagealloc::usage_bytes();
     let spin =
-        port::proc::newproc::<Arm64>(|| run_user(usertext!(usertest_spin, usertest_spin_end)))
+        port::proc::newproc::<Aarch64>(|| run_user(usertext!(usertest_spin, usertest_spin_end)))
             .expect("couldn't create process");
-    let sleeper = port::proc::newproc::<Arm64>(|| {
+    let sleeper = port::proc::newproc::<Aarch64>(|| {
         let start = port::clock::now().expect("no clock");
-        let r = port::syscall::syscall::<Arm64>(sys::SLEEP, [100, 0, 0, 0, 0, 0]);
+        let r = port::syscall::syscall::<Aarch64>(sys::SLEEP, [100, 0, 0, 0, 0, 0]);
         HELD.store(port::clock::now().expect("no clock") - start, Ordering::Relaxed);
-        port::proc::pexit::<Arm64>(if r == 0 { b"" } else { b"sleep(100)" });
+        port::proc::pexit::<Aarch64>(if r == 0 { b"" } else { b"sleep(100)" });
     })
     .expect("couldn't create process");
     let sleeper_pid = sleeper.pid;
     port::proc::ready(spin);
     port::proc::ready(sleeper);
-    let exits = port::proc::schedule::<Arm64>();
+    let exits = port::proc::schedule::<Aarch64>();
     assert_eq!(exits.len(), 2, "sleep test: {} exits", exits.len());
     let status =
         &exits.iter().find(|(pid, _)| *pid == sleeper_pid).expect("sleep test: sleeper exited").1;
@@ -725,9 +726,9 @@ fn test_sleep_with_another_running() {
 /// process at its deadline.
 fn test_sleep_alone() {
     let (used_before, _) = port::pagealloc::usage_bytes();
-    let p = port::proc::newproc::<Arm64>(|| {
-        let r = port::syscall::syscall::<Arm64>(sys::SLEEP, [100, 0, 0, 0, 0, 0]);
-        port::proc::pexit::<Arm64>(if r == 0 { b"" } else { b"sleep(100)" });
+    let p = port::proc::newproc::<Aarch64>(|| {
+        let r = port::syscall::syscall::<Aarch64>(sys::SLEEP, [100, 0, 0, 0, 0, 0]);
+        port::proc::pexit::<Aarch64>(if r == 0 { b"" } else { b"sleep(100)" });
     })
     .expect("couldn't create process");
     let start = now();
@@ -758,9 +759,9 @@ fn run_user(text: &[u8]) -> ! {
 /// Run `text` with `args` pushed onto its stack.
 fn run_user_args(text: &[u8], args: &[&[u8]]) -> ! {
     load_user(text);
-    let regs = match port::exec::push_args::<Arm64>(UTZERO, USTKTOP, args) {
+    let regs = match port::exec::push_args::<Aarch64>(UTZERO, USTKTOP, args) {
         Ok(regs) => regs,
-        Err(err) => port::proc::pexit::<Arm64>(err.as_bytes()),
+        Err(err) => port::proc::pexit::<Aarch64>(err.as_bytes()),
     };
     enter_user(regs)
 }
@@ -776,9 +777,9 @@ fn elf_start() {
         Perm,
     };
     dirty_free_pages();
-    let regs = match port::exec::exec::<Arm64>(ELFTEST, &[b"elftest", b"ok"]) {
+    let regs = match port::exec::exec::<Aarch64>(ELFTEST, &[b"elftest", b"ok"]) {
         Ok(regs) => regs,
-        Err(err) => port::proc::pexit::<Arm64>(err.as_bytes()),
+        Err(err) => port::proc::pexit::<Aarch64>(err.as_bytes()),
     };
     let ok = vm::user_page_ok;
     let elf = port::elf::parse(ELFTEST).expect("elftest didn't parse");
@@ -811,9 +812,9 @@ fn load_user(text: &[u8]) {
         page.fill(0);
         page[..text.len()].copy_from_slice(text);
     }
-    Arm64::put(UTZERO, text_pa, Perm::Text).expect("couldn't map user text");
+    Aarch64::put(UTZERO, text_pa, Perm::Text).expect("couldn't map user text");
     map_stack();
-    segment::set_bss::<Arm64>(VirtRange::new(BSS, BSS));
+    segment::set_bss::<Aarch64>(VirtRange::new(BSS, BSS));
 }
 
 /// Fill some free pages with ones, so a loader that doesn't zero what it maps
@@ -840,7 +841,7 @@ fn dirty_free_pages() {
 /// Map a zeroed stack below USTKTOP in the current process.
 fn map_stack() {
     let stack_range = VirtRange::new(USTKTOP - USTKSIZE, USTKTOP);
-    segment::map_zeroed::<Arm64>(stack_range).expect("couldn't allocate user stack");
+    segment::map_zeroed::<Aarch64>(stack_range).expect("couldn't allocate user stack");
 }
 
 /// Check user_page_ok against the test process's mappings, which are
@@ -1004,18 +1005,18 @@ fn test_release() {
     unsafe { vm::switch(&space) };
     let page = |i| UTZERO + i * PAGE_SIZE_4K;
 
-    segment::map_zeroed::<Arm64>(VirtRange::new(page(4), page(5))).expect("couldn't map a page");
+    segment::map_zeroed::<Aarch64>(VirtRange::new(page(4), page(5))).expect("couldn't map a page");
     let (used_mid, _) = port::pagealloc::usage_bytes();
-    let overlapping = segment::map_zeroed::<Arm64>(VirtRange::new(page(0), page(5)));
+    let overlapping = segment::map_zeroed::<Aarch64>(VirtRange::new(page(0), page(5)));
     assert_eq!(overlapping, Err(PutError::AlreadyMapped));
     assert_eq!(port::pagealloc::usage_bytes().0, used_mid, "a failed map_zeroed leaked");
     assert!(!vm::user_page_ok(page(0), Read), "a failed map_zeroed left a page mapped");
     assert!(vm::user_page_ok(page(4), Read));
 
-    segment::map_zeroed::<Arm64>(VirtRange::new(page(0), page(4))).expect("couldn't map pages");
-    let pa = Arm64::unput(page(1)).expect("unput found nothing");
+    segment::map_zeroed::<Aarch64>(VirtRange::new(page(0), page(4))).expect("couldn't map pages");
+    let pa = Aarch64::unput(page(1)).expect("unput found nothing");
     assert!(!vm::user_page_ok(page(1), Read), "unput left the page mapped");
-    assert_eq!(Arm64::unput(page(1)), None);
+    assert_eq!(Aarch64::unput(page(1)), None);
     port::pagealloc::free_physpage(pa).expect("couldn't free the unput page");
 
     let mut freed = 0;
