@@ -1,6 +1,6 @@
 //! What the kernel and user programs must agree on, as Plan 9's
-//! libc/9syscall/sys.h: the system call numbers, and the longest error or exit
-//! string.
+//! libc/9syscall/sys.h: the system call numbers, the longest error or exit
+//! string, and, as Plan 9's libc.h, the open modes.
 
 #![no_std]
 
@@ -18,3 +18,12 @@ pub const PWRITE: u64 = 51;
 
 /// The longest error or exit string, with its NUL, as Plan 9's ERRMAX.
 pub const ERRMAX: usize = 128;
+
+/// The open modes, as Plan 9's libc.h: an access, and the flags or'ed in.
+pub const OREAD: u32 = 0;
+pub const OWRITE: u32 = 1;
+pub const ORDWR: u32 = 2;
+pub const OEXEC: u32 = 3;
+pub const OTRUNC: u32 = 16;
+pub const OCEXEC: u32 = 32;
+pub const ORCLOSE: u32 = 64;

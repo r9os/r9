@@ -15,14 +15,7 @@ use crate::error::{EBADARG, EBADFD, EBADUSEFD, ENOFD};
 /// programs need is all that's needed.
 pub const NOPEN: usize = 16;
 
-/// The open modes, as Plan 9's lib.h: an access, and the flags or'ed in.
-pub const OREAD: u32 = 0;
-pub const OWRITE: u32 = 1;
-pub const ORDWR: u32 = 2;
-pub const OEXEC: u32 = 3;
-pub const OTRUNC: u32 = 16;
-pub const OCEXEC: u32 = 32;
-pub const ORCLOSE: u32 = 64;
+pub use sys::{OCEXEC, OEXEC, OREAD, ORCLOSE, ORDWR, OTRUNC, OWRITE};
 
 /// The kinds of file a qid may name, as the type bits of Plan 9's lib.h.
 pub const QTDIR: u8 = 0x80;
