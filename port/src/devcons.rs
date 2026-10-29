@@ -197,9 +197,6 @@ impl Dev for Cons {
     fn walk(&self, c: &Arc<Chan>, elems: &[&str]) -> crate::Result<Arc<Chan>> {
         let mut c = c.clone();
         for elem in elems {
-            if elem.is_empty() {
-                return Err(ENONEXIST);
-            }
             if c.qid().kind != QTDIR {
                 return Err(ENOTDIR);
             }
