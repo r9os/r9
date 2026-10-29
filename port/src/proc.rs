@@ -49,8 +49,8 @@ pub fn newproc<A: ProcArch>(start: fn()) -> Result<Box<Proc<A>>, NewprocError> {
     let label = A::new_context(proc_start::<A>, &kstack);
     let pid = NEXT_PID.fetch_add(1, Ordering::Relaxed);
     // The standard files, as Plan 9's opencons: the console on 0, 1 and 2,
-    // all OWRITE, without the bind, since there's no namespace yet, and
-    // without the OREAD on 0, since there's no read path until input.
+    // all OWRITE, since there's no read path until input.  They're opened
+    // as #c/cons, which names the device whatever's bound on /dev.
     let mut fds = [const { None }; NOPEN];
     for slot in &mut fds[..3] {
         *slot = Some(
