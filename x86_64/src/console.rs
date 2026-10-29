@@ -1,7 +1,7 @@
 // Racy to start.
 
 use core::cell::SyncUnsafeCell;
-use port::devcons::{Console, Uart};
+use port::console::{Console, Uart};
 
 struct Uart16550 {
     port: u16,

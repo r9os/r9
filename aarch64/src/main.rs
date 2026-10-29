@@ -11,7 +11,7 @@
 mod allocator;
 mod boottest;
 mod clock;
-mod devcons;
+mod console;
 mod deviceutil;
 mod gic;
 mod io;
@@ -205,7 +205,7 @@ pub extern "C" fn main9(dtb_pa: usize) {
         panic!("error:Couldn't mark unused pages as free: err: {:?}", err);
     }
 
-    devcons::init(&dt);
+    console::init(&dt);
     clock::init(&dt);
     mailbox::init(&dt);
     proc::init();

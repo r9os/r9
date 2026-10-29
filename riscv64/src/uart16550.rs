@@ -2,7 +2,7 @@ use core::convert::TryInto;
 use core::fmt::Error;
 use core::fmt::Write;
 
-use port::devcons::Uart;
+use port::console::Uart;
 use port::fdt::RegBlock;
 
 pub struct Uart16550 {

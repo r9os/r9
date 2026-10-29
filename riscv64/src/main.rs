@@ -13,7 +13,7 @@ mod uart16550;
 
 use port::println;
 
-use crate::platform::{devcons, platform_init};
+use crate::platform::{console, platform_init};
 use port::fdt::DeviceTree;
 
 #[cfg(not(test))]
@@ -22,7 +22,7 @@ core::arch::global_asm!(include_str!("l.S"));
 #[unsafe(no_mangle)]
 pub extern "C" fn main9(hartid: usize, dtb_ptr: usize) -> ! {
     let dt = unsafe { DeviceTree::from_usize(dtb_ptr).unwrap() };
-    crate::devcons::init(&dt);
+    crate::console::init(&dt);
     platform_init();
 
     println!();

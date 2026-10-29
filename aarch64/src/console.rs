@@ -3,9 +3,9 @@
 use crate::uartmini::MiniUart;
 use core::cell::SyncUnsafeCell;
 use core::mem::MaybeUninit;
-use port::devcons::Console;
+use port::console::Console;
 use port::fdt::DeviceTree;
-// The aarch64 devcons implementation is focussed on Raspberry Pi 4 for now.
+// The aarch64 console implementation is focussed on Raspberry Pi 4 for now.
 
 // Useful links
 // - Raspberry Pi Processors

@@ -7,9 +7,9 @@
 #![forbid(unsafe_op_in_unsafe_fn)]
 
 mod allocator;
+mod console;
 mod cpu;
 mod dat;
-mod devcons;
 mod node0;
 mod pio;
 mod proc;
@@ -45,7 +45,7 @@ pub extern "C" fn main(mach: &mut dat::Mach, _mbdata: u64) {
     }
     syscall::init();
     let x = trap::splhi();
-    devcons::init();
+    console::init();
     println!();
     println!("r9 from the Internet");
     println!("looping now");

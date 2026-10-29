@@ -1,5 +1,5 @@
 use port::Result;
-use port::devcons::Uart;
+use port::console::Uart;
 use port::fdt::DeviceTree;
 use port::mem::{PhysRange, VirtRange};
 
