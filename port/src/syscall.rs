@@ -8,12 +8,12 @@ use core::time::Duration;
 use crate::chan::{fdtochan, freefd, openmode, Chan, OREAD, OWRITE, QTDIR};
 use crate::dat::{Access, ProcArch};
 use crate::dev::open_name;
-use crate::error::{EBADARG, EBADFD, EISDIR, ENEGOFF};
+use crate::error::{EBADARG, EBADFD, EISDIR, ENAMETOOLONG, ENEGOFF};
 use crate::println;
 use crate::proc::{pexit, tsleep, yield_now};
 use crate::segment::ibrk;
 use crate::timer;
-use crate::uaccess::{copy_from_user, copy_str_from_user, copy_to_user, validate_user_range};
+use crate::uaccess::{copy_from_user, copy_str_from_user, copy_to_user, peek_user_byte, validate_user_range};
 
 use sys::{BRK_, CLOSE, DUP, ERRMAX, ERRSTR, EXITS, OPEN, PREAD, PWRITE, SEEK, SLEEP, SYSR1};
 
@@ -113,7 +113,10 @@ const CHUNK: usize = 256;
 /// The offset a pread or pwrite uses, as Plan 9's offp: the -1 sentinel,
 /// u64::MAX, resolves to the channel's offset and maintains it; any other
 /// value is the user's signed offset, passed through and leaving the
-/// channel's untouched, and a negative one is Enegoff.
+/// channel's untouched, and a negative one is Enegoff.  The callers add to
+/// the result with wrapping arithmetic, as Plan 9's vlong offset does: a seek
+/// can park the channel's offset at the top of u64, and a write from there
+/// must wrap, not trap.
 fn offset(c: &Chan, off: u64) -> crate::Result<(u64, bool)> {
     if off == u64::MAX {
         return Ok((c.offset(), true));
@@ -132,6 +135,12 @@ fn sysopen<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
     let omode = openmode(mode)?;
     let mut buf = [0u8; 256];
     let n = copy_str_from_user::<A>(&mut buf, name);
+    // A full buffer ends at 256 only if the 257th byte is the terminator or
+    // isn't mapped; a mapped byte past it is a longer name, which Plan 9's
+    // validname refuses with "name too long" rather than truncating.
+    if n == buf.len() && peek_user_byte::<A>(name + n).is_some_and(|b| b != 0) {
+        return Err(ENAMETOOLONG);
+    }
     let name = core::str::from_utf8(&buf[..n]).map_err(|_| EBADARG)?;
     let c = open_name(name, omode)?;
     let up = A::up();
@@ -189,7 +198,7 @@ fn syspread<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
     let mut chunk = [0u8; CHUNK];
     for pos in (0..len).step_by(CHUNK) {
         let n = CHUNK.min(len - pos);
-        let m = c.dev().read(&c, &mut chunk[..n], off + pos as u64)?;
+        let m = c.dev().read(&c, &mut chunk[..n], off.wrapping_add(pos as u64))?;
         if m == 0 {
             break;
         }
@@ -197,7 +206,7 @@ fn syspread<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
         total += m as usize;
     }
     if maintain {
-        c.set_offset(off + total as u64);
+        c.set_offset(off.wrapping_add(total as u64));
     }
     Ok(total as u64)
 }
@@ -219,7 +228,7 @@ fn syspwrite<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
     }
     let (off, maintain) = offset(&c, args[3])?;
     if maintain {
-        c.set_offset(off + len as u64);
+        c.set_offset(off.wrapping_add(len as u64));
     }
     let mut total = 0;
     let mut err = None;
@@ -227,7 +236,7 @@ fn syspwrite<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
     for pos in (0..len).step_by(CHUNK) {
         let n = CHUNK.min(len - pos);
         copy_from_user::<A>(&mut chunk[..n], buf + pos);
-        match c.dev().write(&c, &chunk[..n], off + pos as u64) {
+        match c.dev().write(&c, &chunk[..n], off.wrapping_add(pos as u64)) {
             Ok(m) => total += m as usize,
             Err(e) => {
                 err = Some(e);
@@ -243,7 +252,7 @@ fn syspwrite<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
                 c.set_offset(off);
                 return Err(e);
             }
-            None if total < len => c.set_offset(off + total as u64),
+            None if total < len => c.set_offset(off.wrapping_add(total as u64)),
             None => {}
         }
     } else if let Some(e) = err {
@@ -311,7 +320,7 @@ mod tests {
     use alloc::sync::Arc;
     use super::*;
     use crate::dat::ProcArch;
-    use crate::error::{EBADUSEFD, ENOTSUP};
+    use crate::error::{ENONEXIST, EBADUSEFD, ENOTSUP};
     use crate::fake::{Fake, cons_output, fake_cons, user_mem};
     use crate::mem::PAGE_SIZE_4K;
     use crate::proc::{newproc, reap};
@@ -418,6 +427,30 @@ mod tests {
     }
 
     #[test]
+    fn an_over_long_name_is_refused() {
+        as_proc(|| {
+            let mut mem = user_mem();
+            let base = mem.base();
+            let open = || syscall::<Fake>(OPEN, [base as u64, OWRITE as u64, 0, 0, 0, 0]);
+
+            // "#c/" plus 253 a's: 256 bytes, the buffer's length, then the
+            // terminator.  It copies whole and resolves to the walk, whose
+            // own error the open reports.
+            mem.0[..3].copy_from_slice(b"#c/");
+            mem.0[3..256].fill(b'a');
+            mem.0[256] = 0;
+            assert_eq!(open(), u64::MAX, "256 bytes, the buffer's length");
+            assert_eq!(current_errstr(), ENONEXIST.as_bytes());
+
+            // One byte longer, and no terminator: Plan 9's "name too long",
+            // not a truncated open.
+            mem.0[256] = b'a';
+            assert_eq!(open(), u64::MAX, "257 bytes");
+            assert_eq!(current_errstr(), ENAMETOOLONG.as_bytes());
+        });
+    }
+
+    #[test]
     fn seek_from_its_three_whences() {
         as_proc(|| {
             let _mem = user_mem();
@@ -449,6 +482,26 @@ mod tests {
             }
             assert_eq!(seek(1, 1, 1), u64::MAX, "above u64's range");
             assert_eq!(current_errstr(), EBADARG.as_bytes());
+        });
+    }
+
+    #[test]
+    fn a_write_from_the_top_of_u64_wraps() {
+        as_proc(|| {
+            let mut mem = user_mem();
+            let base = mem.base();
+            let seek = |fd, off, whence| syscall::<Fake>(SEEK, [fd, off, whence, 0, 0, 0]);
+
+            // A user can park the channel's offset at the top of u64: seek
+            // to i64::MAX, then add i64::MAX more, sseek's i128 allowing it.
+            assert_eq!(seek(1, i64::MAX as u64, 0), i64::MAX as u64, "to i64::MAX");
+            assert_eq!(seek(1, i64::MAX as u64, 1), u64::MAX - 1, "i64::MAX past it");
+
+            // A -1-offset write from there must wrap, as Plan 9's vlong does,
+            // not trap the kernel's checked arithmetic.
+            mem.0[..6].copy_from_slice(b"hello\n");
+            assert_eq!(syscall::<Fake>(PWRITE, [1, base as u64, 6, u64::MAX, 0, 0]), 6, "the wrap");
+            assert_eq!(seek(1, 0, 1), 4, "2^64 - 2 + 6, mod 2^64");
         });
     }
 

@@ -6,6 +6,7 @@ pub const EBADSHARP: &str = "unknown device in # filename";
 pub const EBADUSEFD: &str = "inappropriate use of fd";
 pub const EBADEXEC: &str = "exec header invalid";
 pub const EISDIR: &str = "file is a directory";
+pub const ENAMETOOLONG: &str = "name too long";
 pub const ENEGOFF: &str = "negative i/o offset";
 pub const ENOFD: &str = "no free file descriptors";
 pub const ENONEXIST: &str = "file does not exist";
