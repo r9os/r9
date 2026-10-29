@@ -1,10 +1,21 @@
-//! User memory, as Plan 9's port/segment.c.  There are no segments yet, only
-//! pages mapped in the current address space.
+//! User memory, as Plan 9's port/segment.c: pages mapped in the current
+//! address space, which a process records as its segments.
 
-use crate::dat::{MMU, Perm, ProcArch, PutError};
+use alloc::vec::Vec;
+
+use crate::dat::{MMU, Perm, ProcArch, PutError, UserSegment};
 use crate::error::{EBADARG, ENOVMEM, ESOVERLAP};
 use crate::mem::{PAGE_SIZE_4K, VirtRange};
 use crate::pagealloc::{allocate_physpage, free_physpage, usage_bytes};
+
+/// Set the current process's segments, but for its bss, whose pages the
+/// caller has mapped, each as its segment says.
+pub fn set_segments<A: ProcArch>(segments: Vec<UserSegment>) {
+    let up = A::up();
+    assert!(!up.is_null(), "set_segments: no current process");
+    // SAFETY: up is the running process, which is setting itself up.
+    unsafe { (*up).segments = segments };
+}
 
 /// Set the current process's bss to `bss`, whose pages, from its start rounded
 /// up to its end, the caller has mapped.

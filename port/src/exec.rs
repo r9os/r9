@@ -2,12 +2,14 @@
 //! There's no exec syscall yet: a start function calls exec, then enters the
 //! program with the registers it returns.
 
-use crate::dat::{KNAMELEN, MMU, Perm, ProcArch, PutError};
+use alloc::vec::Vec;
+
+use crate::dat::{KNAMELEN, MMU, Perm, ProcArch, PutError, UserSegment};
 use crate::elf::{self, Elf, Segment};
 use crate::error::{EBADARG, EBADEXEC, ENOVMEM};
 use crate::mem::{PAGE_SIZE_4K, VirtRange};
 use crate::pagealloc::{allocate_physpage, free_physpage};
-use crate::segment::{map_zeroed, set_bss};
+use crate::segment::{map_zeroed, set_bss, set_segments};
 use crate::uaccess::copy_to_user;
 
 /// What a program starts with: its pc and stack pointer, and argc and argv,
@@ -29,14 +31,16 @@ pub struct UserRegs {
 /// can't fail, which a caller passing an image doesn't have.
 pub fn exec<A: ProcArch>(image: &[u8], argv: &[&[u8]]) -> crate::Result<UserRegs> {
     args_size::<A>(argv)?;
-    let pc = load::<A>(image)?;
-    map_zeroed::<A>(VirtRange::new(A::USTKTOP - A::USTKSIZE, A::USTKTOP)).map_err(
+    let (pc, mut segments) = load::<A>(image)?;
+    map_zeroed::<A>(stack::<A>()).map_err(
         |err| match err {
             PutError::AlreadyMapped => EBADEXEC,
             PutError::NoMemory => ENOVMEM,
         },
     )?;
     let regs = push_args::<A>(pc, A::USTKTOP, argv)?;
+    segments.push(UserSegment { range: stack::<A>(), perm: Perm::Data });
+    set_segments::<A>(segments);
     set_text::<A>(argv.first().copied().unwrap_or_default());
     Ok(regs)
 }
@@ -91,18 +95,42 @@ pub fn push_args<A: ProcArch>(pc: usize, top: usize, argv: &[&[u8]]) -> crate::R
 }
 
 /// Load the ELF executable `image` into the current process: map each of its
-/// segments, set its bss to what follows its data, and return its entry point.
+/// segments, set its bss to what follows its data, and return its entry
+/// point and the segments its pages make, for the caller to record.
 /// The layout is checked before anything is mapped.  A failure while mapping
 /// isn't undone, as there's no going back after Plan 9's point of no return:
 /// the caller must exit the process, whose release frees what was mapped.
-pub fn load<A: ProcArch>(image: &[u8]) -> crate::Result<usize> {
+pub fn load<A: ProcArch>(image: &[u8]) -> crate::Result<(usize, Vec<UserSegment>)> {
     let elf = elf::parse(image).map_err(|_| EBADEXEC)?;
     let bss = layout::<A>(&elf)?;
     for seg in elf.segments() {
         load_segment::<A>(&seg)?;
     }
     set_bss::<A>(bss);
-    Ok(elf.entry())
+    Ok((elf.entry(), segments(&elf, bss)))
+}
+
+/// The user stack's pages.
+fn stack<A: MMU>() -> VirtRange {
+    VirtRange::new(A::USTKTOP - A::USTKSIZE, A::USTKTOP)
+}
+
+/// The segments `elf`'s pages make, given its `bss`, as Plan 9's TSEG and
+/// DSEG: each loadable segment's pages, but the data's only up to the bss's
+/// start, rounded up, since the bss owns the pages from there, which brk_
+/// frees when it shrinks.
+fn segments(elf: &Elf, bss: VirtRange) -> Vec<UserSegment> {
+    elf.segments()
+        .map(|seg| {
+            let start = seg.vaddr & !(PAGE_SIZE_4K - 1);
+            let end = match seg.perm {
+                Perm::Data => bss.start.next_multiple_of(PAGE_SIZE_4K),
+                _ => (seg.vaddr + seg.memsz).next_multiple_of(PAGE_SIZE_4K),
+            };
+            UserSegment { range: VirtRange::new(start, end), perm: seg.perm }
+        })
+        .filter(|s| s.range.start < s.range.end)
+        .collect()
 }
 
 /// Check that `elf` fits the user address space, between UTZERO and the guard
@@ -244,6 +272,42 @@ mod tests {
         assert_eq!(push_args::<Fake>(0, top, &[&big]), Err(ENOVMEM), "a quarter of the stack");
         assert_eq!(push_args::<Fake>(0, top, &[b"a\0b"]), Err(EBADARG), "a NUL in a string");
         assert!(mem.0.iter().all(|&b| b == 0), "something was written");
+    }
+
+    #[test]
+    fn elftest_segments() {
+        let elf = elf::parse(ELFTEST).expect("didn't parse");
+        let bss = layout_of(ELFTEST).expect("a layout");
+        let segs = segments(&elf, bss);
+        let page = |a: usize| a & !(PAGE_SIZE_4K - 1);
+        let pgend = |a: usize| a.next_multiple_of(PAGE_SIZE_4K);
+
+        // One for each loadable segment, in order, with its perm.
+        let perms: Vec<Perm> = elf.segments().map(|s| s.perm).collect();
+        assert_eq!(segs.iter().map(|s| s.perm).collect::<Vec<_>>(), perms);
+
+        // The text and rodata are their whole pages; the data, the pages up
+        // to the bss's, which start with the page after its last file byte.
+        for (seg, s) in elf.segments().zip(&segs) {
+            let end = match seg.perm {
+                Perm::Data => pgend(seg.vaddr + seg.file.len()),
+                _ => pgend(seg.vaddr + seg.memsz),
+            };
+            assert_eq!(s.range, VirtRange::new(page(seg.vaddr), end), "{:?}", seg.perm);
+        }
+
+        // Together with the bss's pages, they're the pages load maps, each
+        // once.
+        let mut pages: Vec<usize> =
+            segs.iter().flat_map(|s| (s.range.start..s.range.end).step_by(PAGE_SIZE_4K)).collect();
+        pages.extend((pgend(bss.start)..bss.end).step_by(PAGE_SIZE_4K));
+        let mut loaded: Vec<usize> = elf
+            .segments()
+            .flat_map(|s| (page(s.vaddr)..pgend(s.vaddr + s.memsz)).step_by(PAGE_SIZE_4K))
+            .collect();
+        pages.sort();
+        loaded.sort();
+        assert_eq!(pages, loaded);
     }
 
     #[test]

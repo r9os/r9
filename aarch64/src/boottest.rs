@@ -16,7 +16,7 @@ use core::cell::SyncUnsafeCell;
 use core::hint::black_box;
 use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use core::time::Duration;
-use port::dat::{MMU, Perm, PutError};
+use port::dat::{MMU, Perm, ProcArch, PutError};
 use port::exec::UserRegs;
 use port::mem::{PAGE_SIZE_4K, PhysAddr, VirtRange};
 use port::println;
@@ -793,6 +793,20 @@ fn elf_start() {
     }
     assert!(!ok(end, Read), "above elftest's bss");
     assert!(ok(USTKTOP - 1, Write) && ok(USTKTOP - USTKSIZE, Write), "elftest's stack");
+    // The segments exec recorded, and the bss's pages, are mapped, each as
+    // its segment says: what a fork will copy.
+    // SAFETY: up is this process, which is running.
+    let up = unsafe { &*Aarch64::up() };
+    for s in up.segments() {
+        for va in (s.range.start..s.range.end).step_by(PAGE_SIZE_4K) {
+            let writable = s.perm == Perm::Data;
+            assert!(ok(va, Read) && ok(va, Write) == writable, "elftest's {s:?} at {va:#x}");
+        }
+    }
+    let bss = up.bss().expect("elftest's bss");
+    for va in (bss.start.next_multiple_of(PAGE_SIZE_4K)..bss.end).step_by(PAGE_SIZE_4K) {
+        assert!(ok(va, Write), "elftest's bss at {va:#x}");
+    }
     enter_user(regs)
 }
 
