@@ -177,6 +177,9 @@ pub struct Proc<A: ProcArch> {
     pub(crate) pmmu: A::Pmmu,
     pub(crate) kstack: A::KStack,
     pub(crate) label: A::Label,
+    /// Its text, rodata, data and stack, as Plan 9's seg[]: every page of
+    /// each is mapped.
+    pub(crate) segments: Vec<UserSegment>,
     /// The bss, which brk_ grows and shrinks (Plan 9's BSEG): every page from
     /// its start, rounded up, to its end is mapped.  None until it's set.
     pub(crate) bss: Option<VirtRange>,
@@ -271,6 +274,24 @@ impl<A: ProcArch> Proc<A> {
     pub fn kstack(&self) -> &A::KStack {
         &self.kstack
     }
+
+    /// The process's segments, but for its bss.
+    pub fn segments(&self) -> &[UserSegment] {
+        &self.segments
+    }
+
+    /// The process's bss, if it's set.
+    pub fn bss(&self) -> Option<VirtRange> {
+        self.bss
+    }
+}
+
+/// A segment of a process's memory, as Plan 9's Segment: whole pages, all
+/// mapped with `perm`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct UserSegment {
+    pub range: VirtRange,
+    pub perm: Perm,
 }
 
 /// Ready processes, first in first out, linked through Proc::next.  Each is a

@@ -148,6 +148,7 @@ pub fn newproc<A: ProcArch>(start: fn()) -> Result<Box<Proc<A>>, NewprocError> {
         pmmu,
         kstack,
         label,
+        segments: Vec::new(),
         bss: None,
         fds,
         exit_status: Vec::new(),
@@ -481,8 +482,8 @@ extern "C" fn proc_start<A: ProcArch>() -> ! {
 }
 
 /// Free everything an exited process holds, and return its exit status.  A
-/// process owns every page mapped in its address space, until there are
-/// segments, so they're all freed.
+/// process owns every page mapped in its address space, as nothing shares a
+/// segment yet, so they're all freed.
 ///
 /// # Safety
 ///
