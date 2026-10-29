@@ -1,25 +1,23 @@
-// Racy to start.
+extern crate alloc;
 
-use core::cell::SyncUnsafeCell;
-use core::mem::MaybeUninit;
+use alloc::boxed::Box;
 
 use crate::uart16550::Uart16550;
-use port::{console::Console, fdt::DeviceTree};
+use port::{console, fdt::DeviceTree};
 
 pub fn init(dt: &DeviceTree) {
-    let ns16550a_reg = dt
+    // Without a UART, there's nowhere to report the failure, so carry on
+    // without a console, as aarch64 does.
+    let Some(ns16550a_reg) = dt
         .find_compatible("ns16550a")
         .next()
         .and_then(|uart| dt.property_translated_reg_iter(uart).next())
         .and_then(|reg| reg.regblock())
-        .unwrap();
+    else {
+        return;
+    };
 
     let mut uart = Uart16550::new(ns16550a_reg);
     uart.init(115_200);
-
-    static CONS: SyncUnsafeCell<MaybeUninit<Uart16550>> =
-        SyncUnsafeCell::new(MaybeUninit::uninit());
-    // SAFETY: init runs once, before anything else uses CONS.
-    let uart = unsafe { (*CONS.get()).write(uart) };
-    Console::set_uart(uart);
+    console::set_uart(Box::leak(Box::new(uart)));
 }

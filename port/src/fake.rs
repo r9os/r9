@@ -5,7 +5,7 @@
 
 use crate::dat::RunQueue;
 use crate::dat::{Access, MMU, Perm, Proc, ProcArch, PutError};
-use crate::console::{Console, Uart};
+use crate::console::{self, Uart};
 use crate::mcslock::Lock;
 use crate::mem::{PAGE_SIZE_4K, PhysAddr};
 use crate::pagealloc::PageAllocError;
@@ -58,7 +58,7 @@ impl Uart for FakeUart {
 /// Make the console FakeUart, and clear this thread's output.  The console is
 /// shared by every thread, but each thread's output is its own.
 pub(crate) fn fake_cons() {
-    Console::set_uart(Box::leak(Box::new(FakeUart)));
+    console::set_uart(Box::leak(Box::new(FakeUart)));
     CONS_OUT.with(|o| o.borrow_mut().clear());
     CONS_MASKED.with(|m| m.borrow_mut().clear());
 }

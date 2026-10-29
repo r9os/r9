@@ -19,8 +19,6 @@ const fn ctrl(b: u8) -> u8 {
 const BACKSPACE: u8 = ctrl(b'H');
 const DELETE: u8 = 0x7F;
 const CTLD: u8 = ctrl(b'D');
-#[expect(dead_code)]
-const CTLP: u8 = ctrl(b'P');
 const CTLU: u8 = ctrl(b'U');
 
 /// Sync, since iprint on one CPU and print on another can use it at once.
@@ -44,46 +42,38 @@ fn uart() -> Option<&'static dyn Uart> {
     *UART.ilock(&node)
 }
 
-/// Console is what should be used in almost all cases, as it ensures threadsafe
-/// use of the console.
-pub struct Console;
-
-impl Console {
-    pub fn set_uart(uart: &'static dyn Uart) {
-        let node = LockNode::new();
-        *UART.ilock(&node) = Some(uart);
-    }
-
-    pub fn putstr(&mut self, s: &str) {
-        putstrn(s.as_bytes());
-    }
+/// Make `uart` the console's, as each architecture does as it boots.
+pub fn set_uart(uart: &'static dyn Uart) {
+    let node = LockNode::new();
+    *UART.ilock(&node) = Some(uart);
 }
 
 /// Write `s` to the console, as Plan 9's putstrn.  It's bytes rather than a
 /// str, since user output needn't be UTF-8.
 pub fn putstrn(s: &[u8]) {
-    // PRINTLOCK is taken with IRQs unmasked, so a handler that printed while
-    // its CPU held it would deadlock.  Handlers use iprint.
+    with_printlock(|uart| puts(uart, s));
+}
+
+/// Print to the console, as Plan 9's print, formatting straight to the UART,
+/// so a long print, such as a TrapFrame's, isn't cut short by a buffer.
+/// PRINTLOCK is held for the whole output, so two prints don't interleave,
+/// and a Display that printed would deadlock.
+pub fn print(args: fmt::Arguments) {
+    with_printlock(|uart| {
+        let _ = fmt::write(&mut Writer(uart), args);
+    });
+}
+
+/// Run `f` on the UART with PRINTLOCK held, if there's a UART.  PRINTLOCK
+/// is taken with IRQs unmasked, so a handler that printed while its CPU held
+/// it would deadlock: handlers use iprint.
+fn with_printlock(f: impl FnOnce(&'static dyn Uart)) {
     assert!(!irq::in_interrupt(), "print in interrupt context");
     let node = LockNode::new();
     let _print = PRINTLOCK.lock(&node);
     if let Some(uart) = uart() {
-        puts(uart, s);
+        f(uart);
     }
-}
-
-impl fmt::Write for Console {
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        self.putstr(s);
-        Ok(())
-    }
-}
-
-pub fn print(args: fmt::Arguments) {
-    // XXX: Just for testing.
-    use fmt::Write;
-    let mut cons: Console = Console {};
-    cons.write_fmt(args).unwrap();
 }
 
 /// Print with IRQs masked, without the console lock, straight to the UART, as

@@ -1,11 +1,8 @@
-// Racy to start.
-
 use crate::uartmini::{MiniUart, RX_FIFO};
-use core::cell::SyncUnsafeCell;
-use core::mem::MaybeUninit;
-use core::sync::atomic::{AtomicUsize, Ordering};
-use port::console::Console;
+use alloc::boxed::Box;
+use port::console;
 use port::fdt::DeviceTree;
+use port::mcslock::{Lock, LockNode};
 // The aarch64 console implementation is focussed on Raspberry Pi 4 for now.
 
 // Useful links
@@ -24,10 +21,15 @@ use port::fdt::DeviceTree;
 // - UART2 PL011
 // - UART3 PL011
 
-static UART: SyncUnsafeCell<MaybeUninit<MiniUart>> = SyncUnsafeCell::new(MaybeUninit::uninit());
+/// The mini UART and its interrupt, once init has found both: the console's
+/// input.  It's taken with ilock, since the interrupt handler takes it, and
+/// held only to copy them out.
+static INPUT: Lock<Option<(&'static MiniUart, usize)>> = Lock::new("miniuart input", None);
 
-/// The mini UART's interrupt, or 0 until init has set UART and found it.
-static INTID: AtomicUsize = AtomicUsize::new(0);
+fn input() -> Option<(&'static MiniUart, usize)> {
+    let node = LockNode::new();
+    *INPUT.ilock(&node)
+}
 
 pub fn init(dt: &DeviceTree) {
     // Without a UART, there's nowhere to report the failure.
@@ -35,33 +37,31 @@ pub fn init(dt: &DeviceTree) {
         return;
     };
     uart.init();
-
-    // SAFETY: init runs once, before anything else uses UART.
-    let uart = unsafe { (*UART.get()).write(uart) };
-    Console::set_uart(uart);
+    let uart: &'static MiniUart = Box::leak(Box::new(uart));
+    console::set_uart(uart);
     if let Ok(intid) = MiniUart::find_intid(dt) {
-        INTID.store(intid, Ordering::Release);
+        let node = LockNode::new();
+        *INPUT.ilock(&node) = Some((uart, intid));
     }
 }
 
 /// Take the mini UART's receive interrupt for the console's input, once the
 /// GIC is set up.  Without a UART, or its interrupt, there's no input.
 pub fn start() {
-    let intid = INTID.load(Ordering::Acquire);
-    if intid == 0 {
+    let Some((uart, intid)) = input() else {
         return;
-    }
+    };
     crate::gic::attach(intid, interrupt);
-    // SAFETY: INTID is set only once init has written UART.
-    unsafe { (*UART.get()).assume_init_ref() }.enable_receive_interrupt();
+    uart.enable_receive_interrupt();
 }
 
 /// The mini UART's receive interrupt: drain its FIFO into the console's
 /// input.  The interrupt is shared with the auxiliary SPIs, which r9 doesn't
 /// use, so one that isn't the mini UART's has nothing to do.
 fn interrupt() {
-    // SAFETY: the interrupt is attached only once init has written UART.
-    let uart = unsafe { (*UART.get()).assume_init_ref() };
+    let Some((uart, _)) = input() else {
+        return;
+    };
     if !uart.interrupt_pending() {
         return;
     }
