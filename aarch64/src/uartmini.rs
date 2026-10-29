@@ -12,6 +12,7 @@ use crate::vm;
 use port::println;
 
 // AUX registers, offset from aux_reg
+pub const AUX_IRQ: usize = 0x00; // AUX interrupt status (Mini Uart, SPIs)
 pub const AUX_ENABLE: usize = 0x04; // AUX enable register (Mini Uart, SPIs)
 
 // UART1 registers, offset from miniuart_reg
@@ -154,6 +155,67 @@ impl MiniUart {
 
         // Finally enable transmit
         write_reg(&self.miniuart_virtrange, AUX_MU_CNTL, 3);
+    }
+}
+
+/// The receive FIFO's depth (BCM2711 ARM Peripherals, 2.2).
+pub const RX_FIFO: usize = 8;
+
+impl MiniUart {
+    /// The mini UART's interrupt: its node's interrupts is a GIC interrupt's
+    /// three cells, type, number and flags, and it's an SPI (type 0), whose
+    /// INTID is 32 plus its number (IHI 0048B.b, 2.2.1).  It's shared with
+    /// the two auxiliary SPIs (BCM2711 ARM Peripherals, 2.1).
+    pub fn find_intid(dt: &DeviceTree) -> Result<usize> {
+        let node =
+            dt.find_compatible("brcm,bcm2835-aux-uart").next().ok_or("can't find miniuart")?;
+        let interrupts = dt.property(&node, "interrupts").ok_or("miniuart has no interrupts")?;
+        let mut cells = dt.property_value_as_u32_iter(&interrupts);
+        match (cells.next(), cells.next()) {
+            (Some(0), Some(n)) => Ok(32 + n as usize),
+            _ => Err("miniuart's interrupt isn't an SPI"),
+        }
+    }
+
+    /// Interrupt whenever the receive FIFO holds a byte: AUX_MU_IER_REG's
+    /// bit 0.  BCM2711 ARM Peripherals, 2.2.2, Table 6, gives it as bit 1,
+    /// repeating the BCM2835 manual's swapped bits, but QEMU's
+    /// bcm2835_aux.c (RX_INT is 0x1) and Linux's 8250_bcm2835aux (an 8250's
+    /// UART_IER_RDI, 0x01) agree it's bit 0.  The transmit interrupt, bit 1,
+    /// stays off: it's asserted whenever the transmit FIFO is empty.
+    pub fn enable_receive_interrupt(&self) {
+        write_reg(&self.miniuart_virtrange, AUX_MU_IER, 1);
+    }
+
+    /// Whether the mini UART's interrupt is pending, rather than an
+    /// auxiliary SPI's: AUX_IRQ's bit 0 (BCM2711 ARM Peripherals, 2.1.1,
+    /// Table 3).
+    pub fn interrupt_pending(&self) -> bool {
+        read_reg(&self.aux_virtrange, AUX_IRQ) & 1 != 0
+    }
+
+    /// Take what the receive FIFO holds into `buf`, and return how much, and
+    /// whether bytes were lost before it: bytes from AUX_MU_IO_REG while
+    /// AUX_MU_LSR_REG's data ready bit, bit 0, is set, at most the FIFO's
+    /// depth, so the work is bounded.  LSR's receiver overrun bit, bit 1, is
+    /// set when bytes arrived while the FIFO was full, and clears when LSR is
+    /// read (2.2.2, Table 10), so every read of LSR is checked for it.  The
+    /// receive interrupt is level-triggered, and drops once the FIFO's empty.
+    pub fn drain(&self, buf: &mut [u8; RX_FIFO]) -> (usize, bool) {
+        const DATA_READY: u32 = 1 << 0;
+        const OVERRUN: u32 = 1 << 1;
+        let mut n = 0;
+        let mut overrun = false;
+        while n < RX_FIFO {
+            let lsr = read_reg(&self.miniuart_virtrange, AUX_MU_LSR);
+            overrun |= lsr & OVERRUN != 0;
+            if lsr & DATA_READY == 0 {
+                break;
+            }
+            buf[n] = read_reg(&self.miniuart_virtrange, AUX_MU_IO) as u8;
+            n += 1;
+        }
+        (n, overrun)
     }
 }
 
