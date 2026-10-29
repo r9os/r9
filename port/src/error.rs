@@ -3,6 +3,7 @@
 pub const EBADARG: &str = "bad arg in system call";
 pub const EBADFD: &str = "fd out of range or not open";
 pub const EBADSHARP: &str = "unknown device in # filename";
+pub const EBADTIMECTL: &str = "bad time control";
 pub const EBADUSEFD: &str = "inappropriate use of fd";
 pub const EBADEXEC: &str = "exec header invalid";
 pub const EISDIR: &str = "file is a directory";
