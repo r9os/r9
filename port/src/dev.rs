@@ -191,10 +191,14 @@ mod tests {
         assert!(perm_ok(0o555, OREAD), "a root read");
         assert!(!perm_ok(0o555, OWRITE), "a root write");
         assert!(!perm_ok(0o555, ORDWR), "a root read and write");
-        // cons is 0220: only the write.
-        assert!(!perm_ok(0o220, OREAD), "a cons read");
-        assert!(perm_ok(0o220, OWRITE), "a cons write");
-        assert!(!perm_ok(0o220, ORDWR), "a cons read and write");
+        // pid is 0444: only the read.
+        assert!(perm_ok(0o444, OREAD), "a pid read");
+        assert!(!perm_ok(0o444, OWRITE), "a pid write");
+        assert!(!perm_ok(0o444, ORDWR), "a pid read and write");
+        // cons is 0660: both.
+        assert!(perm_ok(0o660, OREAD), "a cons read");
+        assert!(perm_ok(0o660, OWRITE), "a cons write");
+        assert!(perm_ok(0o660, ORDWR), "a cons read and write");
         // A mode without the group slot grants nothing.
         assert!(!perm_ok(0o500, OREAD), "owner bits only");
         assert!(!perm_ok(0o005, OREAD), "other bits only");
@@ -221,8 +225,8 @@ mod tests {
         // The permissions that fail, as the modes say: a write of a
         // directory fails the group check, as Plan 9's devopen orders it,
         // before its directory arm.
-        assert_eq!(err("#c/cons", OREAD), EPERM, "a cons read");
-        assert_eq!(err("#c/cons", ORDWR), EPERM, "a cons read and write");
+        assert_eq!(err("#c/pid", OWRITE), EPERM, "a pid write");
+        assert_eq!(err("#c/pid", ORDWR), EPERM, "a pid read and write");
         assert_eq!(err("#c", OWRITE), EPERM, "a directory write");
         assert_eq!(err("#c", ORDWR), EPERM, "a directory read and write");
 
@@ -282,7 +286,7 @@ mod tests {
         let root = open_name("/dev", OREAD).expect("/dev");
         assert_eq!(root.qid().kind, QTDIR, "the console's root");
 
-        assert_eq!(err("/dev/cons", OREAD), EPERM, "cons's permissions");
+        assert_eq!(err("/dev/pid", OWRITE), EPERM, "pid's permissions");
         assert_eq!(err("/dev/nope", OWRITE), ENONEXIST, "a missing name");
         assert_eq!(err("/dev/cons/x", OWRITE), ENOTDIR, "past the file");
         assert_eq!(err("cons", OWRITE), ENONEXIST, "no current directory");
@@ -295,10 +299,8 @@ mod tests {
         assert_eq!(c.dev().write(&c, b"hi\n", 0).expect("a write"), 3);
         assert_eq!(cons_output(), b"hi\r\n", "through the console");
 
-        // Every read fails, until the read path arrives.
+        // A directory's read isn't supported yet.
         let mut buf = [0u8; 4];
-        assert_eq!(c.dev().read(&c, &mut buf, 0), Err(ENOTSUP), "a cons read");
-
         let root = open_name("#c", OREAD).expect("the root");
         assert_eq!(root.dev().read(&root, &mut buf, 0), Err(ENOTSUP), "a directory read");
     }

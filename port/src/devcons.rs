@@ -8,7 +8,7 @@ use core::sync::atomic::{AtomicI64, Ordering};
 
 use crate::chan::{Chan, OREAD, Qid, QTDIR, QTFILE};
 use crate::clock;
-use crate::console::putstrn;
+use crate::console::{self, putstrn};
 use crate::dev::{self, Dev};
 use crate::error::{EBADTIMECTL, ENONEXIST, ENOTDIR, ENOTSUP, EPERM};
 use crate::proc;
@@ -43,10 +43,9 @@ const PID_PATH: u64 = 3;
 const NUMSIZE: usize = 12;
 const VLNUMSIZE: usize = 22;
 
-/// The console device's files, as Plan 9's consdir.  cons is write-only
-/// until the console-input task, which makes it Plan 9's 0660.
+/// The console device's files, as Plan 9's consdir.
 const FILES: &[File] = &[
-    File { name: "cons", path: CONS_PATH, mode: 0o220, length: 0 },
+    File { name: "cons", path: CONS_PATH, mode: 0o660, length: 0 },
     File { name: "time", path: TIME_PATH, mode: 0o664, length: (NUMSIZE + 3 * VLNUMSIZE) as u64 },
     File { name: "pid", path: PID_PATH, mode: 0o444, length: NUMSIZE as u64 },
 ];
@@ -179,6 +178,7 @@ impl Dev for Cons {
 
     fn read(&self, c: &Arc<Chan>, buf: &mut [u8], offset: u64) -> crate::Result<u64> {
         match c.qid().path {
+            CONS_PATH => Ok(console::read(buf)? as u64),
             TIME_PATH => Ok(readstr(offset, buf, time_text()?.as_bytes())),
             PID_PATH => {
                 let pid = proc::current_pid().ok_or(ENOTSUP)?;
