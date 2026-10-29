@@ -226,6 +226,7 @@ pub extern "C" fn main9(dtb_pa: usize) {
     print_memory_info();
 
     gic::init(&dt);
+    console::start();
 
     vmdebug::print_recursive_tables(RootPageTableType::Kernel);
 
