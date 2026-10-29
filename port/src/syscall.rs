@@ -117,7 +117,10 @@ fn sysbrk_<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
 
 /// The kernel chunk a pread or pwrite copies the user buffer through, as the
 /// 256-byte chunk of Plan 9's conswrite: the device sees only kernel memory,
-/// so no user access happens while the console is locked.
+/// so no user access happens while the console is locked.  A pread is one
+/// device read of at most a chunk, as Plan 9's read is one device read: a
+/// device that waits, such as cons for a line, mustn't be read again in the
+/// same call.
 const CHUNK: usize = 256;
 
 /// The offset a pread or pwrite uses, and whether it's the channel's, as
@@ -184,32 +187,23 @@ fn sysdup<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
 }
 
 /// pread(fd, buf, len, offset): the buffer checked first, as Plan 9's read,
-/// the channel for OREAD, the offset resolved, and the bytes copied through
-/// the kernel chunk.  On a successful read, the channel's offset advances by
-/// the bytes read, at an explicit offset too, as Plan 9's read does, though
-/// its read(2) and its write don't.
+/// the channel for OREAD, the offset resolved, and one device read, of at
+/// most a chunk, copied out.  On a successful read, the channel's offset
+/// advances by the bytes read, at an explicit offset too, as Plan 9's read
+/// does, though its read(2) and its write don't.
 fn syspread<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
     let (fd, buf, len) = (args[0], args[1] as usize, args[2] as usize);
     validate_user_range::<A>(buf, len, Access::Write);
     let c = with_fds::<A, _>(|fds| fdtochan(fds, fd, Some(OREAD)))?;
     let (off, _) = offset(&c, args[3])?;
-    let mut total = 0;
     let mut chunk = [0u8; CHUNK];
-    for pos in (0..len).step_by(CHUNK) {
-        let n = CHUNK.min(len - pos);
-        let m = c.dev().read(&c, &mut chunk[..n], off + pos as u64)? as usize;
-        copy_to_user::<A>(buf + pos, &chunk[..m]);
-        total += m;
-        // A short read is where the device stopped, as one call of Plan 9's
-        // read: a console line, or the end of the file.
-        if m < n {
-            break;
-        }
-    }
+    let n = CHUNK.min(len);
+    let m = c.dev().read(&c, &mut chunk[..n], off)? as usize;
+    copy_to_user::<A>(buf, &chunk[..m]);
     // At an explicit offset, the channel's offset wasn't checked, so the add
     // wraps, as Plan 9's vlong does, and a later use of it is Enegoff.
-    c.set_offset(c.offset().wrapping_add(total as u64));
-    Ok(total as u64)
+    c.set_offset(c.offset().wrapping_add(m as u64));
+    Ok(m as u64)
 }
 
 /// pwrite(fd, buf, len, offset): the buffer checked first, as Plan 9's write,

@@ -10,7 +10,7 @@ use core::ptr;
 use core::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
 use core::time::Duration;
 
-use crate::chan::{NOPEN, OWRITE};
+use crate::chan::{NOPEN, OREAD, OWRITE};
 use crate::dat::{Proc, ProcArch, Rendez, State};
 use crate::dev::open_name;
 use crate::irq;
@@ -130,17 +130,15 @@ pub fn newproc<A: ProcArch>(start: fn()) -> Result<Box<Proc<A>>, NewprocError> {
     };
     let label = A::new_context(proc_start::<A>, &kstack);
     let pid = NEXT_PID.fetch_add(1, Ordering::Relaxed);
-    // The standard files, as Plan 9's opencons: the console on 0, 1 and 2,
-    // all OWRITE, since there's no read path until input.  They're opened
-    // as #c/cons, which names the device whatever's bound on /dev.
+    // The standard files, as Plan 9's opencons: the console on 0, OREAD,
+    // and on 1 and 2, OWRITE.  They're opened as #c/cons, which names the
+    // device whatever's bound on /dev.
     let mut fds = [const { None }; NOPEN];
-    for slot in &mut fds[..3] {
-        *slot = Some(
-            open_name("#c/cons", OWRITE).expect(
-                "newproc: opening #c/cons OWRITE can't fail: attach has nothing \
-                 to fail it, cons is in the table, and 0220's group bits grant it",
-            ),
-        );
+    for (slot, mode) in fds.iter_mut().zip([OREAD, OWRITE, OWRITE]) {
+        *slot = Some(open_name("#c/cons", mode).expect(
+            "newproc: opening #c/cons can't fail: attach has nothing to fail \
+             it, cons is in the table, and 0660's group bits grant both modes",
+        ));
     }
     Ok(Box::new(Proc {
         pid,
@@ -450,12 +448,12 @@ mod tests {
     #[test]
     fn newproc_opens_the_console_on_the_standard_fds() {
         let p = newproc::<Fake>(start).expect("newproc failed");
-        // The console channel on each of 0, 1 and 2, all OWRITE.
-        for slot in &p.fds[..3] {
+        // The console channel on 0, OREAD, and on 1 and 2, OWRITE.
+        for (slot, mode) in p.fds[..3].iter().zip([OREAD, OWRITE, OWRITE]) {
             let c = slot.as_ref().expect("a standard fd");
             assert_eq!(c.qid().path, 1, "the channel's qid path");
             assert_eq!(c.qid().kind, QTFILE, "the channel's qid kind");
-            assert_eq!(c.mode(), OWRITE, "the channel's mode");
+            assert_eq!(c.mode(), mode, "the channel's mode");
         }
         // The fds are real channels: reap frees the process's references,
         // and the channel kept across it is left with only the caller's Arc.
