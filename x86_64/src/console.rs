@@ -1,7 +1,4 @@
-// Racy to start.
-
-use core::cell::SyncUnsafeCell;
-use port::console::{Console, Uart};
+use port::console::{self, Uart};
 
 struct Uart16550 {
     port: u16,
@@ -13,8 +10,8 @@ impl Uart for Uart16550 {
     }
 }
 
+static CONS: Uart16550 = Uart16550 { port: 0x3f8 };
+
 pub fn init() {
-    static CONS: SyncUnsafeCell<Uart16550> = SyncUnsafeCell::new(Uart16550 { port: 0x3f8 });
-    // SAFETY: init runs once, before anything else uses CONS.
-    Console::set_uart(unsafe { &mut *CONS.get() });
+    console::set_uart(&CONS);
 }
