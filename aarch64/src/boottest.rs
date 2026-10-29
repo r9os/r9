@@ -197,19 +197,19 @@ core::arch::global_asm!(
     "3: .ascii \"hello\\n\"",
     "4: .asciz \"pwrite\"",
     "usertest_hello_end:",
-    // open("#c/cons", OWRITE) gives a new fd, which a pwrite at the -1 offset
+    // open(argv[1], OWRITE) gives a new fd, which a pwrite at the -1 offset
     // uses, then a pwrite at an explicit offset of 0: exits(nil) if each does
     // what it should, or exits("open") if any doesn't.
     ".balign 8",
     "usertest_opencons:",
-    "   adr x0, 4f",
+    "   ldr x0, [x1, #8]",
     "   mov x1, #1",
     "   mov x8, #{OPEN}",
     "   svc #0",
     "   cmp x0, #0",
     "   b.lt 1f",
     "   mov x19, x0",
-    "   adr x1, 5f",
+    "   adr x1, 4f",
     "   mov x0, x19",
     "   mov x2, #5",
     "   mov x3, #-1",
@@ -217,7 +217,7 @@ core::arch::global_asm!(
     "   svc #0",
     "   cmp x0, #5",
     "   b.ne 1f",
-    "   adr x1, 6f",
+    "   adr x1, 5f",
     "   mov x0, x19",
     "   mov x2, #6",
     "   mov x3, #0",
@@ -231,9 +231,8 @@ core::arch::global_asm!(
     "2: mov x8, #{EXITS}",
     "   svc #0",
     "3: .asciz \"open\"",
-    "4: .asciz \"#c/cons\"",
-    "5: .ascii \"cons\\n\"",
-    "6: .ascii \"again\\n\"",
+    "4: .ascii \"cons\\n\"",
+    "5: .ascii \"again\\n\"",
     "usertest_opencons_end:",
     // pwrite to fd 3 returns -1, then exits(nil), or exits("pwrite fd") if it
     // didn't.
@@ -540,8 +539,23 @@ fn test_user_processes() {
             status: b"",
         },
         UserTest {
-            name: "open cons",
-            start: || run_user(usertext!(usertest_opencons, usertest_opencons_end)),
+            name: "open #c/cons",
+            start: || {
+                run_user_args(
+                    usertext!(usertest_opencons, usertest_opencons_end),
+                    &[b"open", b"#c/cons"],
+                )
+            },
+            status: b"",
+        },
+        UserTest {
+            name: "open /dev/cons",
+            start: || {
+                run_user_args(
+                    usertext!(usertest_opencons, usertest_opencons_end),
+                    &[b"open", b"/dev/cons"],
+                )
+            },
             status: b"",
         },
         UserTest {
@@ -579,7 +593,13 @@ fn test_user_processes() {
             start: || run_user(usertext!(usertest_brkmem, usertest_brkmem_end)),
             status: b"",
         },
-        UserTest { name: "argv", start: argv_start, status: b"" },
+        UserTest {
+            name: "argv",
+            start: || {
+                run_user_args(usertext!(usertest_argv, usertest_argv_end), &[b"argv", b"ok\n"])
+            },
+            status: b"",
+        },
         UserTest { name: "elf", start: elf_start, status: b"" },
     ];
     let mut first_kstack_top = None;
@@ -623,9 +643,14 @@ fn test_preemption() {
 /// with its name if it doesn't.
 fn test_fp_state() {
     let (used_before, _) = port::pagealloc::usage_bytes();
-    let a = port::proc::newproc::<Arm64>(|| fp_start(&[b"fpa"])).expect("couldn't create process");
-    let b = port::proc::newproc::<Arm64>(|| fp_start(&[b"fpb", b"2"]))
-        .expect("couldn't create process");
+    let a = port::proc::newproc::<Arm64>(|| {
+        run_user_args(usertext!(usertest_fp, usertest_fp_end), &[b"fpa"])
+    })
+    .expect("couldn't create process");
+    let b = port::proc::newproc::<Arm64>(|| {
+        run_user_args(usertext!(usertest_fp, usertest_fp_end), &[b"fpb", b"2"])
+    })
+    .expect("couldn't create process");
     port::proc::ready(a);
     port::proc::ready(b);
     let exits = port::proc::schedule::<Arm64>();
@@ -717,17 +742,6 @@ fn test_sleep_alone() {
     println!("sleep alone test: ok");
 }
 
-/// The FP state test program's start, with `args`: its pattern is how many
-/// there are, and its name the first.
-fn fp_start(args: &[&[u8]]) {
-    load_user(usertext!(usertest_fp, usertest_fp_end));
-    let regs = match port::exec::push_args::<Arm64>(UTZERO, USTKTOP, args) {
-        Ok(regs) => regs,
-        Err(err) => port::proc::pexit::<Arm64>(err.as_bytes()),
-    };
-    enter_user(regs)
-}
-
 /// The first test program's start, which also checks the user access checks
 /// against its mappings.
 fn sysr1_start() {
@@ -741,10 +755,10 @@ fn run_user(text: &[u8]) -> ! {
     enter_user(UserRegs { pc: UTZERO, sp: USTKTOP, argc: 0, argv: 0 })
 }
 
-/// The argv test program's start: its arguments are pushed onto its stack.
-fn argv_start() {
-    load_user(usertext!(usertest_argv, usertest_argv_end));
-    let regs = match port::exec::push_args::<Arm64>(UTZERO, USTKTOP, &[b"argv", b"ok\n"]) {
+/// Run `text` with `args` pushed onto its stack.
+fn run_user_args(text: &[u8], args: &[&[u8]]) -> ! {
+    load_user(text);
+    let regs = match port::exec::push_args::<Arm64>(UTZERO, USTKTOP, args) {
         Ok(regs) => regs,
         Err(err) => port::proc::pexit::<Arm64>(err.as_bytes()),
     };
