@@ -182,6 +182,8 @@ impl ProcArch for Fake {
 
     fn new_context(_entry: extern "C" fn() -> !, _stack: &u32) {}
 
+    fn fork_context(_parent: &u32, _child: &u32) {}
+
     unsafe fn swtch(_save: *mut (), _next: *const ()) {
         unreachable!("host tests don't switch contexts")
     }

@@ -14,7 +14,9 @@ use core::time::Duration;
 use crate::chan::{Fds, NOPEN, OREAD, OWRITE};
 use crate::dat::{MAXWAIT, Proc, ProcArch, Rendez, State, WaitQueue, Waitmsg};
 use crate::dev::open_name;
-use crate::error::{EINUSE, ENOCHILD};
+use crate::error::{EBADARG, EINUSE, ENOCHILD, ENOVMEM};
+use crate::segment::copy_segments;
+use sys::{RFCENVG, RFCFDG, RFCNAMEG, RFENVG, RFFDG, RFMEM, RFNAMEG, RFNOMNT, RFNOWAIT, RFPROC};
 use crate::irq;
 use crate::mcslock::LockNode;
 use crate::pagealloc::{PageAllocError, free_physpage};
@@ -121,17 +123,6 @@ pub enum NewprocError {
 /// it runs, the process's standard files are open: the console on 0, OREAD,
 /// and on 1 and 2, OWRITE, as Plan 9's opencons.
 pub fn newproc<A: ProcArch>(start: fn()) -> Result<Box<Proc<A>>, NewprocError> {
-    let pmmu = A::newpmmu().map_err(NewprocError::AddressSpace)?;
-    let kstack = match A::kstack_alloc() {
-        Ok(kstack) => kstack,
-        Err(err) => {
-            // SAFETY: nothing has used the new address space.
-            unsafe { A::release(pmmu, |_| {}) };
-            return Err(NewprocError::KernelStack(err));
-        }
-    };
-    let label = A::new_context(proc_start::<A>, &kstack);
-    let pid = NEXT_PID.fetch_add(1, Ordering::Relaxed);
     // The standard files, as Plan 9's opencons: the console on 0, OREAD,
     // and on 1 and 2, OWRITE.  They're opened as #c/cons, which names the
     // device whatever's bound on /dev.
@@ -142,6 +133,30 @@ pub fn newproc<A: ProcArch>(start: fn()) -> Result<Box<Proc<A>>, NewprocError> {
              it, cons is in the table, and 0660's group bits grant both modes",
         ));
     }
+    alloc::<A>(Some(start), Arc::new(Fds::new(fds)), |kstack| {
+        A::new_context(proc_start::<A>, kstack)
+    })
+}
+
+/// A new process, with an empty address space and a kernel stack, the
+/// descriptors `fds`, and the start function `start`, if any.  Its first
+/// context is the one `context` makes on its kernel stack.
+fn alloc<A: ProcArch>(
+    start: Option<fn()>,
+    fds: Arc<Fds>,
+    context: impl FnOnce(&A::KStack) -> A::Label,
+) -> Result<Box<Proc<A>>, NewprocError> {
+    let pmmu = A::newpmmu().map_err(NewprocError::AddressSpace)?;
+    let kstack = match A::kstack_alloc() {
+        Ok(kstack) => kstack,
+        Err(err) => {
+            // SAFETY: nothing has used the new address space.
+            unsafe { A::release(pmmu, |_| {}) };
+            return Err(NewprocError::KernelStack(err));
+        }
+    };
+    let label = context(&kstack);
+    let pid = NEXT_PID.fetch_add(1, Ordering::Relaxed);
     Ok(Box::new(Proc {
         pid,
         start,
@@ -150,7 +165,7 @@ pub fn newproc<A: ProcArch>(start: fn()) -> Result<Box<Proc<A>>, NewprocError> {
         label,
         segments: Vec::new(),
         bss: None,
-        fds: Some(Arc::new(Fds::new(fds))),
+        fds: Some(fds),
         exit_status: Vec::new(),
         errstr: [0; sys::ERRMAX],
         state: State::Ready,
@@ -169,11 +184,69 @@ pub fn newproc<A: ProcArch>(start: fn()) -> Result<Box<Proc<A>>, NewprocError> {
 /// Make `child` a child of `parent`: its exit goes to `parent`'s wait queue,
 /// and counts as one of `parent`'s living children until then, as Plan 9's
 /// rfork counts nchild.
-#[cfg_attr(not(test), expect(dead_code, reason = "rfork will adopt its children"))]
 pub(crate) fn adopt<A: ProcArch>(parent: &Proc<A>, child: &mut Proc<A>) {
     let node = LockNode::new();
     parent.waitq.state.ilock(&node).nchild += 1;
     child.parent = Some(parent.waitq.clone());
+}
+
+/// rfork(flags), as Plan 9's sysrfork: with RFPROC, start a child that
+/// returns from this call with 0, and return its pid; without, change the
+/// current process.  RFFDG gives the child a copy of the descriptors, sharing
+/// their channels; RFCFDG, none; and neither, the parent's own table, shared.
+/// Without RFPROC, the same flags replace the current process's table.  With
+/// RFNOWAIT, the child has no parent.  RFREND, RFNOTEG, RFNAMEG and RFENVG
+/// separate groups r9 doesn't have yet, so a copy is the same as sharing,
+/// and they're accepted; RFMEM, RFCNAMEG, RFCENVG and RFNOMNT need what r9
+/// doesn't have, and are Ebadarg.  The child's memory is a copy of the
+/// parent's, made now, and its FP state is the parent's at the call.
+pub fn rfork<A: ProcArch>(flags: u32) -> crate::Result<u64> {
+    let both = |a, b| flags & (a | b) == a | b;
+    if both(RFFDG, RFCFDG) || both(RFNAMEG, RFCNAMEG) || both(RFENVG, RFCENVG) {
+        return Err(EBADARG);
+    }
+    if flags & RFPROC == 0 && flags & (RFMEM | RFNOWAIT) != 0 {
+        return Err(EBADARG);
+    }
+    if flags & (RFMEM | RFCNAMEG | RFCENVG | RFNOMNT) != 0 {
+        return Err(EBADARG);
+    }
+    let up = A::up();
+    assert!(!up.is_null(), "rfork: no current process");
+    // SAFETY: up is the running process, and only its own syscalls, one at a
+    // time, change it.
+    let parent = unsafe { &mut *up };
+    let fds = if flags & RFFDG != 0 {
+        Arc::new(parent.fds().copy())
+    } else if flags & RFCFDG != 0 {
+        Arc::new(Fds::empty())
+    } else {
+        parent.fds().clone()
+    };
+    if flags & RFPROC == 0 {
+        parent.fds = Some(fds);
+        return Ok(0);
+    }
+    let mut child = alloc::<A>(None, fds, |kstack| A::fork_context(&parent.kstack, kstack))
+        .map_err(|_| ENOVMEM)?;
+    if let Err(err) =
+        copy_segments::<A>(&parent.segments, parent.bss, &parent.pmmu, &child.pmmu)
+    {
+        // SAFETY: the child has never run, and its address space isn't
+        // switched in.
+        unsafe { reap(*child) };
+        return Err(err);
+    }
+    child.segments = parent.segments.clone();
+    child.bss = parent.bss;
+    child.text = parent.text.clone();
+    A::fp_save(&mut child.fp);
+    if flags & RFNOWAIT == 0 {
+        adopt(parent, &mut child);
+    }
+    let pid = child.pid;
+    ready(child);
+    Ok(pid)
 }
 
 /// Queue `p` to run.
@@ -476,7 +549,7 @@ pub fn pwait<A: ProcArch>() -> crate::Result<Waitmsg> {
 /// function.
 extern "C" fn proc_start<A: ProcArch>() -> ! {
     // SAFETY: schedule set up before switching here.
-    let start = unsafe { (*A::up()).start };
+    let start = unsafe { (*A::up()).start }.expect("proc_start: a process with no start function");
     start();
     pexit::<A>(b"start returned")
 }
@@ -756,5 +829,97 @@ mod tests {
         assert_eq!(pwait::<Fake>(), Err(EINUSE));
         Fake::set_up(ptr::null_mut());
         reap_all([parent, child]);
+    }
+
+    /// rfork(flags) from `parent`, as the current process.
+    fn rfork_from(parent: &mut Proc<Fake>, flags: u32) -> crate::Result<u64> {
+        Fake::set_up(parent);
+        let r = rfork::<Fake>(flags);
+        Fake::set_up(ptr::null_mut());
+        r
+    }
+
+    #[test]
+    fn rfork_checks_its_flags_as_plan_9s() {
+        use sys::{RFCENVG, RFCFDG, RFCNAMEG, RFENVG, RFMEM, RFNAMEG, RFNOMNT};
+        let mut p = newproc::<Fake>(start).unwrap();
+        for (flags, why) in [
+            (RFFDG | RFCFDG, "both FDGs"),
+            (RFNAMEG | RFCNAMEG, "both NAMEGs"),
+            (RFENVG | RFCENVG, "both ENVGs"),
+            (RFMEM, "RFMEM without RFPROC"),
+            (RFNOWAIT, "RFNOWAIT without RFPROC"),
+            (RFPROC | RFMEM, "RFMEM, which isn't built"),
+            (RFPROC | RFCNAMEG, "RFCNAMEG, which isn't built"),
+            (RFPROC | RFCENVG, "RFCENVG, which isn't built"),
+            (RFPROC | RFNOMNT, "RFNOMNT, which isn't built"),
+        ] {
+            assert_eq!(rfork_from(&mut p, flags), Err(EBADARG), "{why}");
+        }
+        assert!(next().is_none(), "no child");
+        reap_all([p]);
+    }
+
+    #[test]
+    fn rfork_without_rfproc_changes_the_callers_descriptors() {
+        let mut p = newproc::<Fake>(start).unwrap();
+        let before = p.fds().clone();
+        assert_eq!(rfork_from(&mut p, RFFDG), Ok(0));
+        assert!(!Arc::ptr_eq(p.fds(), &before), "a copy");
+        assert!(p.fds().with(|fds| fds[1].is_some()), "with the same files");
+        assert_eq!(rfork_from(&mut p, RFCFDG), Ok(0));
+        assert!(p.fds().with(|fds| fds.iter().all(Option::is_none)), "an empty table");
+        drop(before);
+        reap_all([p]);
+    }
+
+    #[test]
+    fn rfork_starts_a_child() {
+        let mut p = newproc::<Fake>(start).unwrap();
+        p.text = b"sh".to_vec();
+
+        // RFFDG: a copy of the table, sharing its channels, and a child.
+        let pid = rfork_from(&mut p, RFPROC | RFFDG).expect("rfork");
+        let child = next().expect("the child, ready");
+        assert_eq!(child.pid, pid);
+        assert!(!Arc::ptr_eq(child.fds(), p.fds()), "its own table");
+        let (c1, p1) = (child.fds().with(|f| f[1].clone()), p.fds().with(|f| f[1].clone()));
+        assert!(Arc::ptr_eq(&c1.unwrap(), &p1.unwrap()), "sharing the channels");
+        assert_eq!(child.text, b"sh", "the parent's text");
+        assert_eq!(state(&p).1, 1, "a living child");
+        assert!(child.parent.is_some());
+
+        // Neither FDG: the parent's own table.  RFCFDG: an empty one.
+        rfork_from(&mut p, RFPROC).expect("rfork");
+        let shared = next().expect("the child");
+        assert!(Arc::ptr_eq(shared.fds(), p.fds()), "the same table");
+        rfork_from(&mut p, RFPROC | RFCFDG).expect("rfork");
+        let empty = next().expect("the child");
+        assert!(empty.fds().with(|fds| fds.iter().all(Option::is_none)), "an empty table");
+
+        // RFNOWAIT: no parent.
+        rfork_from(&mut p, RFPROC | RFNOWAIT).expect("rfork");
+        let orphan = next().expect("the child");
+        assert!(orphan.parent.is_none());
+        assert_eq!(state(&p).1, 3, "not counted");
+        reap_all([child, shared, empty, orphan, p]);
+        assert_eq!(held(), (0, 0));
+    }
+
+    #[test]
+    fn rfork_out_of_pages_frees_the_child() {
+        let _mem = crate::fake::user_mem();
+        let mut p = newproc::<Fake>(start).unwrap();
+        let base = _mem.base();
+        p.segments = vec![crate::dat::UserSegment {
+            range: crate::mem::VirtRange::new(base, base + crate::mem::PAGE_SIZE_4K),
+            perm: crate::dat::Perm::Data,
+        }];
+        // The host page allocator has nothing free.
+        assert_eq!(rfork_from(&mut p, RFPROC | RFFDG), Err(ENOVMEM));
+        assert!(next().is_none(), "no child");
+        assert_eq!(state(&p).1, 0, "no child counted");
+        reap_all([p]);
+        assert_eq!(held(), (0, 0), "its address space and stack freed");
     }
 }

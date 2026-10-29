@@ -284,6 +284,38 @@ pub unsafe fn to_user(kstack_top: usize, regs: &UserRegs) -> ! {
     tf.x1 = regs.argv as u64;
     tf.spsr_el1 = SPSR_EL0T;
     unsafe { frame.write(tf) };
+    unsafe { return_through(kstack_top) }
+}
+
+/// Copy the user registers the running syscall saved at the top of the
+/// kernel stack below `parent_top` to the top of the one below `child_top`,
+/// with x0, the syscall's result, 0, as Plan 9's forkchild does.
+///
+/// # Safety
+///
+/// `parent_top` is the top of the running process's kernel stack, in a
+/// syscall from EL0, so a TrapFrame is saved there, and nothing runs on the
+/// stack below `child_top`.
+pub unsafe fn fork_frame(parent_top: usize, child_top: usize) {
+    let parent = (parent_top - size_of::<TrapFrame>()) as *const TrapFrame;
+    let child = (child_top - size_of::<TrapFrame>()) as *mut TrapFrame;
+    // SAFETY: as the caller guarantees.
+    unsafe {
+        let mut tf = parent.read();
+        tf.x0 = 0;
+        child.write(tf);
+    }
+}
+
+/// Return to EL0 through the TrapFrame at the top of the kernel stack below
+/// `kstack_top`.
+///
+/// # Safety
+///
+/// That stack is the running process's, and its frame holds the registers
+/// to return with.
+pub unsafe fn return_through(kstack_top: usize) -> ! {
+    let frame = kstack_top - size_of::<TrapFrame>();
 
     #[cfg(not(test))]
     unsafe {
@@ -296,5 +328,8 @@ pub unsafe fn to_user(kstack_top: usize, regs: &UserRegs) -> ! {
     }
 
     #[cfg(test)]
-    unreachable!()
+    {
+        let _ = frame;
+        unreachable!()
+    }
 }

@@ -132,6 +132,13 @@ impl ProcArch for Aarch64 {
         Label::new_context(entry, stack.top() - size_of::<TrapFrame>())
     }
 
+    fn fork_context(parent: &KStack, child: &KStack) -> Label {
+        // SAFETY: fork_context is called in the running process's syscall,
+        // with its stack, and nothing runs on the child's yet.
+        unsafe { trap::fork_frame(parent.top(), child.top()) };
+        Self::new_context(fork_return, child)
+    }
+
     unsafe fn swtch(save: *mut Label, next: *const Label) {
         // SAFETY: the caller's guarantee.
         unsafe { swtch::swtch(save, next) };
@@ -236,6 +243,16 @@ impl ProcArch for Aarch64 {
         static RUN_QUEUE: Lock<RunQueue<Aarch64>> = Lock::new("run_queue", RunQueue::new());
         &RUN_QUEUE
     }
+}
+
+/// A forked child's first context: return to EL0 through the registers
+/// fork_context copied to the top of its stack.
+extern "C" fn fork_return() -> ! {
+    // SAFETY: up is this process, which is running, and its context started
+    // below its copied frame.
+    let kstack_top = unsafe { (*Aarch64::up()).kstack().top() };
+    // SAFETY: as above.
+    unsafe { trap::return_through(kstack_top) }
 }
 
 /// Enter the current process with `regs`.  Call it only from a process's start

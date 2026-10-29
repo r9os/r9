@@ -3,10 +3,68 @@
 
 use alloc::vec::Vec;
 
-use crate::dat::{MMU, Perm, ProcArch, PutError, UserSegment};
+use crate::dat::{Access, MMU, Perm, ProcArch, PutError, UserSegment};
 use crate::error::{EBADARG, ENOVMEM, ESOVERLAP};
-use crate::mem::{PAGE_SIZE_4K, VirtRange};
+use crate::mem::{PAGE_SIZE_4K, PhysAddr, VirtRange};
 use crate::pagealloc::{allocate_physpage, free_physpage, usage_bytes};
+use crate::uaccess::copy_from_user;
+
+/// Copy the current process's `segments` and `bss` into `child`, the address
+/// space of a process it's forking, as Plan 9's dupseg does, but every page
+/// now, rather than data on write and text shared, which a program can't
+/// tell apart.  Each page is read through the current address space,
+/// `parent`, into a new page through kmap; then they're all mapped in
+/// `child` with it switched in, and `parent` switched back.  A page that
+/// isn't mapped is a segment recorded wrongly, which panics.  If pages run
+/// out, the copies not yet mapped are freed, and the caller frees `child`,
+/// with those that were.
+pub(crate) fn copy_segments<A: ProcArch>(
+    segments: &[UserSegment],
+    bss: Option<VirtRange>,
+    parent: &A::Pmmu,
+    child: &A::Pmmu,
+) -> crate::Result<()> {
+    let bss = bss.map(|b| UserSegment {
+        range: VirtRange::new(b.start.next_multiple_of(PAGE_SIZE_4K), b.end),
+        perm: Perm::Data,
+    });
+    let mut pages: Vec<(usize, PhysAddr, Perm)> = Vec::new();
+    let free = |pages: &[(usize, PhysAddr, Perm)]| {
+        for &(_, pa, _) in pages {
+            free_physpage(pa).expect("rfork: couldn't free a copied page");
+        }
+    };
+    for s in segments.iter().chain(&bss) {
+        for va in (s.range.start..s.range.end).step_by(PAGE_SIZE_4K) {
+            assert!(A::user_page_ok(va, Access::Read), "rfork: {s:?} isn't mapped at {va:#x}");
+            let Ok(pa) = allocate_physpage() else {
+                free(&pages);
+                return Err(ENOVMEM);
+            };
+            A::kmap(pa, |p| {
+                // SAFETY: p maps the whole of the newly allocated page, which
+                // nothing else refers to.
+                let page = unsafe { core::slice::from_raw_parts_mut(p, PAGE_SIZE_4K) };
+                copy_from_user::<A>(page, va);
+            });
+            pages.push((va, pa, s.perm));
+        }
+    }
+    // SAFETY: nothing refers to the parent's user memory while the child's
+    // address space is switched in.
+    unsafe { A::switch(child) };
+    let mut result = Ok(());
+    for (i, &(va, pa, perm)) in pages.iter().enumerate() {
+        if A::put(va, pa, perm).is_err() {
+            free(&pages[i..]);
+            result = Err(ENOVMEM);
+            break;
+        }
+    }
+    // SAFETY: as above.
+    unsafe { A::switch(parent) };
+    result
+}
 
 /// Set the current process's segments, but for its bss, whose pages the
 /// caller has mapped, each as its segment says.

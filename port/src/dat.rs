@@ -122,6 +122,12 @@ pub trait ProcArch: MMU + Sized + 'static {
     /// A context that, when switched to, starts running `entry` on `stack`.
     fn new_context(entry: extern "C" fn() -> !, stack: &Self::KStack) -> Self::Label;
 
+    /// A context for a child forked from the current process in a syscall,
+    /// as Plan 9's forkchild: the user registers saved on `parent`'s stack,
+    /// copied onto `child`'s with the syscall's result 0, and a context that,
+    /// switched to, returns to user mode through them.
+    fn fork_context(parent: &Self::KStack, child: &Self::KStack) -> Self::Label;
+
     /// Save the current context in `save`, and resume the one in `next`.
     ///
     /// # Safety
@@ -173,7 +179,9 @@ pub struct Proc<A: ProcArch> {
     pub pid: u64,
     /// Run in the process's own context, with its address space active, to
     /// load its program and enter user mode.  It returns only on failure.
-    pub(crate) start: fn(),
+    /// None for a forked process, which starts in its parent's rfork, as
+    /// Plan 9's kpfun is only a kernel process's.
+    pub(crate) start: Option<fn()>,
     pub(crate) pmmu: A::Pmmu,
     pub(crate) kstack: A::KStack,
     pub(crate) label: A::Label,

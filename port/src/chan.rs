@@ -109,6 +109,17 @@ impl Fds {
         Fds(Lock::new("fds", fds))
     }
 
+    /// A table with every descriptor closed, as Plan 9's dupfgrp(nil).
+    pub(crate) fn empty() -> Fds {
+        Fds::new([const { None }; NOPEN])
+    }
+
+    /// A copy, whose descriptors share the same channels, as Plan 9's
+    /// dupfgrp, so their offsets are shared too.
+    pub(crate) fn copy(&self) -> Fds {
+        Fds::new(self.with(|fds| fds.clone()))
+    }
+
     /// Run `f` with the table locked.  A channel `f` takes out of it should
     /// be dropped after, so a device's close doesn't run with the table
     /// locked.

@@ -16,7 +16,7 @@ use core::cell::SyncUnsafeCell;
 use core::hint::black_box;
 use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use core::time::Duration;
-use port::dat::{MMU, Perm, ProcArch, PutError};
+use port::dat::{MMU, Perm, ProcArch, PutError, UserSegment};
 use port::exec::UserRegs;
 use port::mem::{PAGE_SIZE_4K, PhysAddr, VirtRange};
 use port::println;
@@ -234,6 +234,59 @@ core::arch::global_asm!(
     "4: .ascii \"cons\\n\"",
     "5: .ascii \"again\\n\"",
     "usertest_opencons_end:",
+    // rfork(RFPROC|RFFDG) starts a child, which changes a word on its own
+    // stack and exits("child").  The parent's word is unchanged, await gives
+    // the child's message, which ends "child'", quoted, and a second await
+    // fails, with no children left: exits(nil) if all that happens, or
+    // exits("fork") if any doesn't.
+    ".balign 8",
+    "usertest_fork:",
+    "   sub sp, sp, #96",
+    "   mov x9, #7",
+    "   str x9, [sp]",
+    "   mov x0, #{RFPROC_RFFDG}",
+    "   mov x8, #{RFORK}",
+    "   svc #0",
+    "   cmp x0, #0",
+    "   b.lt 1f",
+    "   b.eq 4f",
+    "   add x0, sp, #16",
+    "   mov x1, #80",
+    "   mov x8, #{AWAIT}",
+    "   svc #0",
+    "   cmp x0, #2",
+    "   b.lt 1f",
+    "   add x10, sp, #16",
+    "   add x10, x10, x0",
+    "   ldurb w11, [x10, #-1]",
+    "   cmp w11, #0x27",
+    "   b.ne 1f",
+    "   ldurb w11, [x10, #-2]",
+    "   cmp w11, #0x64",
+    "   b.ne 1f",
+    "   ldr x9, [sp]",
+    "   cmp x9, #7",
+    "   b.ne 1f",
+    "   add x0, sp, #16",
+    "   mov x1, #80",
+    "   mov x8, #{AWAIT}",
+    "   svc #0",
+    "   cmn x0, #1",
+    "   b.ne 1f",
+    "   mov x0, #0",
+    "   b 2f",
+    "1: adr x0, 3f",
+    "2: mov x8, #{EXITS}",
+    "   svc #0",
+    "3: .asciz \"fork\"",
+    ".balign 4",
+    "4: mov x9, #8",
+    "   str x9, [sp]",
+    "   adr x0, 5f",
+    "   mov x8, #{EXITS}",
+    "   svc #0",
+    "5: .asciz \"child\"",
+    "usertest_fork_end:",
     // pwrite to fd 3 returns -1, then exits(nil), or exits("pwrite fd") if it
     // didn't.
     ".balign 8",
@@ -442,6 +495,9 @@ core::arch::global_asm!(
     PWRITE = const sys::PWRITE,
     BRK = const sys::BRK_,
     ERRSTR = const sys::ERRSTR,
+    RFORK = const sys::RFORK,
+    AWAIT = const sys::AWAIT,
+    RFPROC_RFFDG = const sys::RFPROC | sys::RFFDG,
     EBADFD_LEN = const port::error::EBADFD.len(),
     EBADFD_FIRST = const port::error::EBADFD.as_bytes()[0],
     EBADFD_LAST = const port::error::EBADFD.as_bytes()[port::error::EBADFD.len() - 1],
@@ -556,6 +612,11 @@ fn test_user_processes() {
                     &[b"open", b"/dev/cons"],
                 )
             },
+            status: b"",
+        },
+        UserTest {
+            name: "fork",
+            start: || run_user(usertext!(usertest_fork, usertest_fork_end)),
             status: b"",
         },
         UserTest {
@@ -814,7 +875,7 @@ fn elf_start() {
 const BSS: usize = UTZERO + PAGE_SIZE_4K;
 
 /// Map `text` at UTZERO, and a zeroed stack below USTKTOP, in the current
-/// process, and give it an empty bss at BSS.
+/// process, record them as its segments, and give it an empty bss at BSS.
 fn load_user(text: &[u8]) {
     assert!(text.len() <= PAGE_SIZE_4K, "user text too big");
     let text_pa = port::pagealloc::allocate_physpage().expect("couldn't allocate user text");
@@ -828,6 +889,10 @@ fn load_user(text: &[u8]) {
     }
     Aarch64::put(UTZERO, text_pa, Perm::Text).expect("couldn't map user text");
     map_stack();
+    segment::set_segments::<Aarch64>(alloc::vec![
+        UserSegment { range: VirtRange::new(UTZERO, UTZERO + PAGE_SIZE_4K), perm: Perm::Text },
+        UserSegment { range: VirtRange::new(USTKTOP - USTKSIZE, USTKTOP), perm: Perm::Data },
+    ]);
     segment::set_bss::<Aarch64>(VirtRange::new(BSS, BSS));
 }
 
