@@ -120,12 +120,11 @@ fn sysbrk_<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
 /// so no user access happens while the console is locked.
 const CHUNK: usize = 256;
 
-/// The offset a pread or pwrite uses, as Plan 9's offp: the -1 sentinel,
-/// u64::MAX, resolves to the channel's offset and maintains it; any other
-/// value is the user's offset, passed through and leaving the channel's
-/// untouched.  Offsets are signed, as Plan 9's vlong, so either one past
-/// i64::MAX is Enegoff.  The callers add a user range's length to the result,
-/// which then can't overflow u64.
+/// The offset a pread or pwrite uses, and whether it's the channel's, as
+/// Plan 9's offp: the -1 sentinel, u64::MAX, resolves to the channel's
+/// offset; any other value is the user's.  Offsets are signed, as Plan 9's
+/// vlong, so either one past i64::MAX is Enegoff, and a user range's length
+/// added to the result can't overflow u64.
 fn offset(c: &Chan, off: u64) -> crate::Result<(u64, bool)> {
     let (off, maintain) = if off == u64::MAX { (c.offset(), true) } else { (off, false) };
     if (off as i64) < 0 {
@@ -186,13 +185,14 @@ fn sysdup<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
 
 /// pread(fd, buf, len, offset): the buffer checked first, as Plan 9's read,
 /// the channel for OREAD, the offset resolved, and the bytes copied through
-/// the kernel chunk.  On a successful read at the -1 offset, the channel's
-/// offset advances by the bytes read.
+/// the kernel chunk.  On a successful read, the channel's offset advances by
+/// the bytes read, at an explicit offset too, as Plan 9's read does, though
+/// its read(2) and its write don't.
 fn syspread<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
     let (fd, buf, len) = (args[0], args[1] as usize, args[2] as usize);
     validate_user_range::<A>(buf, len, Access::Write);
     let c = with_fds::<A, _>(|fds| fdtochan(fds, fd, Some(OREAD)))?;
-    let (off, maintain) = offset(&c, args[3])?;
+    let (off, _) = offset(&c, args[3])?;
     let mut total = 0;
     let mut chunk = [0u8; CHUNK];
     for pos in (0..len).step_by(CHUNK) {
@@ -206,9 +206,9 @@ fn syspread<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
             break;
         }
     }
-    if maintain {
-        c.set_offset(off + total as u64);
-    }
+    // At an explicit offset, the channel's offset wasn't checked, so the add
+    // wraps, as Plan 9's vlong does, and a later use of it is Enegoff.
+    c.set_offset(c.offset().wrapping_add(total as u64));
     Ok(total as u64)
 }
 
@@ -596,7 +596,7 @@ mod tests {
             assert_eq!(current_errstr(), EBADUSEFD.as_bytes());
             assert_eq!(syscall::<Fake>(SEEK, [1, 0, 1, 0, 0, 0]), 0, "an unchanged offset");
 
-            // The one reachable read is a directory's: #c's root, opened
+            // A directory's read isn't supported yet: #c's root, opened
             // OREAD, and its ENOTSUP leaves the offset at the start, too.
             mem.0[..3].copy_from_slice(b"#c\0");
             let fd = syscall::<Fake>(OPEN, [base as u64, OREAD as u64, 0, 0, 0, 0]);
@@ -604,6 +604,44 @@ mod tests {
             assert_eq!(pread(3, 6), u64::MAX, "a directory read");
             assert_eq!(current_errstr(), ENOTSUP.as_bytes());
             assert_eq!(syscall::<Fake>(SEEK, [3, 0, 1, 0, 0, 0]), 0, "an unchanged offset");
+        });
+    }
+
+    #[test]
+    fn reads_of_time_and_pid() {
+        as_proc(|| {
+            let mut mem = user_mem();
+            let base = mem.base();
+            static CLOCK: crate::clock::Ops =
+                crate::clock::Ops { now: || 1000, frequency: || 1000, set_timer: |_| {} };
+            crate::clock::init(&CLOCK);
+            static CURRENT: crate::proc::Current =
+                crate::proc::Current { pid: crate::proc::up_pid::<Fake> };
+            crate::proc::init_current(&CURRENT);
+            let mut open = |name: &[u8]| {
+                mem.0[..name.len()].copy_from_slice(name);
+                syscall::<Fake>(OPEN, [base as u64, OREAD as u64, 0, 0, 0, 0])
+            };
+            assert_eq!(open(b"/dev/time\0"), 3);
+            assert_eq!(open(b"/dev/pid\0"), 4);
+            let pread = |fd, len, off| syscall::<Fake>(PREAD, [fd, base as u64, len, off, 0, 0]);
+            let seek = |fd, off, whence| syscall::<Fake>(SEEK, [fd, off, whence, 0, 0, 0]);
+
+            // As cat reads it: all of it, then nothing, its end.
+            assert_eq!(pread(3, 600, u64::MAX), 78, "the whole text");
+            assert_eq!(pread(3, 600, u64::MAX), 0, "the end");
+
+            // A read at an explicit offset advances the channel's offset by
+            // the bytes read, as Plan 9's read does.
+            assert_eq!(seek(3, 0, 0), 0);
+            assert_eq!(pread(3, 600, 70), 8, "the tail");
+            assert_eq!(seek(3, 0, 1), 8, "advanced from 0, not from 70");
+
+            // The reading process's pid.
+            // SAFETY: as_proc set up the current process.
+            let pid = unsafe { (*Fake::up()).pid };
+            assert_eq!(pread(4, 600, 0), 12);
+            assert_eq!(&mem.0[..12], format!("{pid:>11} ").as_bytes());
         });
     }
 
