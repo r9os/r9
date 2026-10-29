@@ -5,7 +5,7 @@
 
 use crate::dat::RunQueue;
 use crate::dat::{Access, MMU, Perm, Proc, ProcArch, PutError};
-use crate::devcons::{Console, Uart};
+use crate::console::{Console, Uart};
 use crate::mcslock::Lock;
 use crate::mem::{PAGE_SIZE_4K, PhysAddr};
 use crate::pagealloc::PageAllocError;

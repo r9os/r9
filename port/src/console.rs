@@ -146,7 +146,7 @@ macro_rules! iprintln {
 #[macro_export]
 macro_rules! iprint {
     ($($args:tt)*) => {{
-        $crate::devcons::iprint(format_args!($($args)*))
+        $crate::console::iprint(format_args!($($args)*))
     }};
 }
 
@@ -159,7 +159,7 @@ macro_rules! println {
 #[macro_export]
 macro_rules! print {
     ($($args:tt)*) => {{
-        $crate::devcons::print(format_args!($($args)*))
+        $crate::console::print(format_args!($($args)*))
     }};
 }
 

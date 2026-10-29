@@ -3,7 +3,7 @@ use crate::io::{GpioPull, delay, read_reg, write_reg};
 use crate::registers::{GPPUD, GPPUDCLK0};
 use crate::{mailbox, vm};
 use port::Result;
-use port::devcons::Uart;
+use port::console::Uart;
 use port::fdt::DeviceTree;
 use port::mem::{PhysRange, VirtRange};
 

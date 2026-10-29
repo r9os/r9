@@ -5,7 +5,7 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use crate::chan::{self, Chan, OREAD, QTDIR};
-use crate::devcons;
+use crate::console;
 use crate::error::{EBADSHARP, ENONEXIST, ENOTDIR};
 
 /// A device's operations for the files it holds, as Plan 9's Device, with
@@ -47,7 +47,7 @@ pub trait Dev: Sync {
 
 /// The devices, as Plan 9's devtab: one static each, looked up by dc, as
 /// devno does.
-static DEVS: &[&dyn Dev] = &[&devcons::CONS];
+static DEVS: &[&dyn Dev] = &[&console::CONS];
 
 /// The device with dc `dc`, as Plan 9's devno scans its table.
 fn devno(dc: char) -> Option<&'static dyn Dev> {
@@ -57,7 +57,7 @@ fn devno(dc: char) -> Option<&'static dyn Dev> {
 /// The names in the root that stand for a device's root, as Plan 9's
 /// /lib/namespace binds #c on /dev.  There's no bind yet, so every process
 /// sees this one table.
-static BINDS: &[(&str, &dyn Dev)] = &[("dev", &devcons::CONS)];
+static BINDS: &[(&str, &dyn Dev)] = &[("dev", &console::CONS)];
 
 /// The device and path a # name names, from what follows its #, as the #
 /// branch of Plan 9's namec: a device's letter, then either nothing or a /

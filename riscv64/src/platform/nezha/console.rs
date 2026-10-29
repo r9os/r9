@@ -3,7 +3,7 @@
 use core::mem::MaybeUninit;
 
 use crate::uart16550::Uart16550;
-use port::{devcons::Console, fdt::DeviceTree};
+use port::{console::Console, fdt::DeviceTree};
 
 pub fn init(dt: &DeviceTree) {
     let uart0_reg = dt
