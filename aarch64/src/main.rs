@@ -208,6 +208,7 @@ pub extern "C" fn main9(dtb_pa: usize) {
     devcons::init(&dt);
     clock::init(&dt);
     mailbox::init(&dt);
+    proc::init();
 
     println!();
     println!("r9 from the Internet");

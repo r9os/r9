@@ -19,6 +19,14 @@ use port::pagealloc::PageAllocError;
 
 pub struct Arm64;
 
+/// aarch64's current process, for port's code that isn't generic over it.
+static CURRENT: port::proc::Current = port::proc::Current { pid: port::proc::up_pid::<Arm64> };
+
+/// Register aarch64's current process with port.
+pub fn init() {
+    port::proc::init_current(&CURRENT);
+}
+
 /// A process's FP/SIMD registers: q0-q31, then FPCR and FPSR, laid out as
 /// fp_save and fp_restore address them.  A new process's are zero.
 #[derive(Default)]
