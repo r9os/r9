@@ -61,7 +61,7 @@ A process reaches devices through files, as in Plan 9: `OPEN`, `CLOSE`, `PREAD`,
 
 ### Processes
 
-A process is a `port::dat::Proc<A>`, and its lifecycle is in `port/src/proc.rs`, following Plan 9's `port/proc.c`. `A` is the architecture, which implements two traits from `port::dat`: `MMU`, for the process's address space (its `Pmmu`), and `ProcArch`, for its kernel stack, kernel context, the per-CPU `up` and scheduler context, and the run queue. On aarch64 that's `Arm64` in `proc.rs`, and the per-CPU state is `Mach` in `mach.rs`, found through `TPIDR_EL1`.
+A process is a `port::dat::Proc<A>`, and its lifecycle is in `port/src/proc.rs`, following Plan 9's `port/proc.c`. `A` is the architecture, which implements two traits from `port::dat`: `MMU`, for the process's address space (its `Pmmu`), and `ProcArch`, for its kernel stack, kernel context, the per-CPU `up` and scheduler context, and the run queue. On aarch64 that's `Aarch64` in `proc.rs`, and the per-CPU state is `Mach` in `mach.rs`, found through `TPIDR_EL1`.
 
 - `newproc(start)` returns a boxed process with an address space, a kernel stack, and a context that starts in `proc_start`.
 - `ready(p)` puts it on the run queue: first in, first out, linked through the processes themselves, so queueing never allocates.

@@ -4,7 +4,7 @@ use core::fmt;
 use core::mem::{offset_of, size_of};
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use crate::proc::Arm64;
+use crate::proc::Aarch64;
 use crate::reg::esr_el1::{EsrEl1, ExceptionClass};
 use port::exec::UserRegs;
 use port::iprintln;
@@ -200,7 +200,7 @@ fn trap(frame: &mut TrapFrame) {
             if frame.esr_el1.exception_class_enum() == Ok(ExceptionClass::Svc64) {
                 syscall(frame);
             } else {
-                port::proc::pexit::<Arm64>(user_fault(frame).as_bytes());
+                port::proc::pexit::<Aarch64>(user_fault(frame).as_bytes());
             }
         }
         EL1H_64_IRQ | EL0T_64_IRQ => {
@@ -218,8 +218,8 @@ fn trap(frame: &mut TrapFrame) {
     // GICC_EOIR is written, which would block the timer while the next
     // process ran.  The frame holds everything the process returns to, a
     // syscall's result included, so it's resumed just as it would have been.
-    if frame.exception_level() == 0 && port::proc::preempt_due::<Arm64>() {
-        port::proc::yield_now::<Arm64>();
+    if frame.exception_level() == 0 && port::proc::preempt_due::<Aarch64>() {
+        port::proc::yield_now::<Aarch64>();
     }
 }
 
@@ -258,7 +258,7 @@ fn user_fault(frame: &TrapFrame) -> String {
 fn syscall(frame: &mut TrapFrame) {
     let nr = frame.x8;
     let args = [frame.x0, frame.x1, frame.x2, frame.x3, frame.x4, frame.x5];
-    frame.x0 = port::syscall::syscall::<Arm64>(nr, args);
+    frame.x0 = port::syscall::syscall::<Aarch64>(nr, args);
 }
 
 /// Enter EL0 with `regs`: at its pc, with its stack pointer, and with x0 = argc
