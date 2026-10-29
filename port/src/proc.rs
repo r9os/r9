@@ -7,7 +7,7 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::ptr;
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
 use core::time::Duration;
 
 use crate::chan::{NOPEN, OWRITE};
@@ -23,6 +23,52 @@ static NEXT_PID: AtomicU64 = AtomicU64::new(1);
 /// How many ticks a process runs before it can be preempted: 100 ms, as Plan
 /// 9's HZ/10.
 const QUANTUM: u64 = timer::HZ / 10;
+
+/// The current process, for code that isn't generic over the architecture,
+/// such as a device: Plan 9's up, as far as such code needs it.  Each
+/// architecture that runs processes registers it with init_current, as it
+/// does its clock with clock::init.
+pub struct Current {
+    /// The current process's pid, or None if there's no current process.
+    pub pid: fn() -> Option<u64>,
+}
+
+#[cfg(not(test))]
+static CURRENT: AtomicPtr<Current> = AtomicPtr::new(ptr::null_mut());
+
+// Tests run in parallel threads, so each registers its own.
+#[cfg(test)]
+std::thread_local! {
+    static CURRENT: AtomicPtr<Current> = const { AtomicPtr::new(ptr::null_mut()) };
+}
+
+/// Register the architecture's current process.
+pub fn init_current(current: &'static Current) {
+    let current = ptr::from_ref(current).cast_mut();
+    core::cfg_select! {
+        test => CURRENT.with(|c| c.store(current, Ordering::Release)),
+        _ => CURRENT.store(current, Ordering::Release),
+    }
+}
+
+/// The current process's pid, or None if there's none, or the architecture
+/// hasn't registered its current process.
+pub fn current_pid() -> Option<u64> {
+    let current = core::cfg_select! {
+        test => CURRENT.with(|c| c.load(Ordering::Acquire)),
+        _ => CURRENT.load(Ordering::Acquire),
+    };
+    // SAFETY: CURRENT is null, or was set from a &'static Current by
+    // init_current.
+    unsafe { current.as_ref() }.and_then(|c| (c.pid)())
+}
+
+/// The pid of `A`'s current process, for an architecture's Current.
+pub fn up_pid<A: ProcArch>() -> Option<u64> {
+    // SAFETY: up is null, or the running process, which is alive while it
+    // runs.
+    unsafe { A::up().as_ref() }.map(|p| p.pid)
+}
 
 /// Why newproc failed.
 #[derive(Debug, PartialEq)]
