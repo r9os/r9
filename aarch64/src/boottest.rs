@@ -669,14 +669,14 @@ fn test_fp_state() {
 /// A process asleep alone is woken by an interrupt: with nothing else to run,
 /// the scheduler idles until a 50 ms timer wakes it.
 fn test_sleep_and_wakeup() {
-    static R: port::dat::Rendez<Aarch64> = port::dat::Rendez::new();
+    static R: port::dat::Rendez = port::dat::Rendez::new();
     static WOKEN: AtomicBool = AtomicBool::new(false);
     static WAKER: Timer = Timer::new(Mode::Relative(Duration::from_millis(50)), |_| {
         WOKEN.store(true, Ordering::Relaxed);
-        port::proc::wakeup(&R);
+        port::proc::wakeup::<Aarch64>(&R);
     });
     let p = port::proc::newproc::<Aarch64>(|| {
-        port::proc::sleep(&R, || WOKEN.load(Ordering::Relaxed));
+        port::proc::sleep::<Aarch64>(&R, || WOKEN.load(Ordering::Relaxed));
         port::proc::pexit::<Aarch64>(b"");
     })
     .expect("couldn't create process");

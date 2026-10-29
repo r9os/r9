@@ -25,12 +25,28 @@ static NEXT_PID: AtomicU64 = AtomicU64::new(1);
 const QUANTUM: u64 = timer::HZ / 10;
 
 /// The current process, for code that isn't generic over the architecture,
-/// such as a device: Plan 9's up, as far as such code needs it.  Each
-/// architecture that runs processes registers it with init_current, as it
-/// does its clock with clock::init.
+/// such as a device: Plan 9's up, as far as such code needs it, and sleep
+/// and wakeup.  Each architecture that runs processes registers
+/// Current::of::<A>() with init_current, as it does its clock with
+/// clock::init.
 pub struct Current {
     /// The current process's pid, or None if there's no current process.
     pub pid: fn() -> Option<u64>,
+    /// sleep, for the architecture.
+    pub sleep: fn(&Rendez, &dyn Fn() -> bool),
+    /// wakeup, for the architecture.
+    pub wakeup: fn(&Rendez) -> bool,
+}
+
+impl Current {
+    /// `A`'s current process, sleep and wakeup.
+    pub const fn of<A: ProcArch>() -> Current {
+        Current { pid: up_pid::<A>, sleep: sleep_dyn::<A>, wakeup: wakeup::<A> }
+    }
+}
+
+fn sleep_dyn<A: ProcArch>(r: &Rendez, cond: &dyn Fn() -> bool) {
+    sleep::<A>(r, cond)
 }
 
 #[cfg(not(test))]
@@ -51,20 +67,40 @@ pub fn init_current(current: &'static Current) {
     }
 }
 
-/// The current process's pid, or None if there's none, or the architecture
-/// hasn't registered its current process.
-pub fn current_pid() -> Option<u64> {
+fn registered() -> Option<&'static Current> {
     let current = core::cfg_select! {
         test => CURRENT.with(|c| c.load(Ordering::Acquire)),
         _ => CURRENT.load(Ordering::Acquire),
     };
     // SAFETY: CURRENT is null, or was set from a &'static Current by
     // init_current.
-    unsafe { current.as_ref() }.and_then(|c| (c.pid)())
+    unsafe { current.as_ref() }
 }
 
-/// The pid of `A`'s current process, for an architecture's Current.
-pub fn up_pid<A: ProcArch>() -> Option<u64> {
+/// The current process's pid, or None if there's none, or the architecture
+/// hasn't registered its current process.
+pub fn current_pid() -> Option<u64> {
+    registered().and_then(|c| (c.pid)())
+}
+
+impl Rendez {
+    /// Sleep here until `cond` holds, as sleep, through the architecture's
+    /// registered Current, for code that isn't generic over it.
+    pub fn sleep(&self, cond: impl Fn() -> bool) {
+        let current = registered().expect("Rendez::sleep: no current process registered");
+        (current.sleep)(self, &cond)
+    }
+
+    /// Wake the process asleep here, if there is one, as wakeup, and return
+    /// whether there was.  Without a registered Current, nothing can have
+    /// slept through it.  It doesn't allocate, so it can be called from an
+    /// interrupt handler.
+    pub fn wakeup(&self) -> bool {
+        registered().is_some_and(|current| (current.wakeup)(self))
+    }
+}
+
+fn up_pid<A: ProcArch>() -> Option<u64> {
     // SAFETY: up is null, or the running process, which is alive while it
     // runs.
     unsafe { A::up().as_ref() }.map(|p| p.pid)
@@ -239,7 +275,7 @@ pub fn yield_now<A: ProcArch>() {
 /// again each time the process is woken.  IRQs stay masked until the process
 /// is back in the scheduler, which takes ownership of it before anything can
 /// wake it.
-pub fn sleep<A: ProcArch>(r: &Rendez<A>, cond: impl Fn() -> bool) {
+pub fn sleep<A: ProcArch>(r: &Rendez, cond: impl Fn() -> bool) {
     irq::masked(|| {
         loop {
             let node = LockNode::new();
@@ -254,7 +290,7 @@ pub fn sleep<A: ProcArch>(r: &Rendez<A>, cond: impl Fn() -> bool) {
             // resumes it here once it's woken.  It's marked asleep before
             // it's published on r, so a wakeup never sees it running.
             unsafe { (*up).state = State::Sleeping };
-            *sleeper = up;
+            *sleeper = up.cast();
             drop(sleeper);
             // SAFETY: as above.
             unsafe { A::swtch(&mut (*up).label, A::sched()) };
@@ -265,14 +301,15 @@ pub fn sleep<A: ProcArch>(r: &Rendez<A>, cond: impl Fn() -> bool) {
 /// Wake the process asleep on `r`, if there is one, as Plan 9's wakeup, and
 /// return whether there was.  It doesn't allocate, so it can be called from
 /// an interrupt handler.
-pub fn wakeup<A: ProcArch>(r: &Rendez<A>) -> bool {
+pub fn wakeup<A: ProcArch>(r: &Rendez) -> bool {
     let node = LockNode::new();
     let p = core::mem::replace(&mut *r.sleeper.ilock(&node), ptr::null_mut());
     if p.is_null() {
         return false;
     }
-    // SAFETY: the Rendez owned p, from Box::into_raw, and has just given it up.
-    let mut p = unsafe { Box::from_raw(p) };
+    // SAFETY: the Rendez owned p, a Proc<A> from Box::into_raw, as sleep
+    // stored it, and has just given it up.
+    let mut p = unsafe { Box::from_raw(p.cast::<Proc<A>>()) };
     p.state = State::Ready;
     let mut q = A::run_queue().ilock(&node);
     // The scheduler counted p before it unmasked IRQs, and on one CPU nothing
@@ -286,7 +323,7 @@ pub fn wakeup<A: ProcArch>(r: &Rendez<A>) -> bool {
 /// Sleep on `r` until `cond` holds or `d` has passed, as Plan 9's tsleep:
 /// the process's own timer wakes it at the deadline.  A process can't exit
 /// while it's here, so the timer is always removed before it's reaped.
-pub fn tsleep<A: ProcArch>(r: &Rendez<A>, cond: impl Fn() -> bool, d: Duration) {
+pub fn tsleep<A: ProcArch>(r: &Rendez, cond: impl Fn() -> bool, d: Duration) {
     let up = A::up();
     assert!(!up.is_null(), "tsleep: no current process");
     // SAFETY: up is the running process, set by schedule, which resumes it
@@ -299,7 +336,7 @@ pub fn tsleep<A: ProcArch>(r: &Rendez<A>, cond: impl Fn() -> bool, d: Duration) 
         // timer is removed before up is freed.
         timer::add_unowned(&(*up).timer);
         // SAFETY: as above.
-        sleep(r, || (*up).trend.is_null() || cond());
+        sleep::<A>(r, || (*up).trend.is_null() || cond());
         timer::remove(&(*up).timer);
     }
 }
@@ -316,7 +353,7 @@ pub(crate) fn twakeup<A: ProcArch>(arg: *mut ()) {
         let trend = (*up).trend;
         (*up).trend = ptr::null();
         if !trend.is_null() {
-            wakeup(&*trend);
+            wakeup::<A>(&*trend);
         }
     }
 }
@@ -475,11 +512,11 @@ mod tests {
 
     #[test]
     fn sleep_with_its_condition_holding_doesnt_switch() {
-        static R: Rendez<Fake> = Rendez::new();
+        static R: Rendez = Rendez::new();
         let mut p = newproc::<Fake>(start).unwrap();
         Fake::set_up(&mut *p);
         // The fake can't switch, so sleeping would panic.
-        sleep(&R, || true);
+        sleep::<Fake>(&R, || true);
         Fake::set_up(ptr::null_mut());
         // SAFETY: nothing runs in the fake process.
         unsafe { reap(*p) };
@@ -487,19 +524,19 @@ mod tests {
 
     #[test]
     fn wakeup_with_no_sleeper_wakes_nothing() {
-        static R: Rendez<Fake> = Rendez::new();
-        assert!(!wakeup(&R));
+        static R: Rendez = Rendez::new();
+        assert!(!wakeup::<Fake>(&R));
     }
 
     #[test]
     fn tsleep_whose_condition_holds_leaves_no_timer_queued() {
         crate::clock::init(&CLOCK);
-        static R: Rendez<Fake> = Rendez::new();
+        static R: Rendez = Rendez::new();
         let mut p = newproc::<Fake>(start).unwrap();
         Fake::set_up(&mut *p);
         // The fake can't switch, so the condition must already hold: tsleep
         // returns without sleeping, and leaves its timeout unqueued.
-        tsleep(&R, || true, Duration::from_millis(10));
+        tsleep::<Fake>(&R, || true, Duration::from_millis(10));
         assert_eq!(ARMED.with(|a| a.get()), None, "tsleep's timer is still queued");
         Fake::set_up(ptr::null_mut());
         // SAFETY: nothing runs in the fake process.
