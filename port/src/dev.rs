@@ -1,12 +1,14 @@
 //! Devices, and the resolution of a name to an open channel, as Plan 9's
 //! dev.c and namec in chan.c.
 
+use alloc::format;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use crate::chan::{self, Chan, OREAD, QTDIR};
 use crate::devcons;
-use crate::error::{EBADSHARP, ENONEXIST, ENOTDIR};
+use crate::error::{EBADSHARP, ENONEXIST, ENOTDIR, Error};
+use sys::ERRMAX;
 
 /// A device's operations for the files it holds, as Plan 9's Device, with
 /// the six this kernel needs; Plan 9's other eleven have no caller until the
@@ -84,37 +86,99 @@ fn parse(path: &str) -> (Vec<&str>, bool) {
     (elems, mustbedir)
 }
 
-/// The device a name starts from, the elements to walk from its root, and
-/// whether they must name a directory: a # name's device, or for a name from
-/// the root, the device bound on its first element.  Any other name is
-/// ENONEXIST, as there's nothing else in the root, and no current directory.
-fn resolve(name: &str) -> crate::Result<(&'static dyn Dev, Vec<&str>, bool)> {
+/// A name's start, as resolve finds it: the device, the elements to walk
+/// from its root, whether they must name a directory, and the length, in
+/// bytes, of the part of the name walked to reach it.
+struct Start<'a> {
+    dev: &'static dyn Dev,
+    elems: Vec<&'a str>,
+    mustbedir: bool,
+    walked: usize,
+}
+
+/// Where a name starts: a # name's device, or for a name from the root, the
+/// device bound on its first element.  Any other name is ENONEXIST at its
+/// first element, as there's nothing else in the root, and no current
+/// directory.
+fn resolve(name: &str) -> Result<Start<'_>, Error> {
     if let Some(rest) = name.strip_prefix('#') {
         let (dev, path) = devpath(rest)?;
         let (elems, mustbedir) = parse(path);
-        return Ok((dev, elems, mustbedir));
-    }
-    if !name.starts_with('/') {
-        return Err(ENONEXIST);
+        return Ok(Start { dev, elems, mustbedir, walked: 0 });
     }
     let (mut elems, mustbedir) = parse(name);
-    let first = if elems.is_empty() { None } else { Some(elems.remove(0)) };
-    let dev = BINDS.iter().find(|(n, _)| Some(*n) == first).ok_or(ENONEXIST)?.1;
-    Ok((dev, elems, mustbedir))
+    let Some(&first) = elems.first() else {
+        return Err(ENONEXIST.into());
+    };
+    let walked = end(name, first);
+    let bound = if name.starts_with('/') { BINDS.iter().find(|(n, _)| *n == first) } else { None };
+    let dev = bound.ok_or_else(|| nameerror(name, walked, ENONEXIST))?.1;
+    elems.remove(0);
+    Ok(Start { dev, elems, mustbedir, walked })
+}
+
+/// The end of `elem`, a slice of `name`, as an offset in `name`, as Plan 9's
+/// parsename records each element's.
+fn end(name: &str, elem: &str) -> usize {
+    let start = elem.as_ptr() as usize - name.as_ptr() as usize;
+    debug_assert!(start + elem.len() <= name.len(), "end: {elem:?} isn't a slice of {name:?}");
+    start + elem.len()
 }
 
 /// The channel `name` opens for the access `omode`, as Plan 9's namec: the
 /// mode is checked first, as Plan 9's openmode, then the name resolved, the
-/// device attached, the path walked, and the channel opened.
-pub(crate) fn open_name(name: &str, omode: u32) -> crate::Result<Arc<Chan>> {
+/// device attached, the path walked an element at a time, and the channel
+/// opened.  An error from the walk or after it shows the name as namec's
+/// does: up to the element that failed, or for an element that isn't a
+/// directory, up to that element; past the walk, the whole name; and none if
+/// the name has no elements.
+pub(crate) fn open_name(name: &str, omode: u32) -> Result<Arc<Chan>, Error> {
     let omode = chan::openmode(omode)?;
-    let (dev, elems, mustbedir) = resolve(name)?;
-    let c = dev.attach()?;
-    let c = dev.walk(&c, &elems)?;
-    if mustbedir && c.qid().kind != QTDIR {
-        return Err(ENOTDIR);
+    let Start { dev, elems, mustbedir, mut walked } = resolve(name)?;
+    let mut c = dev.attach()?;
+    for elem in elems {
+        if c.qid().kind != QTDIR {
+            return Err(nameerror(name, walked, ENOTDIR));
+        }
+        walked = end(name, elem);
+        c = dev.walk(&c, &[elem]).map_err(|err| nameerror(name, walked, err))?;
     }
-    dev.open(&c, omode)
+    let whole = if walked == 0 { 0 } else { name.len() };
+    if mustbedir && c.qid().kind != QTDIR {
+        return Err(nameerror(name, whole, ENOTDIR));
+    }
+    dev.open(&c, omode).map_err(|err| nameerror(name, whole, err))
+}
+
+/// The error `err` from resolving `name`, showing its first `len` bytes, as
+/// Plan 9's namelenerror: all of them if they're short enough beside `err`;
+/// else ... and as many of their last elements as are; else, for a last
+/// element too long by itself, its last ERRMAX/4 bytes.  None is shown for
+/// a `len` of 0.
+fn nameerror(name: &str, len: usize, err: &'static str) -> Error {
+    if len == 0 {
+        return Error::Str(err);
+    }
+    let short = |n: usize| n < ERRMAX / 3 || n + err.len() < 2 * ERRMAX / 3;
+    let name = &name[..len];
+    if short(len) {
+        return Error::Name(name.into(), err);
+    }
+    // Move back a slash at a time while what follows it is short enough,
+    // and show what followed the last slash that was.
+    let mut next = len;
+    let mut start;
+    loop {
+        start = next;
+        next = name[..start].rfind('/').unwrap_or(0);
+        if !short(len - next) {
+            break;
+        }
+    }
+    if start == len {
+        start = name.ceil_char_boundary(len - ERRMAX / 4);
+    }
+    Error::Name(format!("...{}", &name[start..]), err)
 }
 
 /// The group slot of a file mode, as the bits of it the permission check
@@ -146,8 +210,10 @@ pub(crate) fn perm_ok(mode: u32, omode: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::string::String;
+
     use crate::chan::{OWRITE, ORDWR, OTRUNC, QTDIR, QTFILE};
-    use crate::error::{EBADARG, ENONEXIST, ENOTSUP, ENOTDIR, EPERM};
+    use crate::error::{ENONEXIST, ENOTSUP};
     use crate::fake::{cons_output, fake_cons};
 
     /// The device and path what follows a # names, as devpath does.
@@ -155,9 +221,16 @@ mod tests {
         devpath(name).map(|(d, p)| (d.dc(), p))
     }
 
-    /// The error a name's open fails with.
-    fn err(name: &str, omode: u32) -> &'static str {
-        open_name(name, omode).err().expect("the open to fail")
+    /// The text of the error a name's open fails with.
+    fn err(name: &str, omode: u32) -> String {
+        text(&open_name(name, omode).err().expect("the open to fail"))
+    }
+
+    /// An error's text, as the error string would hold it.
+    fn text(err: &Error) -> String {
+        let mut buf = [0u8; ERRMAX - 1];
+        let n = err.text(&mut buf);
+        String::from_utf8(buf[..n].to_vec()).expect("UTF-8")
     }
 
     #[test]
@@ -225,54 +298,64 @@ mod tests {
         // The permissions that fail, as the modes say: a write of a
         // directory fails the group check, as Plan 9's devopen orders it,
         // before its directory arm.
-        assert_eq!(err("#c/pid", OWRITE), EPERM, "a pid write");
-        assert_eq!(err("#c/pid", ORDWR), EPERM, "a pid read and write");
-        assert_eq!(err("#c", OWRITE), EPERM, "a directory write");
-        assert_eq!(err("#c", ORDWR), EPERM, "a directory read and write");
+        // An error past the walk shows the whole name, and #c alone has no
+        // elements to show.
+        assert_eq!(err("#c/pid", OWRITE), "'#c/pid' permission denied", "a pid write");
+        assert_eq!(err("#c/pid", ORDWR), "'#c/pid' permission denied", "a pid read and write");
+        assert_eq!(err("#c", OWRITE), "permission denied", "a directory write");
+        assert_eq!(err("#c", ORDWR), "permission denied", "a directory read and write");
 
-        // A mode openmode can't reduce.
-        assert_eq!(err("#c/cons", OWRITE | 0x100), EBADARG, "above OEXEC");
+        // A mode openmode can't reduce, before the name is resolved.
+        assert_eq!(err("#c/cons", OWRITE | 0x100), "bad arg in system call", "above OEXEC");
     }
 
     #[test]
     fn walks() {
-        // The walk's error ordering, as Plan 9's devwalk has it.
-        assert_eq!(err("#c/nope", OREAD), ENONEXIST, "a missing name");
-        assert_eq!(err("#c/..", OREAD), ENONEXIST, "no ..");
-        assert_eq!(err("#c/cons/extra", OREAD), ENOTDIR, "past the file");
+        // The walk's error ordering, as Plan 9's devwalk has it, showing
+        // the name up to the element that failed, or up to the file walked
+        // past, as namec does.
+        assert_eq!(err("#c/nope", OREAD), "'#c/nope' file does not exist", "a missing name");
+        assert_eq!(err("#c/..", OREAD), "'#c/..' file does not exist", "no ..");
+        assert_eq!(err("#c/cons/extra", OREAD), "'#c/cons' not a directory", "past the file");
 
         // A trailing slash or . must name a directory, as Plan 9's namec
-        // checks after the walk; a doubled slash or a . is skipped.
-        assert_eq!(err("#c/cons/", OWRITE), ENOTDIR, "a trailing slash");
-        assert_eq!(err("#c/cons/.", OWRITE), ENOTDIR, "a trailing .");
+        // checks after the walk, showing the whole name; a doubled slash or
+        // a . is skipped.
+        assert_eq!(err("#c/cons/", OWRITE), "'#c/cons/' not a directory", "a trailing slash");
+        assert_eq!(err("#c/cons/.", OWRITE), "'#c/cons/.' not a directory", "a trailing .");
         open_name("#c//cons", OWRITE).expect("a doubled slash");
         open_name("#c/./cons", OWRITE).expect("a .");
         open_name("#c/", OREAD).expect("the root, with a trailing slash");
 
-        // A bad # prefix.
-        assert_eq!(err("#x/cons", OWRITE), EBADSHARP, "an unknown device");
+        // A bad # prefix, before there's a name to show.
+        assert_eq!(err("#x/cons", OWRITE), "unknown device in # filename", "an unknown device");
     }
 
-    /// The device and elements a name resolves to, as resolve does.
-    fn resolved(name: &str) -> Result<(char, Vec<&str>), &'static str> {
-        resolve(name).map(|(d, e, _)| (d.dc(), e))
+    /// The device and elements a name resolves to, as resolve does, or its
+    /// error's text.
+    fn resolved(name: &str) -> Result<(char, Vec<&str>), String> {
+        resolve(name).map(|s| (s.dev.dc(), s.elems)).map_err(|e| text(&e))
     }
 
     #[test]
     fn resolves() {
         assert_eq!(resolved("#c/cons"), Ok(('c', vec!["cons"])), "a # name");
-        assert_eq!(resolved("#x/cons"), Err(EBADSHARP), "an unknown device");
-        assert_eq!(resolved("#"), Err(EBADSHARP), "no letter");
+        let badsharp = || Err(EBADSHARP.into());
+        assert_eq!(resolved("#x/cons"), badsharp(), "an unknown device");
+        assert_eq!(resolved("#"), badsharp(), "no letter");
         assert_eq!(resolved("/dev"), Ok(('c', vec![])), "the bound directory");
         assert_eq!(resolved("/dev/"), Ok(('c', vec![])));
         assert_eq!(resolved("/dev/cons"), Ok(('c', vec!["cons"])));
         assert_eq!(resolved("//dev//cons"), Ok(('c', vec!["cons"])), "doubled slashes");
         assert_eq!(resolved("/./dev/./cons"), Ok(('c', vec!["cons"])), "dots");
-        assert_eq!(resolved("/devcons"), Err(ENONEXIST), "not below /dev");
-        assert_eq!(resolved("/"), Err(ENONEXIST), "no root");
-        assert_eq!(resolved("/env"), Err(ENONEXIST), "nothing bound there");
-        assert_eq!(resolved("cons"), Err(ENONEXIST), "no current directory");
-        assert_eq!(resolved(""), Err(ENONEXIST), "nothing");
+        // A name that isn't bound fails at its first element, which is
+        // shown; one with no elements shows nothing.
+        let missing = |n: &str| Err(alloc::format!("'{n}' file does not exist"));
+        assert_eq!(resolved("/devcons"), missing("/devcons"), "not below /dev");
+        assert_eq!(resolved("/env/x"), missing("/env"), "nothing bound there");
+        assert_eq!(resolved("cons"), missing("cons"), "no current directory");
+        assert_eq!(resolved("/"), Err(ENONEXIST.into()), "no root");
+        assert_eq!(resolved(""), Err(ENONEXIST.into()), "nothing");
     }
 
     #[test]
@@ -286,10 +369,43 @@ mod tests {
         let root = open_name("/dev", OREAD).expect("/dev");
         assert_eq!(root.qid().kind, QTDIR, "the console's root");
 
-        assert_eq!(err("/dev/pid", OWRITE), EPERM, "pid's permissions");
-        assert_eq!(err("/dev/nope", OWRITE), ENONEXIST, "a missing name");
-        assert_eq!(err("/dev/cons/x", OWRITE), ENOTDIR, "past the file");
-        assert_eq!(err("cons", OWRITE), ENONEXIST, "no current directory");
+        assert_eq!(err("/dev/pid", OWRITE), "'/dev/pid' permission denied", "pid's permissions");
+        assert_eq!(err("/dev", OWRITE), "'/dev' permission denied", "the bound directory");
+        assert_eq!(err("/dev/nope", OWRITE), "'/dev/nope' file does not exist", "a missing name");
+        assert_eq!(err("/dev/nope/x", OWRITE), "'/dev/nope' file does not exist", "up to the element");
+        assert_eq!(err("/dev/cons/x", OWRITE), "'/dev/cons' not a directory", "past the file");
+        assert_eq!(err("cons", OWRITE), "'cons' file does not exist", "no current directory");
+    }
+
+    #[test]
+    fn long_names_are_shortened() {
+        // A name short enough beside its error is shown whole.
+        let short = nameerror("/dev/nope", 9, ENONEXIST);
+        assert_eq!(short, Error::Name("/dev/nope".into(), ENONEXIST));
+
+        // A long one shows ... and as many of its last elements as fit:
+        // twenty elements of ten bytes show their last six, sixty bytes,
+        // the most beside the error's nineteen within 2*ERRMAX/3.
+        let name: String = (0..20).map(|i| alloc::format!("/element{i:02}")).collect();
+        let shown = nameerror(&name, name.len(), ENONEXIST);
+        assert_eq!(shown, Error::Name(alloc::format!("...{}", &name[140..]), ENONEXIST));
+
+        // A last element too long by itself shows its last ERRMAX/4 bytes.
+        let name = alloc::format!("/dev/{}", "x".repeat(100));
+        let chopped = alloc::format!("...{}", "x".repeat(ERRMAX / 4));
+        assert_eq!(nameerror(&name, name.len(), ENONEXIST), Error::Name(chopped, ENONEXIST));
+        assert_eq!(
+            err(&name, OREAD),
+            alloc::format!("'...{}' file does not exist", "x".repeat(ERRMAX / 4)),
+            "through open"
+        );
+
+        // A shortened name falls back a character at a time to a boundary.
+        let name = alloc::format!("/dev/{}", "é".repeat(50));
+        let Error::Name(shown, _) = nameerror(&name, name.len(), ENONEXIST) else {
+            panic!("a name error");
+        };
+        assert!(shown.len() <= ERRMAX / 4 + 3 && shown.ends_with('é'));
     }
 
     #[test]

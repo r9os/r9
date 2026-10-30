@@ -205,6 +205,7 @@ mod tests {
     use super::*;
     use crate::chan::{ORDWR, OWRITE};
     use crate::dev::open_name;
+    use crate::error::Error;
     use std::cell::Cell;
 
     thread_local! {
@@ -228,7 +229,11 @@ mod tests {
         assert_eq!(time.length(), 78, "NUMSIZE plus three VLNUMSIZEs");
         let pid = open_name("#c/pid", OREAD).expect("pid");
         assert_eq!(pid.length(), 12, "NUMSIZE");
-        assert_eq!(open_name("#c/pid", OWRITE).err(), Some(EPERM), "pid is read-only");
+        assert_eq!(
+            open_name("#c/pid", OWRITE).err(),
+            Some(Error::Name("#c/pid".into(), EPERM)),
+            "pid is read-only"
+        );
     }
 
     #[test]
