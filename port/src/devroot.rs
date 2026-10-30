@@ -79,6 +79,9 @@ impl Dev for Root {
         let mut c = c.clone();
         for elem in elems {
             let qid = match c.qid().path {
+                // .. is the root, from boot and from the root itself, as
+                // rootgen gives for DEVDOTDOT.
+                QDIR | QBOOT if *elem == ".." => Qid { path: QDIR, kind: QTDIR },
                 QDIR if *elem == "boot" => Qid { path: QBOOT, kind: QTDIR },
                 QBOOT => {
                     let i = boot().iter().position(|f| f.name == *elem).ok_or(ENONEXIST)?;
