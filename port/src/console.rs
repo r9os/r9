@@ -176,9 +176,6 @@ struct Input {
     n: usize,
     /// How many of them end a line: newlines and ^Ds.
     ends: usize,
-    /// How many times input was lost: a byte the ring had no room for, or
-    /// an overrun the UART reported, which is at least a byte.
-    lost: u64,
     /// The line being edited, line[..x].  Once it's sent, it's read from
     /// line[pos..x], and nothing more is edited until it's all read.
     line: [u8; LINE],
@@ -194,7 +191,6 @@ impl Input {
             r: 0,
             n: 0,
             ends: 0,
-            lost: 0,
             line: [0; LINE],
             x: 0,
             pos: 0,
@@ -203,10 +199,9 @@ impl Input {
     }
 
     /// Put `b` in the ring, and return whether it's kept: when the ring is
-    /// full, it's lost, and counted.
+    /// full, it's dropped, as Plan 9's kbdcr2nl drops it.
     fn put(&mut self, b: u8) -> bool {
         if self.n == RING {
-            self.lost += 1;
             return false;
         }
         self.ring[(self.r + self.n) % RING] = b;
@@ -308,17 +303,11 @@ fn kbd() -> &'static QLock {
 /// Put the bytes the UART has received, as Plan 9's kbdcr2nl: a return
 /// becomes a newline, and anything else is kept as it is, a delete included,
 /// which only a backspace erases.  Each byte kept is echoed, and a reader is
-/// woken when a line ends or the ring fills.  `overrun` is whether the UART
-/// lost bytes before these, which it can't count.  Input that's lost, there
-/// or because the ring is full, is counted, and reported once for each call
-/// that loses some.  It's the UART's receive interrupt that calls it, so it
-/// doesn't allocate, and its work is bounded by `bytes`.
-pub fn put_input(bytes: &[u8], overrun: bool) {
-    let before = lost();
-    if overrun {
-        let node = LockNode::new();
-        input().ilock(&node).lost += 1;
-    }
+/// woken when a line ends or the ring fills.  Input the ring has no room
+/// for is dropped, without a report, as kbdcr2nl drops it.  It's the UART's
+/// receive interrupt that calls it, so it doesn't allocate, and its work is
+/// bounded by `bytes`.
+pub fn put_input(bytes: &[u8]) {
     let mut wake = false;
     for &b in bytes {
         let b = if b == b'\r' { b'\n' } else { b };
@@ -333,10 +322,6 @@ pub fn put_input(bytes: &[u8], overrun: bool) {
     }
     if wake {
         READER.wakeup();
-    }
-    let after = lost();
-    if after != before {
-        iprint(format_args!("console: input lost ({after} so far)\n"));
     }
 }
 
@@ -377,12 +362,6 @@ pub fn read(buf: &mut [u8]) -> crate::Result<usize> {
     };
     kbd().qunlock();
     Ok(n)
-}
-
-/// How many times input has been lost.
-fn lost() -> u64 {
-    let node = LockNode::new();
-    input().ilock(&node).lost
 }
 
 #[cfg(test)]
@@ -468,7 +447,7 @@ mod tests {
     fn a_line_is_echoed_and_read_whole() {
         reader();
         fake_cons();
-        put_input(b"hello\r", false);
+        put_input(b"hello\r");
         assert_eq!(cons_output(), b"hello\r\n", "the echo, the return a newline");
         assert_eq!(read_n(100), Ok(b"hello\n".to_vec()));
     }
@@ -479,14 +458,14 @@ mod tests {
         fake_cons();
         // A backspace erases a byte, and ^U the line; a delete is kept, as
         // Plan 9's consread has no case for it.
-        put_input(b"helx\x08p\n", false);
+        put_input(b"helx\x08p\n");
         assert_eq!(read_n(100), Ok(b"help\n".to_vec()), "backspace");
-        put_input(b"helx\x7fp\n", false);
+        put_input(b"helx\x7fp\n");
         assert_eq!(read_n(100), Ok(b"helx\x7fp\n".to_vec()), "delete");
-        put_input(b"\x08\x08ok\n", false);
+        put_input(b"\x08\x08ok\n");
         assert_eq!(read_n(100), Ok(b"ok\n".to_vec()), "backspace on an empty line");
         cons_output();
-        put_input(b"junk\x15ok\n", false);
+        put_input(b"junk\x15ok\n");
         assert_eq!(cons_output(), b"junk^U\r\nok\r\n", "^U's echo");
         assert_eq!(read_n(100), Ok(b"ok\n".to_vec()), "^U");
     }
@@ -495,9 +474,9 @@ mod tests {
     fn ctl_d_sends_the_line_without_itself() {
         reader();
         fake_cons();
-        put_input(b"abc\x04", false);
+        put_input(b"abc\x04");
         assert_eq!(read_n(100), Ok(b"abc".to_vec()), "a line ended by ^D");
-        put_input(b"\x04", false);
+        put_input(b"\x04");
         assert_eq!(read_n(100), Ok(b"".to_vec()), "^D alone, the end of the file");
     }
 
@@ -505,39 +484,27 @@ mod tests {
     fn a_line_longer_than_the_read_is_read_in_parts() {
         reader();
         fake_cons();
-        put_input(b"abcdef\nnext\n", false);
+        put_input(b"abcdef\nnext\n");
         assert_eq!(read_n(4), Ok(b"abcd".to_vec()));
         assert_eq!(read_n(100), Ok(b"ef\n".to_vec()), "the rest, and no more");
         assert_eq!(read_n(100), Ok(b"next\n".to_vec()), "a line typed ahead");
     }
 
     #[test]
-    fn lost_input_is_counted_and_reported() {
+    fn input_past_a_full_ring_is_dropped_silently() {
         reader();
         fake_cons();
-        put_input(&[b'x'; RING + 6], false);
-        assert_eq!(lost(), 6);
-        let out = cons_output();
-        assert_eq!(&out[..RING], [b'x'; RING], "only what's kept is echoed");
-        assert_eq!(&out[RING..], b"console: input lost (6 so far)\r\n", "then the report");
+        put_input(&[b'x'; RING + 6]);
+        assert_eq!(cons_output(), [b'x'; RING], "only what's kept is echoed, and no report");
         // A full ring is a full line, sent without a newline.
         assert_eq!(read_n(RING), Ok(std::vec![b'x'; LINE]));
-
-        // An overrun the UART reports is counted too, even with nothing lost
-        // here.
-        put_input(b"a", true);
-        assert_eq!(lost(), 7);
-        assert_eq!(cons_output(), b"aconsole: input lost (7 so far)\r\n");
-        // A call that loses nothing reports nothing.
-        put_input(b"b", false);
-        assert_eq!(cons_output(), b"b");
     }
 
     #[test]
     fn a_read_gives_up_the_reader_lock() {
         reader();
         fake_cons();
-        put_input(b"a\r", false);
+        put_input(b"a\r");
         assert_eq!(read_n(100), Ok(b"a\n".to_vec()));
         assert!(kbd().canqlock(), "the reader's lock is free");
         kbd().qunlock();

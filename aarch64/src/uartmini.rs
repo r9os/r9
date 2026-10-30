@@ -194,28 +194,22 @@ impl MiniUart {
         read_reg(&self.aux_virtrange, AUX_IRQ) & 1 != 0
     }
 
-    /// Take what the receive FIFO holds into `buf`, and return how much, and
-    /// whether bytes were lost before it: bytes from AUX_MU_IO_REG while
-    /// AUX_MU_LSR_REG's data ready bit, bit 0, is set, at most the FIFO's
-    /// depth, so the work is bounded.  LSR's receiver overrun bit, bit 1, is
-    /// set when bytes arrived while the FIFO was full, and clears when LSR is
-    /// read (2.2.2, Table 10), so every read of LSR is checked for it.  The
-    /// receive interrupt is level-triggered, and drops once the FIFO's empty.
-    pub fn drain(&self, buf: &mut [u8; RX_FIFO]) -> (usize, bool) {
+    /// Take what the receive FIFO holds into `buf`, and return how much:
+    /// bytes from AUX_MU_IO_REG while AUX_MU_LSR_REG's data ready bit, bit 0,
+    /// is set, at most the FIFO's depth, so the work is bounded.  Bytes that
+    /// arrived while the FIFO was full are lost, as LSR's receiver overrun
+    /// bit, bit 1, says until LSR is read (2.2.2, Table 10), and they're
+    /// dropped without a report, as Plan 9's console drops input it has no
+    /// room for.  The receive interrupt is level-triggered, and drops once
+    /// the FIFO's empty.
+    pub fn drain(&self, buf: &mut [u8; RX_FIFO]) -> usize {
         const DATA_READY: u32 = 1 << 0;
-        const OVERRUN: u32 = 1 << 1;
         let mut n = 0;
-        let mut overrun = false;
-        while n < RX_FIFO {
-            let lsr = read_reg(&self.miniuart_virtrange, AUX_MU_LSR);
-            overrun |= lsr & OVERRUN != 0;
-            if lsr & DATA_READY == 0 {
-                break;
-            }
+        while n < RX_FIFO && read_reg(&self.miniuart_virtrange, AUX_MU_LSR) & DATA_READY != 0 {
             buf[n] = read_reg(&self.miniuart_virtrange, AUX_MU_IO) as u8;
             n += 1;
         }
-        (n, overrun)
+        n
     }
 }
 
