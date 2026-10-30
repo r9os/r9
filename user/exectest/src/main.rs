@@ -3,7 +3,8 @@
 //! image, and too many arguments each fail with Plan 9's error, and return.
 //! Then it forks a child, which opens the console twice, once OCEXEC, sets
 //! some of its FP/SIMD registers, and execs this program as "x", with the
-//! argument "child", and it awaits the child, whose exit must name the file.
+//! argument "child", and it waits for the child, whose exit must name the
+//! file.
 //! Last, it execs /bin/echo, so it exits as echo does.  Run as the child, it
 //! checks its FP/SIMD registers are zero, and that the OCEXEC descriptor is
 //! closed and the other open, and exits with "child".  Anything else exits
@@ -12,27 +13,22 @@
 #![no_std]
 #![no_main]
 
+extern crate alloc;
+
 use core::ffi::{CStr, c_char};
 use core::mem::MaybeUninit;
 use core::ptr;
-use libc::{OCEXEC, OWRITE, close, exits, open, rerrstr};
-use sys::{AWAIT, EXEC, RFFDG, RFORK, RFPROC, RFREND};
-
-/// Make system call `nr` with two arguments, as libc does.
-fn syscall(nr: u64, a0: u64, a1: u64) -> i64 {
-    let r: u64;
-    // SAFETY: the kernel reads only the arguments it's given, and changes
-    // only x0.
-    unsafe { core::arch::asm!("svc #0", inlateout("x0") a0 => r, in("x1") a1, in("x8") nr) };
-    r as i64
-}
+use libc::{OCEXEC, OWRITE, close, exec, exits, fork, open, rerrstr, wait};
+use sys::EXEC;
 
 /// exec(name, argv), having first set d1, d31 and FPCR's rounding mode, so
-/// the program it starts would see them if exec kept them.  It returns only
-/// if exec fails.
+/// the program it starts would see them if exec kept them, as libc's exec
+/// can't: the compiler may use the registers between setting them and the
+/// call.  `argv` ends with a null pointer.  It returns only if exec fails.
 fn exec_dirty(name: &CStr, argv: &[*const c_char]) -> i64 {
     let r: u64;
-    // SAFETY: as syscall's, and the FP/SIMD registers it sets are declared.
+    // SAFETY: the kernel reads only the arguments it's given, and changes
+    // only x0, and the FP/SIMD registers set here are declared.
     unsafe {
         core::arch::asm!(
             "fmov d1, #1.0",
@@ -91,8 +87,8 @@ fn fp_zero() -> bool {
 }
 
 /// Check that exec of `name` with `argv` fails with `want`.
-fn fails(name: &CStr, argv: &[*const c_char], want: &str) {
-    if syscall(EXEC, name.as_ptr().addr() as u64, argv.as_ptr().addr() as u64) != -1 {
+fn fails(name: &CStr, argv: &[&CStr], want: &str) {
+    if exec(name, argv) != -1 {
         exits("exectest: an exec that should fail returned");
     }
     let mut err = [0u8; 128];
@@ -108,23 +104,27 @@ fn fails(name: &CStr, argv: &[*const c_char], want: &str) {
 static mut BIG: [u8; 20001] = [0; 20001];
 
 fn the_failures() {
-    let none = [c"x".as_ptr(), ptr::null()];
-    fails(c"/bin/nosuch", &none, "'/bin/nosuch' file does not exist");
-    fails(c"/bin", &none, "'/bin' cannot exec directory");
-    fails(c"#c/cons", &none, "'#c/cons' permission denied");
-    fails(c"/bin/bad", &none, "exec header invalid");
+    let x = [c"x"];
+    fails(c"/bin/nosuch", &x, "'/bin/nosuch' file does not exist");
+    fails(c"/bin", &x, "'/bin' cannot exec directory");
+    fails(c"#c/cons", &x, "'#c/cons' permission denied");
+    fails(c"/bin/bad", &x, "exec header invalid");
     let big = (&raw mut BIG).cast::<u8>();
-    // SAFETY: BIG is 20001 bytes, and nothing else refers to it.
-    unsafe { ptr::write_bytes(big, b'a', 20000) };
-    fails(c"/bin/echo", &[big.cast(), ptr::null()], "virtual memory allocation failed");
+    // SAFETY: BIG is 20001 bytes, the last a NUL, and nothing else refers
+    // to it.
+    let big = unsafe {
+        ptr::write_bytes(big, b'a', 20000);
+        CStr::from_ptr(big.cast())
+    };
+    fails(c"/bin/echo", &[big], "virtual memory allocation failed");
 }
 
 /// Fork a child that execs this program with OCEXEC and FP state to lose,
 /// and check its exit names the file.
 fn the_child() {
-    let pid = syscall(RFORK, (RFFDG | RFREND | RFPROC).into(), 0);
+    let pid = fork();
     if pid < 0 {
-        exits("exectest: rfork");
+        exits("exectest: fork");
     }
     if pid == 0 {
         if open(c"#c/cons", OWRITE | OCEXEC) != 3 || open(c"#c/cons", OWRITE) != 4 {
@@ -133,13 +133,11 @@ fn the_child() {
         exec_dirty(c"/bin/exectest", &[c"x".as_ptr(), c"child".as_ptr(), ptr::null()]);
         exits("exectest: exec");
     }
-    let mut buf = [0u8; 128];
-    let n = syscall(AWAIT, buf.as_mut_ptr().addr() as u64, buf.len() as u64);
-    let Some(msg) = usize::try_from(n).ok().map(|n| &buf[..n]) else {
-        exits("exectest: await");
+    let Some(w) = wait() else {
+        exits("exectest: wait");
     };
-    // "pid 0 0 0 'exectest pid: child'", quoted for its spaces.
-    if !msg.windows(10).any(|w| w == b"'exectest ") || !msg.ends_with(b": child'") {
+    // "exectest pid: child", from the file's name rather than argv[0].
+    if w.pid != pid || w.msg() != alloc::format!("exectest {pid}: child").as_bytes() {
         exits("exectest: the child's exit");
     }
 }
@@ -164,7 +162,6 @@ pub extern "C" fn main(argc: usize, argv: *const *const u8) {
     }
     the_failures();
     the_child();
-    let argv = [c"echo".as_ptr(), c"exec".as_ptr(), c"ok".as_ptr(), ptr::null()];
-    syscall(EXEC, c"/bin/echo".as_ptr().addr() as u64, argv.as_ptr().addr() as u64);
+    exec(c"/bin/echo", &[c"echo", c"exec", c"ok"]);
     exits("exectest: exec of echo");
 }

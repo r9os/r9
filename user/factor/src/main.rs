@@ -5,8 +5,8 @@
 #![no_main]
 
 use core::ffi::CStr;
-use factor::{Lines, factor};
-use libc::{atof, exits, print, read};
+use factor::factor;
+use libc::{Lines, atof, exits, print, read};
 
 /// Print `n` and its factors, as factor.c's factor.
 fn print_factors(n: f64) {

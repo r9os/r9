@@ -1,14 +1,23 @@
 //! The rest of the user library: the program's entry, system calls and a
 //! heap, present only on r9.
 
+use alloc::vec::Vec;
 use core::alloc::{GlobalAlloc, Layout};
-use core::ffi::CStr;
+use core::ffi::{CStr, c_char};
 use core::fmt::{self, Write};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use sys::{BRK_, CLOSE, DUP, ERRSTR, EXITS, OPEN, PREAD, PWRITE, SEEK, SLEEP};
+use sys::{
+    AWAIT, BRK_, CLOSE, DUP, ERRSTR, EXEC, EXITS, OPEN, PREAD, PWRITE, RFORK, SEEK, SLEEP,
+};
+
+use crate::wait::{Waitmsg, parse_waitmsg};
 
 pub use sys::{ERRMAX, OCEXEC, OEXEC, OREAD, ORCLOSE, ORDWR, OTRUNC, OWRITE};
+pub use sys::{
+    RFCENVG, RFCFDG, RFCNAMEG, RFENVG, RFFDG, RFMEM, RFNAMEG, RFNOMNT, RFNOTEG, RFNOWAIT, RFPROC,
+    RFREND,
+};
 
 /// Make system call `nr`: svc #0, with the number in x8, the arguments in x0
 /// to x3 and the result in x0.  The kernel preserves every other register.
@@ -107,6 +116,59 @@ pub fn pwrite(fd: i32, buf: &[u8], off: i64) -> isize {
 /// Write `buf` to `fd`, as Plan 9's write: pwrite at the current offset.
 pub fn write(fd: i32, buf: &[u8]) -> isize {
     pwrite(fd, buf, -1)
+}
+
+/// Make a new process, or change this one's resources, as `flags` say, as
+/// Plan 9's rfork.  With RFPROC, return the child's pid in the parent and 0
+/// in the child; without it, 0.  Return -1 on failure.
+pub fn rfork(flags: u32) -> i32 {
+    syscall(RFORK, flags.into(), 0, 0, 0) as i32
+}
+
+/// Start a child with a copy of this process's memory and descriptors, as
+/// Plan 9's fork: rfork(RFFDG|RFREND|RFPROC).
+pub fn fork() -> i32 {
+    rfork(RFFDG | RFREND | RFPROC)
+}
+
+/// Replace this process's program with the file `name`, run with `argv`, as
+/// Plan 9's exec.  It returns only on failure, with -1.  The array of
+/// pointers it passes is on the heap, which never frees, so a failed exec
+/// leaves it there: a caller execs in a child that exits when it fails.
+pub fn exec(name: &CStr, argv: &[&CStr]) -> i32 {
+    let mut ptrs: Vec<*const c_char> = argv.iter().map(|a| a.as_ptr()).collect();
+    ptrs.push(core::ptr::null());
+    syscall(EXEC, name.as_ptr().addr() as u64, ptrs.as_ptr().addr() as u64, 0, 0) as i32
+}
+
+/// Wait for a child's exit, and write it into `buf` as Plan 9's await
+/// does: "pid utime stime rtime msg", the message quoted, NUL-terminated
+/// and truncated to fit.  Return its length, or -1.  It keeps Plan 9's
+/// name, which is a keyword in Rust, so it's a raw identifier.
+pub fn r#await(buf: &mut [u8]) -> i32 {
+    syscall(AWAIT, buf.as_mut_ptr().addr() as u64, buf.len() as u64, 0, 0) as i32
+}
+
+/// Wait for a child's exit, as Plan 9's wait: await's text parsed into a
+/// Waitmsg.  None if there's no child to wait for, or the text doesn't
+/// parse, which sets the error string.
+pub fn wait() -> Option<Waitmsg> {
+    let mut buf = [0; 512];
+    let n = usize::try_from(r#await(&mut buf[..511])).ok()?;
+    let w = parse_waitmsg(&mut buf[..n]);
+    if w.is_none() {
+        werrstr("couldn't parse wait message");
+    }
+    w
+}
+
+/// Set the process's error string to `msg`, truncated to ERRMAX - 1 bytes, as
+/// Plan 9's werrstr.
+pub fn werrstr(msg: &str) {
+    let mut buf = [0; ERRMAX];
+    let n = msg.len().min(ERRMAX - 1);
+    buf[..n].copy_from_slice(&msg.as_bytes()[..n]);
+    errstr(&mut buf);
 }
 
 /// Put the process to sleep for at least `ms` milliseconds, as Plan 9's
