@@ -29,17 +29,6 @@ pub(crate) fn user_range_ok<A: ProcArch>(addr: usize, len: usize, access: Access
     (addr & !(PAGE_SIZE_4K - 1)..end).step_by(PAGE_SIZE_4K).all(|va| A::user_page_ok(va, access))
 }
 
-/// The byte at user address `addr`, if user mode could read it; None if the
-/// byte's page isn't mapped, where a string ends.
-pub(crate) fn peek_user_byte<A: ProcArch>(addr: usize) -> Option<u8> {
-    if !user_range_ok::<A>(addr, 1, Access::Read) {
-        return None;
-    }
-    // SAFETY: the page is mapped readable, and stays so until the syscall
-    // returns.
-    Some(unsafe { core::ptr::read(addr as *const u8) })
-}
-
 /// Kill the current process unless user mode could make `access` to every
 /// byte of [addr, addr + len).
 pub fn validate_user_range<A: ProcArch>(addr: usize, len: usize, access: Access) {

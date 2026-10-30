@@ -3,6 +3,7 @@
 //! process the kernel starts, whose start function enters the program with
 //! the registers exec returns.
 
+use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -32,13 +33,13 @@ const CHUNK: usize = 64 * 1024;
 /// OCEXEC are closed, and the image loaded into a new address space, which
 /// replaces the old.  Plan 9 can't fail there, as it pages on demand, but
 /// r9 maps eagerly, so a failure there exits the process with the error.
-pub(crate) fn sysexec<A: ProcArch>(name: &str, argv: usize) -> Result<UserRegs, Error> {
-    let c = open_name(name, OEXEC)?;
+pub(crate) fn sysexec<A: ProcArch>(name: String, argv: usize) -> Result<UserRegs, Error> {
+    let c = open_name(&name, OEXEC)?;
     let image = read_image(&c, A::USTKTOP - A::USTKSIZE - PAGE_SIZE_4K - A::UTZERO)?;
     drop(c);
     layout::<A>(&elf::parse(&image).map_err(|_| EBADEXEC)?)?;
     let Some(args) = copy_argv::<A>(argv) else {
-        drop(image);
+        drop((image, name));
         bad_address::<A>()
     };
     let args = args?;
@@ -50,7 +51,7 @@ pub(crate) fn sysexec<A: ProcArch>(name: &str, argv: usize) -> Result<UserRegs, 
         let argv: Vec<&[u8]> = args.iter().map(Vec::as_slice).collect();
         exec::<A>(&image, name.as_bytes(), &argv)
     };
-    drop((args, image));
+    drop((args, image, name));
     match r {
         Ok(regs) => Ok(regs),
         Err(err) => pexit::<A>(err.as_bytes()),

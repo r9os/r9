@@ -96,6 +96,22 @@ impl Mem {
     }
 }
 
+/// A page of user memory.
+#[derive(Clone)]
+#[repr(C, align(4096))]
+pub(crate) struct Page(pub(crate) [u8; PAGE_SIZE_4K]);
+
+/// `n` pages of user memory, read-write, with nothing mapped after them.
+pub(crate) fn user_pages(n: usize) -> Box<[Page]> {
+    let mem = vec![Page([0; PAGE_SIZE_4K]); n].into_boxed_slice();
+    let base = mem.as_ptr().addr();
+    assert!(base + n * PAGE_SIZE_4K <= UADDRTOP);
+    PAGES.with(|p| {
+        *p.borrow_mut() = (0..n).map(|i| (base + i * PAGE_SIZE_4K, Access::Write)).collect()
+    });
+    mem
+}
+
 /// Three pages of user memory: read-write, read-only, then unmapped.
 pub(crate) fn user_mem() -> Box<Mem> {
     let mem = Box::new(Mem([0; 3 * PAGE_SIZE_4K]));
