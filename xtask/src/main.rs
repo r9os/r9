@@ -993,6 +993,16 @@ impl TestStep {
                 "--target".to_string(),
                 target.to_string(),
             ]);
+            // The shell's word splitting and program search are a library,
+            // tested on the host.
+            all_cmd_args.push(vec![
+                "test".to_string(),
+                "--package".to_string(),
+                "sh".to_string(),
+                "--lib".to_string(),
+                "--target".to_string(),
+                target.to_string(),
+            ]);
             // The user library's parsing and math are tested on the host.
             all_cmd_args.push(vec![
                 "test".to_string(),
@@ -1225,7 +1235,7 @@ fn workspace() -> PathBuf {
 /// The user libraries and programs, which are aarch64-only.  The programs are
 /// what the kernel and port's tests embed.
 const USER_LIBS: [&str; 1] = ["r9-libc"];
-const USER_PROGRAMS: [&str; 6] = ["cat", "echo", "elftest", "exectest", "factor", "sleep"];
+const USER_PROGRAMS: [&str; 7] = ["cat", "echo", "elftest", "exectest", "factor", "sh", "sleep"];
 
 /// The target user programs are built for.
 const USER_TARGET: &str = "aarch64-unknown-none";
