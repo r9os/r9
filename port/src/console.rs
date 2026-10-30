@@ -16,7 +16,6 @@ const fn ctrl(b: u8) -> u8 {
 }
 
 const BACKSPACE: u8 = ctrl(b'H');
-const DELETE: u8 = 0x7F;
 const CTLD: u8 = ctrl(b'D');
 const CTLU: u8 = ctrl(b'U');
 
@@ -307,13 +306,13 @@ fn kbd() -> &'static QLock {
 }
 
 /// Put the bytes the UART has received, as Plan 9's kbdcr2nl: a return
-/// becomes a newline, and a delete, which terminals send for the backspace
-/// key, a backspace.  Each byte kept is echoed, and a reader is woken when a
-/// line ends or the ring fills.  `overrun` is whether the UART lost bytes
-/// before these, which it can't count.  Input that's lost, there or because
-/// the ring is full, is counted, and reported once for each call that loses
-/// some.  It's the UART's receive interrupt that calls it, so it doesn't
-/// allocate, and its work is bounded by `bytes`.
+/// becomes a newline, and anything else is kept as it is, a delete included,
+/// which only a backspace erases.  Each byte kept is echoed, and a reader is
+/// woken when a line ends or the ring fills.  `overrun` is whether the UART
+/// lost bytes before these, which it can't count.  Input that's lost, there
+/// or because the ring is full, is counted, and reported once for each call
+/// that loses some.  It's the UART's receive interrupt that calls it, so it
+/// doesn't allocate, and its work is bounded by `bytes`.
 pub fn put_input(bytes: &[u8], overrun: bool) {
     let before = lost();
     if overrun {
@@ -322,11 +321,7 @@ pub fn put_input(bytes: &[u8], overrun: bool) {
     }
     let mut wake = false;
     for &b in bytes {
-        let b = match b {
-            b'\r' => b'\n',
-            DELETE => BACKSPACE,
-            b => b,
-        };
+        let b = if b == b'\r' { b'\n' } else { b };
         let node = LockNode::new();
         let mut input = input().ilock(&node);
         if !input.put(b) {
@@ -482,11 +477,12 @@ mod tests {
     fn erasing() {
         reader();
         fake_cons();
-        // A backspace erases a byte, as does a delete, and ^U the line.
+        // A backspace erases a byte, and ^U the line; a delete is kept, as
+        // Plan 9's consread has no case for it.
         put_input(b"helx\x08p\n", false);
         assert_eq!(read_n(100), Ok(b"help\n".to_vec()), "backspace");
         put_input(b"helx\x7fp\n", false);
-        assert_eq!(read_n(100), Ok(b"help\n".to_vec()), "delete");
+        assert_eq!(read_n(100), Ok(b"helx\x7fp\n".to_vec()), "delete");
         put_input(b"\x08\x08ok\n", false);
         assert_eq!(read_n(100), Ok(b"ok\n".to_vec()), "backspace on an empty line");
         cons_output();
