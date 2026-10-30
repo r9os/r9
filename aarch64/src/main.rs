@@ -38,6 +38,7 @@ mod vmdebug;
 extern crate alloc;
 
 use core::cell::SyncUnsafeCell;
+use port::devroot::BootFile;
 use port::fdt::DeviceTree;
 use port::mem::{PhysAddr, PhysRange, VirtRange};
 use port::println;
@@ -209,6 +210,7 @@ pub extern "C" fn main9(dtb_pa: usize) {
     clock::init(&dt);
     mailbox::init(&dt);
     proc::init();
+    port::devroot::init(&BOOT);
 
     println!();
     println!("r9 from the Internet");
@@ -306,6 +308,14 @@ static CAT: &[u8] = include_bytes!(concat!(env!("R9_USER_BIN"), "/cat"));
 /// sleep and factor, built by xtask (user/sleep and user/factor).
 static SLEEP: &[u8] = include_bytes!(concat!(env!("R9_USER_BIN"), "/sleep"));
 static FACTOR: &[u8] = include_bytes!(concat!(env!("R9_USER_BIN"), "/factor"));
+
+/// The programs in #/boot, and so in /bin.
+static BOOT: &[BootFile] = &[
+    BootFile { name: "cat", data: CAT },
+    BootFile { name: "echo", data: ECHO },
+    BootFile { name: "factor", data: FACTOR },
+    BootFile { name: "sleep", data: SLEEP },
+];
 
 /// factor's argument: 94906249 times 94906247, the largest product of two
 /// primes below 2 to the 53, so it's exact as a double.  The largest such
