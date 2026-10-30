@@ -12,7 +12,7 @@ use core::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
 use core::time::Duration;
 
 use crate::chan::{Fds, NOPEN, OREAD, OWRITE};
-use crate::dat::{MAXWAIT, Proc, ProcArch, Rendez, State, WaitQueue, Waitmsg};
+use crate::dat::{MAXWAIT, Proc, ProcArch, QLock, QState, Rendez, State, WaitQueue, Waitmsg};
 use crate::dev::open_name;
 use crate::error::{EBADARG, EINUSE, ENOCHILD, ENOVMEM};
 use crate::segment::copy_segments;
@@ -40,12 +40,22 @@ pub struct Current {
     pub sleep: fn(&Rendez, &dyn Fn() -> bool),
     /// wakeup, for the architecture.
     pub wakeup: fn(&Rendez) -> bool,
+    /// qlock's wait, for the architecture.
+    pub qlock: fn(&QLock),
+    /// qunlock's hand-over, for the architecture.
+    pub qunlock: fn(&QLock),
 }
 
 impl Current {
-    /// `A`'s current process, sleep and wakeup.
+    /// `A`'s current process, sleep and wakeup, and qlock and qunlock.
     pub const fn of<A: ProcArch>() -> Current {
-        Current { pid: up_pid::<A>, sleep: sleep_dyn::<A>, wakeup: wakeup::<A> }
+        Current {
+            pid: up_pid::<A>,
+            sleep: sleep_dyn::<A>,
+            wakeup: wakeup::<A>,
+            qlock: qlock::<A>,
+            qunlock: qunlock::<A>,
+        }
     }
 }
 
@@ -101,6 +111,44 @@ impl Rendez {
     /// interrupt handler.
     pub fn wakeup(&self) -> bool {
         registered().is_some_and(|current| (current.wakeup)(self))
+    }
+}
+
+impl QLock {
+    /// Take the lock, waiting for it if it's held, as Plan 9's qlock.  Only
+    /// a waiter needs the architecture's registered Current.
+    pub fn qlock(&self) {
+        if !self.canqlock() {
+            let current = registered().expect("QLock::qlock: no current process registered");
+            (current.qlock)(self)
+        }
+    }
+
+    /// Take the lock if it's free, and return whether it was, as Plan 9's
+    /// canqlock.
+    pub fn canqlock(&self) -> bool {
+        let node = LockNode::new();
+        let mut s = self.state.ilock(&node);
+        !core::mem::replace(&mut s.locked, true)
+    }
+
+    /// Give the lock up, to the first process waiting for it if there is
+    /// one, as Plan 9's qunlock.  Only handing it over needs the
+    /// architecture's registered Current.
+    pub fn qunlock(&self) {
+        let node = LockNode::new();
+        let mut s = self.state.ilock(&node);
+        assert!(s.locked, "qunlock: the lock isn't held");
+        if s.head.is_null() {
+            s.locked = false;
+            return;
+        }
+        // The lock is taken again to take the waiter off: on one CPU, only
+        // the holder hands the lock over, so the waiter is still first.  SMP
+        // would need it taken off under this lock instead.
+        drop(s);
+        let current = registered().expect("QLock::qunlock: a waiter with no Current registered");
+        (current.qunlock)(self)
     }
 }
 
@@ -172,6 +220,7 @@ fn alloc<A: ProcArch>(
         fp: A::Fp::default(),
         quantum_end: 0,
         next: ptr::null_mut(),
+        qnext: ptr::null_mut(),
         sleep: Rendez::new(),
         timer: Timer::new(Mode::Relative(Duration::from_millis(1)), |_| {}),
         trend: ptr::null(),
@@ -323,9 +372,9 @@ fn dispatch<A: ProcArch>(mut p: Box<Proc<A>>) -> Option<Box<Proc<A>>> {
     }
     match p.state {
         State::Running => ready(p),
-        State::Sleeping => {
-            // The Rendez it sleeps on already holds its pointer, and owns it
-            // from here.
+        State::Sleeping | State::Queueing => {
+            // The Rendez it sleeps on, or the QLock it waits for, already
+            // holds its pointer, and owns it from here.
             let node = LockNode::new();
             A::run_queue().ilock(&node).asleep += 1;
             Box::leak(p);
@@ -363,6 +412,7 @@ pub fn yield_now<A: ProcArch>() {
 /// is back in the scheduler, which takes ownership of it before anything can
 /// wake it.
 pub fn sleep<A: ProcArch>(r: &Rendez, cond: impl Fn() -> bool) {
+    assert!(!irq::in_interrupt(), "sleep in interrupt context");
     irq::masked(|| {
         loop {
             let node = LockNode::new();
@@ -396,15 +446,95 @@ pub fn wakeup<A: ProcArch>(r: &Rendez) -> bool {
     }
     // SAFETY: the Rendez owned p, a Proc<A> from Box::into_raw, as sleep
     // stored it, and has just given it up.
-    let mut p = unsafe { Box::from_raw(p.cast::<Proc<A>>()) };
+    unsafe { awaken::<A>(p.cast()) };
+    true
+}
+
+/// Make `p`, asleep or waiting for a QLock, ready.
+///
+/// # Safety
+///
+/// `p` is a Proc<A> from Box::into_raw, which the Rendez or QLock that owned
+/// it has given up.
+unsafe fn awaken<A: ProcArch>(p: *mut Proc<A>) {
+    // SAFETY: the caller's guarantee.
+    let mut p = unsafe { Box::from_raw(p) };
     p.state = State::Ready;
+    let node = LockNode::new();
     let mut q = A::run_queue().ilock(&node);
     // The scheduler counted p before it unmasked IRQs, and on one CPU nothing
-    // can wake p before that.  SMP would need the Rendez's lock held across
-    // the sleeper's switch instead.
+    // can wake p before that.  SMP would need the Rendez's or QLock's lock
+    // held across the switch instead.
     q.asleep -= 1;
     q.push(p);
-    true
+}
+
+/// Wait for `q`, held by another process, as Plan 9's qlock: queued, last,
+/// unless it was given up first.  The process wakes holding it, as qunlock
+/// hands it over.  IRQs stay masked until the process is back in the
+/// scheduler, which takes ownership of it before anything can hand it the
+/// lock, as in sleep.
+pub(crate) fn qlock<A: ProcArch>(q: &QLock) {
+    assert!(!irq::in_interrupt(), "qlock in interrupt context");
+    irq::masked(|| {
+        let node = LockNode::new();
+        let mut s = q.state.ilock(&node);
+        if !s.locked {
+            s.locked = true;
+            return;
+        }
+        let up = A::up();
+        assert!(!up.is_null(), "qlock: no current process");
+        // SAFETY: up is the running process, set by schedule, which resumes
+        // it here once it's handed the lock.  It's marked waiting before
+        // it's published on q, so a qunlock never sees it running.
+        unsafe {
+            (*up).state = State::Queueing;
+            enqueue(&mut s, up);
+        }
+        drop(s);
+        // SAFETY: as above.
+        unsafe { A::swtch(&mut (*up).label, A::sched()) };
+    })
+}
+
+/// Put `p` last on `s`'s queue.
+///
+/// # Safety
+///
+/// `p` is a Proc<A> from Box::into_raw, on no other queue, and so are the
+/// processes queued on `s`.
+unsafe fn enqueue<A: ProcArch>(s: &mut QState, p: *mut Proc<A>) {
+    // SAFETY: the caller's guarantee.
+    unsafe {
+        (*p).qnext = ptr::null_mut();
+        match s.tail.cast::<Proc<A>>() {
+            tail if tail.is_null() => s.head = p.cast(),
+            tail => (*tail).qnext = p,
+        }
+    }
+    s.tail = p.cast();
+}
+
+/// Hand `q` to the first process waiting for it, as Plan 9's qunlock, or if
+/// none is, give it up.
+pub(crate) fn qunlock<A: ProcArch>(q: &QLock) {
+    let node = LockNode::new();
+    let mut s = q.state.ilock(&node);
+    let p = s.head.cast::<Proc<A>>();
+    if p.is_null() {
+        s.locked = false;
+        return;
+    }
+    // SAFETY: the queued processes are Proc<A>s from Box::into_raw, which q
+    // owns, as qlock queued them.
+    s.head = unsafe { (*p).qnext }.cast();
+    if s.head.is_null() {
+        s.tail = ptr::null_mut();
+    }
+    drop(s);
+    // SAFETY: q owned p, and has just given it up.
+    unsafe { awaken::<A>(p) };
 }
 
 /// Sleep on `r` until `cond` holds or `d` has passed, as Plan 9's tsleep:
@@ -524,25 +654,26 @@ pub fn pwait<A: ProcArch>() -> crate::Result<Waitmsg> {
     // SAFETY: up is the running process, set by schedule, and its wait queue
     // lives as long as it does.
     let q = unsafe { &*(*up).waitq };
+    if !q.qwaitr.canqlock() {
+        return Err(EINUSE);
+    }
     {
         let node = LockNode::new();
-        let mut state = q.state.ilock(&node);
-        if state.waiting {
-            return Err(EINUSE);
-        }
+        let state = q.state.ilock(&node);
         if state.nchild == 0 && state.exits.is_empty() {
+            drop(state);
+            q.qwaitr.qunlock();
             return Err(ENOCHILD);
         }
-        state.waiting = true;
     }
     sleep::<A>(&q.waitr, || {
         let node = LockNode::new();
         !q.state.ilock(&node).exits.is_empty()
     });
     let node = LockNode::new();
-    let mut state = q.state.ilock(&node);
-    state.waiting = false;
-    Ok(state.exits.pop_front().expect("pwait: woken with no exit queued"))
+    let w = q.state.ilock(&node).exits.pop_front().expect("pwait: woken with no exit queued");
+    q.qwaitr.qunlock();
+    Ok(w)
 }
 
 /// The first context of every process, in its address space: run its start
@@ -821,14 +952,56 @@ mod tests {
     #[test]
     fn a_second_waiter_is_einuse() {
         let (mut parent, child) = family();
-        {
-            let node = LockNode::new();
-            parent.waitq.state.ilock(&node).waiting = true;
-        }
+        assert!(parent.waitq.qwaitr.canqlock(), "the first waiter");
         Fake::set_up(&mut *parent);
         assert_eq!(pwait::<Fake>(), Err(EINUSE));
         Fake::set_up(ptr::null_mut());
+        parent.waitq.qwaitr.qunlock();
         reap_all([parent, child]);
+    }
+
+    #[test]
+    fn enochild_gives_up_qwaitr() {
+        let mut p = newproc::<Fake>(start).unwrap();
+        Fake::set_up(&mut *p);
+        assert_eq!(pwait::<Fake>(), Err(ENOCHILD));
+        assert!(p.waitq.qwaitr.canqlock(), "qwaitr was given up");
+        Fake::set_up(ptr::null_mut());
+        // SAFETY: nothing runs in the fake process.
+        unsafe { reap(*p) };
+    }
+
+    /// Queue `p` on `q` as qlock does once the lock is held, and count it
+    /// asleep as the scheduler does once it has switched back.
+    fn queue(q: &QLock, mut p: Box<Proc<Fake>>) -> u64 {
+        let pid = p.pid;
+        p.state = State::Queueing;
+        let node = LockNode::new();
+        // SAFETY: p is from Box::into_raw, on no other queue.
+        unsafe { enqueue(&mut q.state.ilock(&node), Box::into_raw(p)) };
+        Fake::run_queue().ilock(&node).asleep += 1;
+        pid
+    }
+
+    #[test]
+    fn qunlock_hands_the_lock_to_its_waiters_in_order() {
+        static Q: QLock = QLock::new();
+        assert!(Q.canqlock(), "a free lock");
+        assert!(!Q.canqlock(), "a held one");
+        let pids = [(); 2].map(|_| queue(&Q, newproc::<Fake>(start).unwrap()));
+        for pid in pids {
+            qunlock::<Fake>(&Q);
+            assert!(!Q.canqlock(), "handed over, still held");
+            let p = next().expect("the waiter, readied");
+            assert_eq!((p.pid, p.state), (pid, State::Ready), "first in, first out");
+            // SAFETY: nothing runs in the fake process.
+            unsafe { reap(*p) };
+        }
+        assert_eq!(Fake::run_queue().ilock(&LockNode::new()).asleep, 0);
+        qunlock::<Fake>(&Q);
+        assert!(Q.canqlock(), "given up, with no waiters");
+        Q.qunlock();
+        assert_eq!(held(), (0, 0));
     }
 
     /// rfork(flags) from `parent`, as the current process.

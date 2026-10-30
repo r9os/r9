@@ -182,6 +182,8 @@ pub enum State {
     Running,
     /// Asleep on a Rendez, until a wakeup.
     Sleeping,
+    /// Waiting for a QLock, until it's handed over, as Plan 9's Queueing.
+    Queueing,
     /// Exited, to be reaped.
     Exited,
 }
@@ -219,6 +221,9 @@ pub struct Proc<A: ProcArch> {
     pub(crate) quantum_end: u64,
     /// The next process on the run queue.
     pub(crate) next: *mut Proc<A>,
+    /// The next process waiting for the QLock it waits for, as Plan 9's
+    /// qnext.
+    pub(crate) qnext: *mut Proc<A>,
     /// The process's own Rendez, for SLEEP, as Plan 9's up->sleep.
     pub(crate) sleep: Rendez,
     /// Its tsleep's timeout, as Plan 9's up->t: added and removed on every
@@ -263,6 +268,9 @@ pub struct WaitQueue {
     pub(crate) state: Lock<WaitState>,
     /// Where the process waits for an exit.
     pub(crate) waitr: Rendez,
+    /// Held while the process waits, as Plan 9's qwaitr: one waiter at a
+    /// time.
+    pub(crate) qwaitr: QLock,
 }
 
 pub(crate) struct WaitState {
@@ -272,9 +280,6 @@ pub(crate) struct WaitState {
     pub(crate) nchild: usize,
     /// Whether its process is alive, as Plan 9's pexit checks its parent is.
     pub(crate) alive: bool,
-    /// Whether its process is waiting, as Plan 9's qwaitr: one waiter at a
-    /// time.
-    pub(crate) waiting: bool,
 }
 
 impl WaitQueue {
@@ -282,9 +287,10 @@ impl WaitQueue {
         WaitQueue {
             state: Lock::new(
                 "waitq",
-                WaitState { exits: VecDeque::new(), nchild: 0, alive: true, waiting: false },
+                WaitState { exits: VecDeque::new(), nchild: 0, alive: true },
             ),
             waitr: Rendez::new(),
+            qwaitr: QLock::new(),
         }
     }
 }
@@ -335,8 +341,8 @@ pub struct UserSegment {
 pub struct RunQueue<A: ProcArch> {
     head: *mut Proc<A>,
     tail: *mut Proc<A>,
-    /// How many processes are asleep, so the scheduler can tell nothing to
-    /// run yet from nothing left.
+    /// How many processes are asleep or waiting for a QLock, so the
+    /// scheduler can tell nothing to run yet from nothing left.
     pub(crate) asleep: usize,
 }
 
@@ -399,6 +405,35 @@ pub struct Rendez {
 impl Rendez {
     pub const fn new() -> Self {
         Rendez { sleeper: Lock::new("rendez", ptr::null_mut()) }
+    }
+}
+
+/// A lock a process sleeps on while another holds it, as Plan 9's QLock:
+/// the processes waiting for it queue, first in first out, and qunlock hands
+/// it to the first.  While it waits, a process is owned through the queue,
+/// as through a Rendez, and untyped for the same reason.
+pub struct QLock {
+    pub(crate) state: Lock<QState>,
+}
+
+pub(crate) struct QState {
+    pub(crate) locked: bool,
+    /// The waiting processes, Proc<A>s from Box::into_raw, linked through
+    /// qnext, or null.
+    pub(crate) head: *mut (),
+    pub(crate) tail: *mut (),
+}
+
+impl QLock {
+    pub const fn new() -> Self {
+        let state = QState { locked: false, head: ptr::null_mut(), tail: ptr::null_mut() };
+        QLock { state: Lock::new("qlock", state) }
+    }
+}
+
+impl Default for QLock {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

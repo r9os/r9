@@ -42,6 +42,7 @@ pub fn run() {
     test_release();
     test_user_processes();
     test_exec();
+    test_console_readers();
     test_preemption();
     test_fp_state();
     test_sleep_and_wakeup();
@@ -491,10 +492,33 @@ core::arch::global_asm!(
     ".balign 8",
     "8: .quad {HUGE}",
     "usertest_brkmem_end:",
+    // pread a line from fd 0, the console, and exits with it, its newline
+    // dropped, or exits("read") if the read fails.
+    ".balign 8",
+    "usertest_readcons:",
+    "   sub sp, sp, #32",
+    "   mov x0, #0",
+    "   mov x1, sp",
+    "   mov x2, #31",
+    "   mov x3, #-1",
+    "   mov x8, #{PREAD}",
+    "   svc #0",
+    "   cmp x0, #1",
+    "   b.lt 1f",
+    "   sub x0, x0, #1",
+    "   strb wzr, [sp, x0]",
+    "   mov x0, sp",
+    "   b 2f",
+    "1: adr x0, 3f",
+    "2: mov x8, #{EXITS}",
+    "   svc #0",
+    "3: .asciz \"read\"",
+    "usertest_readcons_end:",
     SYSR1 = const sys::SYSR1,
     EXITS = const sys::EXITS,
     OPEN = const sys::OPEN,
     PWRITE = const sys::PWRITE,
+    PREAD = const sys::PREAD,
     BRK = const sys::BRK_,
     ERRSTR = const sys::ERRSTR,
     RFORK = const sys::RFORK,
@@ -676,6 +700,31 @@ fn test_user_processes() {
         assert_eq!(port::pagealloc::usage_bytes().0, used_before, "{name}");
     }
     println!("user process test: ok");
+}
+
+/// Two processes read the console, the second while the first waits for a
+/// line: it waits its turn on the reader's QLock, rather than failing, and
+/// each reads one of the lines a timer types, as the UART's interrupt would,
+/// in the order they started.  The timer is long enough for both to wait:
+/// schedule runs them as soon as it starts, and each waits within a syscall,
+/// microseconds, so by 20 ms the first sleeps for a line and the second
+/// waits for its QLock.
+fn test_console_readers() {
+    static TYPE: Timer = Timer::new(Mode::Relative(Duration::from_millis(20)), |_| {
+        port::console::put_input(b"first\rsecond\r", false)
+    });
+    let (used_before, _) = port::pagealloc::usage_bytes();
+    let reader = || run_user(usertext!(usertest_readcons, usertest_readcons_end));
+    let a = port::proc::newproc::<Aarch64>(reader).expect("couldn't create process");
+    let b = port::proc::newproc::<Aarch64>(reader).expect("couldn't create process");
+    let want = [(a.pid, b"first".to_vec()), (b.pid, b"second".to_vec())];
+    port::proc::ready(a);
+    port::proc::ready(b);
+    timer::add(&TYPE);
+    let exits = port::proc::schedule::<Aarch64>();
+    assert_eq!(exits, want, "console readers test");
+    assert_eq!(port::pagealloc::usage_bytes().0, used_before, "console readers test: leaked");
+    println!("console readers test: ok");
 }
 
 /// A process that spins without a syscall for far longer than a quantum is
