@@ -7,7 +7,7 @@ use alloc::vec::Vec;
 
 use crate::chan::{self, Chan, OCEXEC, OEXEC, OREAD, QTDIR};
 use crate::{devcons, devroot};
-use crate::error::{EBADSHARP, EEXECDIR, ENONEXIST, ENOTDIR, Error};
+use crate::error::{EBADSHARP, EEMPTYNAME, EEXECDIR, ENONEXIST, ENOTDIR, Error};
 use sys::ERRMAX;
 
 /// A device's operations for the files it holds, as Plan 9's Device, with
@@ -137,7 +137,8 @@ fn end(name: &str, elem: &str) -> usize {
 }
 
 /// The channel `name` opens in `omode`, as Plan 9's namec: the mode is
-/// checked first, as Plan 9's openmode, then the name resolved, the device
+/// checked first, as Plan 9's sysopen does with openmode, then an empty name
+/// refused, as namec's first check, then the name resolved, the device
 /// attached, the path walked an element at a time, and the channel opened in
 /// the mode without OCEXEC, which is recorded on the channel.  A directory
 /// can't be opened OEXEC.  An error from the walk or after it shows the name as namec's
@@ -146,6 +147,9 @@ fn end(name: &str, elem: &str) -> usize {
 /// the name has no elements.
 pub(crate) fn open_name(name: &str, omode: u32) -> Result<Arc<Chan>, Error> {
     chan::openmode(omode)?;
+    if name.is_empty() {
+        return Err(EEMPTYNAME.into());
+    }
     let Start { mut c, elems, mustbedir, mut walked } = resolve(name)?;
     let dev = c.dev();
     for elem in elems {
@@ -349,6 +353,11 @@ mod tests {
         // OCEXEC is recorded on the channel, and doesn't reach the device.
         assert!(open_name("#c/cons", OWRITE | OCEXEC).expect("OCEXEC").cexec(), "OCEXEC");
         assert!(!open_name("#c/cons", OWRITE).expect("cons").cexec(), "no OCEXEC");
+
+        // An empty name, after the mode, as sysopen's openmode comes
+        // before namec's first check.
+        assert_eq!(err("", OREAD), "empty file name", "an empty name");
+        assert_eq!(err("", OWRITE | 0x100), "bad arg in system call", "the mode first");
 
         // A mode openmode can't reduce, before the name is resolved.
         assert_eq!(err("#c/cons", OWRITE | 0x100), "bad arg in system call", "above OEXEC");

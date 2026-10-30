@@ -8,6 +8,7 @@ pub const EBADSHARP: &str = "unknown device in # filename";
 pub const EBADTIMECTL: &str = "bad time control";
 pub const EBADUSEFD: &str = "inappropriate use of fd";
 pub const EBADEXEC: &str = "exec header invalid";
+pub const EEMPTYNAME: &str = "empty file name";
 pub const EEXECDIR: &str = "cannot exec directory";
 pub const EGREG: &str = "jmk added reentrancy for threads";
 pub const EINUSE: &str = "device or object already in use";
