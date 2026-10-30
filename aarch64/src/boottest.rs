@@ -8,7 +8,7 @@ use crate::gic;
 use crate::kmap;
 use crate::kstack;
 use crate::param::{self, USTKSIZE, USTKTOP, UTZERO};
-use crate::proc::{Aarch64, enter_user};
+use crate::proc::Aarch64;
 use crate::swtch::{self, Label};
 use crate::vm;
 use aarch64_cpu::registers::{CNTV_CTL_EL0, CNTV_CVAL_EL0, CNTVCT_EL0, Readable, Writeable};
@@ -17,7 +17,8 @@ use core::hint::black_box;
 use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use core::time::Duration;
 use port::dat::{MMU, Perm, ProcArch, PutError, UserSegment};
-use port::exec::UserRegs;
+use port::devroot::BootFile;
+use port::dat::UserRegs;
 use port::mem::{PAGE_SIZE_4K, PhysAddr, VirtRange};
 use port::println;
 use port::segment;
@@ -40,6 +41,7 @@ pub fn run() {
     test_swtch();
     test_release();
     test_user_processes();
+    test_exec();
     test_preemption();
     test_fp_state();
     test_sleep_and_wakeup();
@@ -809,12 +811,16 @@ fn test_sleep_alone() {
 fn sysr1_start() {
     load_user(usertext!(usertest_sysr1, usertest_sysr1_end));
     test_user_access();
-    enter_user(UserRegs { pc: UTZERO, sp: USTKTOP, argc: 0, argv: 0 })
+    // SAFETY: this is the process's start function, which holds nothing,
+    // and load_user mapped its text and stack.
+    unsafe { Aarch64::enter_user(&UserRegs { pc: UTZERO, sp: USTKTOP, argc: 0, argv: 0 }) }
 }
 
 fn run_user(text: &[u8]) -> ! {
     load_user(text);
-    enter_user(UserRegs { pc: UTZERO, sp: USTKTOP, argc: 0, argv: 0 })
+    // SAFETY: this is the process's start function, which holds nothing,
+    // and load_user mapped its text and stack.
+    unsafe { Aarch64::enter_user(&UserRegs { pc: UTZERO, sp: USTKTOP, argc: 0, argv: 0 }) }
 }
 
 /// Run `text` with `args` pushed onto its stack.
@@ -824,7 +830,9 @@ fn run_user_args(text: &[u8], args: &[&[u8]]) -> ! {
         Ok(regs) => regs,
         Err(err) => port::proc::pexit::<Aarch64>(err.as_bytes()),
     };
-    enter_user(regs)
+    // SAFETY: this is the process's start function, which holds nothing,
+    // and the program's text and stack are mapped.
+    unsafe { Aarch64::enter_user(&regs) }
 }
 
 /// The ELF loader's test program, built by xtask (user/elftest).
@@ -838,7 +846,7 @@ fn elf_start() {
         Perm,
     };
     dirty_free_pages();
-    let regs = match port::exec::exec::<Aarch64>(ELFTEST, &[b"elftest", b"ok"]) {
+    let regs = match port::exec::exec::<Aarch64>(ELFTEST, b"elftest", &[b"elftest", b"ok"]) {
         Ok(regs) => regs,
         Err(err) => port::proc::pexit::<Aarch64>(err.as_bytes()),
     };
@@ -868,7 +876,44 @@ fn elf_start() {
     for va in (bss.start.next_multiple_of(PAGE_SIZE_4K)..bss.end).step_by(PAGE_SIZE_4K) {
         assert!(ok(va, Write), "elftest's bss at {va:#x}");
     }
-    enter_user(regs)
+    // SAFETY: this is the process's start function, which holds nothing,
+    // and the program's text and stack are mapped.
+    unsafe { Aarch64::enter_user(&regs) }
+}
+
+/// The EXEC test's program, built by xtask (user/exectest).
+static EXECTEST: &[u8] = include_bytes!(concat!(env!("R9_USER_BIN"), "/exectest"));
+
+/// What the EXEC test finds in /bin: itself, echo, and a file that isn't an
+/// image.
+static EXEC_BOOT: &[BootFile] = &[
+    BootFile { name: "bad", data: b"not an image" },
+    BootFile { name: "echo", data: crate::ECHO },
+    BootFile { name: "exectest", data: EXECTEST },
+];
+
+/// Run exectest, which execs and forks, and its child execs, and check it
+/// exits as echo, its last exec, does, and frees every page it used.  The
+/// test has /bin to itself, and gives it back to the system's programs.
+fn test_exec() {
+    port::devroot::init(&EXEC_BOOT);
+    let (used_before, _) = port::pagealloc::usage_bytes();
+    let p = port::proc::newproc::<Aarch64>(|| {
+        let args: &[&[u8]] = &[b"exectest"];
+        let regs = match port::exec::exec::<Aarch64>(EXECTEST, b"exectest", args) {
+            Ok(regs) => regs,
+            Err(err) => port::proc::pexit::<Aarch64>(err.as_bytes()),
+        };
+        // SAFETY: this is the process's start function, which holds
+        // nothing, and exec mapped the program's text and stack.
+        unsafe { Aarch64::enter_user(&regs) }
+    })
+    .expect("couldn't create process");
+    let status = port::proc::run(p);
+    assert!(status.is_empty(), "exec test: {}", alloc::string::String::from_utf8_lossy(&status));
+    assert_eq!(port::pagealloc::usage_bytes().0, used_before, "exec test: leaked");
+    port::devroot::init(&crate::BOOT);
+    println!("exec test: ok");
 }
 
 /// The test processes' bss starts, empty, at the page after their text.

@@ -6,7 +6,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::proc::Aarch64;
 use crate::reg::esr_el1::{EsrEl1, ExceptionClass};
-use port::exec::UserRegs;
+use port::dat::UserRegs;
 use port::iprintln;
 
 #[cfg(not(test))]
@@ -167,7 +167,8 @@ impl fmt::Debug for TrapFrame {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn trap_unsafe(frame: *mut TrapFrame) {
-    unsafe { trap(frame.as_mut().unwrap()) }
+    // SAFETY: trap.S passes the frame it saved for this exception.
+    unsafe { trap(frame) }
 }
 
 /// Called from trap.S, on the overflow stack, when an exception found a kernel
@@ -192,15 +193,25 @@ const EL1H_64_IRQ: u64 = 5;
 const EL0T_64_SYNC: u64 = 8;
 const EL0T_64_IRQ: u64 = 9;
 
-fn trap(frame: &mut TrapFrame) {
-    match frame.interrupt_type {
+/// Handle the exception whose registers trap.S saved at `frame`.  The frame
+/// is held as a pointer, and borrowed only to read or write it, since what a
+/// syscall runs reaches it too: rfork's fork_frame reads it, and exec's
+/// to_user replaces it.
+///
+/// # Safety
+///
+/// `frame` is the TrapFrame trap.S saved for this exception.
+unsafe fn trap(frame: *mut TrapFrame) {
+    // SAFETY: the caller's guarantee, for this and each access below.
+    match unsafe { (*frame).interrupt_type } {
         // Only synchronous exceptions and SErrors write ESR_EL1 (Arm ARM DDI
         // 0487 M.d, D1.4.2), so an IRQ or FIQ from EL0 isn't taken as a fault.
         EL0T_64_SYNC => {
-            if frame.esr_el1.exception_class_enum() == Ok(ExceptionClass::Svc64) {
-                syscall(frame);
+            if unsafe { (*frame).esr_el1.exception_class_enum() } == Ok(ExceptionClass::Svc64) {
+                // SAFETY: as above.
+                unsafe { syscall(frame) };
             } else {
-                port::proc::pexit::<Aarch64>(user_fault(frame).as_bytes());
+                port::proc::pexit::<Aarch64>(user_fault(unsafe { &*frame }).as_bytes());
             }
         }
         EL1H_64_IRQ | EL0T_64_IRQ => {
@@ -209,6 +220,8 @@ fn trap(frame: &mut TrapFrame) {
             port::irq::exit_interrupt();
         }
         _ => {
+            // SAFETY: as above.
+            let frame = unsafe { &*frame };
             iprintln!("{:#?}", frame);
             panic!("Unhandled exception from EL{}", frame.exception_level());
         }
@@ -218,7 +231,8 @@ fn trap(frame: &mut TrapFrame) {
     // GICC_EOIR is written, which would block the timer while the next
     // process ran.  The frame holds everything the process returns to, a
     // syscall's result included, so it's resumed just as it would have been.
-    if frame.exception_level() == 0 && port::proc::preempt_due::<Aarch64>() {
+    // SAFETY: as above.
+    if unsafe { (*frame).exception_level() } == 0 && port::proc::preempt_due::<Aarch64>() {
         port::proc::yield_now::<Aarch64>();
     }
 }
@@ -255,10 +269,20 @@ fn user_fault(frame: &TrapFrame) -> String {
 
 /// Take the syscall number from x8 and its arguments from x0-x5, and return
 /// the result in x0, as Linux does on arm64.  The svc immediate is ignored.
-fn syscall(frame: &mut TrapFrame) {
-    let nr = frame.x8;
-    let args = [frame.x0, frame.x1, frame.x2, frame.x3, frame.x4, frame.x5];
-    frame.x0 = port::syscall::syscall::<Aarch64>(nr, args);
+///
+/// # Safety
+///
+/// `frame` is the TrapFrame trap.S saved for this syscall.
+unsafe fn syscall(frame: *mut TrapFrame) {
+    // SAFETY: the caller's guarantee.  The borrow ends before the syscall
+    // runs, which may read or replace the frame.
+    let (nr, args) = unsafe {
+        let f = &*frame;
+        (f.x8, [f.x0, f.x1, f.x2, f.x3, f.x4, f.x5])
+    };
+    let r = port::syscall::syscall::<Aarch64>(nr, args);
+    // SAFETY: as above.
+    unsafe { (*frame).x0 = r };
 }
 
 /// Enter EL0 with `regs`: at its pc, with its stack pointer, and with x0 = argc
@@ -272,9 +296,11 @@ fn syscall(frame: &mut TrapFrame) {
 ///
 /// # Safety
 ///
-/// `kstack_top` must be the 16-byte aligned top of a kernel stack, and the
-/// TrapFrame below it must not be in use.  The pc and stack must be mapped in
-/// the current user page table.
+/// `kstack_top` must be the 16-byte aligned top of the running process's
+/// kernel stack, and the TrapFrame below it either unused, in a start
+/// function, or the running syscall's, which it replaces, with nothing
+/// borrowing it.  The pc and stack must be mapped in the current user page
+/// table.
 pub unsafe fn to_user(kstack_top: usize, regs: &UserRegs) -> ! {
     let frame = (kstack_top - size_of::<TrapFrame>()) as *mut TrapFrame;
     let mut tf: TrapFrame = unsafe { core::mem::zeroed() };

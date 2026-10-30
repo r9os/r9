@@ -1,0 +1,11 @@
+cargo-features = ["per-package-target"]
+
+[package]
+name = "exectest"
+version = "0.1.0"
+edition = "2024"
+default-target = "aarch64-unknown-none"
+
+[dependencies]
+r9-libc = { path = "../libc" }
+r9-sys = { path = "../../sys" }

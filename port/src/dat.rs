@@ -128,6 +128,18 @@ pub trait ProcArch: MMU + Sized + 'static {
     /// switched to, returns to user mode through them.
     fn fork_context(parent: &Self::KStack, child: &Self::KStack) -> Self::Label;
 
+    /// Enter the current process's program in user mode with `regs`, every
+    /// other register zero, through a frame built at the top of its kernel
+    /// stack, as Plan 9's execregs and the return from its sysexec.
+    ///
+    /// # Safety
+    ///
+    /// It must be called from the process's start function, or from its
+    /// syscall, whose saved registers it replaces, holding nothing that
+    /// needs releasing, such as a lock or a KMap, since the kernel stack
+    /// above it is abandoned.  The program's text and stack must be mapped.
+    unsafe fn enter_user(regs: &UserRegs) -> !;
+
     /// Save the current context in `save`, and resume the one in `next`.
     ///
     /// # Safety
@@ -297,6 +309,16 @@ impl<A: ProcArch> Proc<A> {
     pub(crate) fn fds(&self) -> &Arc<Fds> {
         self.fds.as_ref().expect("a process that has exited has no descriptors")
     }
+}
+
+/// What a program starts with: its pc and stack pointer, and argc and argv,
+/// which each architecture puts in its own registers.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct UserRegs {
+    pub pc: usize,
+    pub sp: usize,
+    pub argc: usize,
+    pub argv: usize,
 }
 
 /// A segment of a process's memory, as Plan 9's Segment: whole pages, all

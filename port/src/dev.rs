@@ -5,9 +5,9 @@ use alloc::format;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use crate::chan::{self, Chan, OREAD, QTDIR};
+use crate::chan::{self, Chan, OCEXEC, OEXEC, OREAD, QTDIR};
 use crate::{devcons, devroot};
-use crate::error::{EBADSHARP, ENONEXIST, ENOTDIR, Error};
+use crate::error::{EBADSHARP, EEXECDIR, ENONEXIST, ENOTDIR, Error};
 use sys::ERRMAX;
 
 /// A device's operations for the files it holds, as Plan 9's Device, with
@@ -28,10 +28,11 @@ pub trait Dev: Sync {
     /// walk.  A walk of no elements is a no-op.
     fn walk(&self, c: &Arc<Chan>, elems: &[&str]) -> crate::Result<Arc<Chan>>;
 
-    /// Open the file for the access `omode`, the result of openmode, and
-    /// return the opened channel, as Plan 9's devopen: the permission check,
-    /// the offset to zero, a directory OREAD only, and the mode and the
-    /// file's length recorded.
+    /// Open the file in `omode`, the mode as given, without OCEXEC, and
+    /// return the opened channel, as Plan 9's devopen: the permission check
+    /// of the access the mode asks for, OEXEC's included, the offset to
+    /// zero, a directory OREAD only, and openmode's reduction of the mode
+    /// and the file's length recorded.
     fn open(&self, c: &Arc<Chan>, omode: u32) -> crate::Result<Arc<Chan>>;
 
     /// Read into `buf` from `offset`, and return the bytes read, as Plan 9's
@@ -134,15 +135,16 @@ fn end(name: &str, elem: &str) -> usize {
     start + elem.len()
 }
 
-/// The channel `name` opens for the access `omode`, as Plan 9's namec: the
-/// mode is checked first, as Plan 9's openmode, then the name resolved, the
-/// device attached, the path walked an element at a time, and the channel
-/// opened.  An error from the walk or after it shows the name as namec's
+/// The channel `name` opens in `omode`, as Plan 9's namec: the mode is
+/// checked first, as Plan 9's openmode, then the name resolved, the device
+/// attached, the path walked an element at a time, and the channel opened in
+/// the mode without OCEXEC, which is recorded on the channel.  A directory
+/// can't be opened OEXEC.  An error from the walk or after it shows the name as namec's
 /// does: up to the element that failed, or for an element that isn't a
 /// directory, up to that element; past the walk, the whole name; and none if
 /// the name has no elements.
 pub(crate) fn open_name(name: &str, omode: u32) -> Result<Arc<Chan>, Error> {
-    let omode = chan::openmode(omode)?;
+    chan::openmode(omode)?;
     let Start { mut c, elems, mustbedir, mut walked } = resolve(name)?;
     let dev = c.dev();
     for elem in elems {
@@ -156,7 +158,14 @@ pub(crate) fn open_name(name: &str, omode: u32) -> Result<Arc<Chan>, Error> {
     if mustbedir && c.qid().kind != QTDIR {
         return Err(nameerror(name, whole, ENOTDIR));
     }
-    dev.open(&c, omode).map_err(|err| nameerror(name, whole, err))
+    if omode & 3 == OEXEC && c.qid().kind == QTDIR {
+        return Err(nameerror(name, whole, EEXECDIR));
+    }
+    let c = dev.open(&c, omode & !OCEXEC).map_err(|err| nameerror(name, whole, err))?;
+    if omode & OCEXEC != 0 {
+        c.set_cexec();
+    }
+    Ok(c)
 }
 
 /// The error `err` from resolving `name`, showing its first `len` bytes, as
@@ -324,6 +333,18 @@ mod tests {
         assert_eq!(err("#c/pid", ORDWR), "'#c/pid' permission denied", "a pid read and write");
         assert_eq!(err("#c", OWRITE), "permission denied", "a directory write");
         assert_eq!(err("#c", ORDWR), "permission denied", "a directory read and write");
+
+        // OEXEC asks the device for execute permission, which cons's 0660
+        // doesn't grant, and a directory can't be opened OEXEC, as namec
+        // checks after the walk.  A directory's open in any mode but OREAD
+        // is Eperm, flags included, as devopen checks the mode as given.
+        assert_eq!(err("#c/cons", OEXEC), "'#c/cons' permission denied", "OEXEC");
+        assert_eq!(err("/dev", OEXEC), "'/dev' cannot exec directory", "a directory");
+        assert_eq!(err("#c", OREAD | OTRUNC), "permission denied", "a directory truncated");
+
+        // OCEXEC is recorded on the channel, and doesn't reach the device.
+        assert!(open_name("#c/cons", OWRITE | OCEXEC).expect("OCEXEC").cexec(), "OCEXEC");
+        assert!(!open_name("#c/cons", OWRITE).expect("cons").cexec(), "no OCEXEC");
 
         // A mode openmode can't reduce, before the name is resolved.
         assert_eq!(err("#c/cons", OWRITE | 0x100), "bad arg in system call", "above OEXEC");

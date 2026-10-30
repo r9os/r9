@@ -4,7 +4,7 @@
 //! shares its offset, and dropping the last reference closes the file.
 
 use alloc::sync::Arc;
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use crate::dev::Dev;
 use crate::error::{EBADARG, EBADFD, EBADUSEFD, ENOFD};
@@ -44,6 +44,9 @@ pub struct Chan {
     /// The file's length, set by the device on open.
     length: u64,
     offset: AtomicU64,
+    /// Whether exec closes it, as Plan 9's CCEXEC: set when it's opened
+    /// with OCEXEC, and so shared by the descriptors dup'd from it.
+    cexec: AtomicBool,
 }
 
 impl Chan {
@@ -51,14 +54,15 @@ impl Chan {
     /// 0, and its offset at the start, until the device's open returns the
     /// opened channel.
     pub(crate) fn new(dev: &'static dyn Dev, qid: Qid) -> Arc<Self> {
-        Arc::new(Chan { dev, qid, mode: 0, length: 0, offset: AtomicU64::new(0) })
+        Chan::opened(dev, qid, 0, 0)
     }
 
     /// The opened channel on `dev`'s file `qid`: the device's open has
     /// recorded the access, and the file's length, on it, as Plan 9's
     /// devopen does on the channel it opens.
     pub(crate) fn opened(dev: &'static dyn Dev, qid: Qid, mode: u32, length: u64) -> Arc<Self> {
-        Arc::new(Chan { dev, qid, mode, length, offset: AtomicU64::new(0) })
+        let (offset, cexec) = (AtomicU64::new(0), AtomicBool::new(false));
+        Arc::new(Chan { dev, qid, mode, length, offset, cexec })
     }
 
     /// The file's device.
@@ -87,6 +91,15 @@ impl Chan {
 
     pub(crate) fn set_offset(&self, off: u64) {
         self.offset.store(off, Ordering::Relaxed)
+    }
+
+    /// Whether exec closes the channel.
+    pub(crate) fn cexec(&self) -> bool {
+        self.cexec.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn set_cexec(&self) {
+        self.cexec.store(true, Ordering::Relaxed)
     }
 }
 

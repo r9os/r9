@@ -9,6 +9,7 @@ use core::time::Duration;
 use crate::chan::{fdtochan, freefd, openmode, Chan, NOPEN, OREAD, OWRITE, QTDIR};
 use crate::dat::{Access, ProcArch};
 use crate::dev::open_name;
+use crate::exec;
 use crate::error::{EBADARG, EBADFD, EISDIR, ENAMETOOLONG, ENEGOFF, Error};
 use crate::println;
 use crate::proc::{pexit, pwait, rfork, tsleep, yield_now};
@@ -17,7 +18,7 @@ use crate::timer;
 use crate::uaccess::{copy_from_user, copy_str_from_user, copy_to_user, peek_user_byte, validate_user_range};
 
 use sys::{
-    AWAIT, BRK_, CLOSE, DUP, ERRMAX, ERRSTR, EXITS, OPEN, PREAD, PWRITE, RFORK, SEEK, SLEEP,
+    AWAIT, BRK_, CLOSE, DUP, ERRMAX, ERRSTR, EXEC, EXITS, OPEN, PREAD, PWRITE, RFORK, SEEK, SLEEP,
     SYSR1,
 };
 
@@ -33,6 +34,7 @@ pub fn syscall<A: ProcArch>(nr: u64, args: [u64; 6]) -> u64 {
         SYSR1 => sysr1(&args),
         CLOSE => sysclose::<A>(&args),
         DUP => sysdup::<A>(&args),
+        EXEC => sysexec::<A>(&args),
         EXITS => sysexits::<A>(&args),
         OPEN => sysopen::<A>(&args),
         BRK_ => sysbrk_::<A>(&args),
@@ -194,22 +196,42 @@ fn offset(c: &Chan, off: u64) -> crate::Result<(u64, bool)> {
 /// free descriptor, else Enofd.
 fn sysopen<A: ProcArch>(args: &[u64; 6]) -> Result<u64, Error> {
     let (name, mode) = (args[0] as usize, args[1] as u32);
-    let omode = openmode(mode)?;
+    openmode(mode)?;
     let mut buf = [0u8; 256];
-    let n = copy_str_from_user::<A>(&mut buf, name);
-    // A full buffer ends at 256 only if the 257th byte is the terminator or
-    // isn't mapped; a mapped byte past it is a longer name, which Plan 9's
-    // validname refuses with "name too long" rather than truncating.
-    if n == buf.len() && peek_user_byte::<A>(name + n).is_some_and(|b| b != 0) {
-        return Err(ENAMETOOLONG.into());
-    }
-    let name = core::str::from_utf8(&buf[..n]).map_err(|_| EBADARG)?;
-    let c = open_name(name, omode)?;
+    let name = user_name::<A>(&mut buf, name)?;
+    let c = open_name(name, mode)?;
     with_fds::<A, _>(|fds| {
         let fd = freefd(fds)?;
         fds[fd] = Some(c);
         Ok(fd as u64)
     })
+}
+
+/// The name at user address `name`, copied into `buf`, as Plan 9's
+/// validnamedup: at most 256 bytes, and UTF-8.
+fn user_name<A: ProcArch>(buf: &mut [u8; 256], name: usize) -> crate::Result<&str> {
+    let n = copy_str_from_user::<A>(buf, name);
+    // A full buffer ends at 256 only if the 257th byte is the terminator or
+    // isn't mapped; a mapped byte past it is a longer name, which Plan 9's
+    // validname refuses with "name too long" rather than truncating.
+    if n == buf.len() && peek_user_byte::<A>(name + n).is_some_and(|b| b != 0) {
+        return Err(ENAMETOOLONG);
+    }
+    core::str::from_utf8(&buf[..n]).map_err(|_| EBADARG)
+}
+
+/// exec(name, argv): as Plan 9's sysexec, with exec::sysexec.  On success,
+/// it doesn't return: the new program starts with its FP/SIMD registers
+/// zero, as procsetup's FPinit, and every other register but its arguments
+/// zero, as the dispatcher's write of the result is replaced.
+fn sysexec<A: ProcArch>(args: &[u64; 6]) -> Result<u64, Error> {
+    let mut buf = [0u8; 256];
+    let name = user_name::<A>(&mut buf, args[0] as usize)?;
+    let regs = exec::sysexec::<A>(name, args[1] as usize)?;
+    A::fp_restore(&A::Fp::default());
+    // SAFETY: this is the process's syscall, which holds nothing, and exec
+    // mapped the program's text and stack.
+    unsafe { A::enter_user(&regs) }
 }
 
 /// close(fd): the descriptor's channel, of any mode, taken from the table and
@@ -374,6 +396,7 @@ mod tests {
     use crate::mcslock::LockNode;
     use crate::mem::PAGE_SIZE_4K;
     use crate::proc::{newproc, reap};
+    use alloc::string::String;
 
     /// Run `f` as a new process, which is then reaped.
     fn as_proc<R>(f: impl FnOnce() -> R) -> R {
@@ -391,6 +414,57 @@ mod tests {
         // SAFETY: as_proc set up the current process.
         let e = unsafe { (*Fake::up()).errstr };
         e[..e.iter().position(|&b| b == 0).unwrap()].to_vec()
+    }
+
+    /// The ELF loader's test program, built by xtask (user/elftest).
+    static ELFTEST: &[u8] = include_bytes!(concat!(env!("R9_USER_BIN"), "/elftest"));
+
+    static BOOT: &[crate::devroot::BootFile] = &[
+        crate::devroot::BootFile { name: "elftest", data: ELFTEST },
+        crate::devroot::BootFile { name: "bad", data: b"not an image" },
+    ];
+
+    #[test]
+    fn exec_failures_return() {
+        as_proc(|| {
+            crate::devroot::init(&BOOT);
+            let mut mem = user_mem();
+            let base = mem.base();
+            // A name at the start of the page, and argv's array, then its
+            // strings, from 256 on.
+            let exec = |mem: &mut crate::fake::Mem, name: &str| {
+                mem.0[..name.len()].copy_from_slice(name.as_bytes());
+                mem.0[name.len()] = 0;
+                let r = syscall::<Fake>(EXEC, [base as u64, (base + 256) as u64, 0, 0, 0, 0]);
+                (r, String::from_utf8(current_errstr()).unwrap())
+            };
+            let failed = |e: &str| (u64::MAX, String::from(e));
+            mem.0[256..264].copy_from_slice(&((base + 512) as u64).to_le_bytes());
+            mem.0[512..517].copy_from_slice(b"name\0");
+
+            assert_eq!(exec(&mut mem, "/bin/nosuch"), failed("'/bin/nosuch' file does not exist"));
+            assert_eq!(exec(&mut mem, "/bin"), failed("'/bin' cannot exec directory"));
+            assert_eq!(exec(&mut mem, "#c/cons"), failed("'#c/cons' permission denied"), "0660");
+            assert_eq!(exec(&mut mem, "/bin/bad"), failed("exec header invalid"));
+
+            // Arguments past a quarter of the stack: the same string, at
+            // most a page, three times over.
+            let s = vec![b'a'; PAGE_SIZE_4K - 513];
+            mem.0[512..PAGE_SIZE_4K - 1].copy_from_slice(&s);
+            mem.0[PAGE_SIZE_4K - 1] = 0;
+            let n = <Fake as crate::dat::MMU>::USTKSIZE / 4 / s.len() + 1;
+            for i in 0..n {
+                let at = 256 + 8 * i;
+                mem.0[at..at + 8].copy_from_slice(&((base + 512) as u64).to_le_bytes());
+            }
+            mem.0[256 + 8 * n..264 + 8 * n].fill(0);
+            assert_eq!(exec(&mut mem, "/bin/elftest"), failed("virtual memory allocation failed"));
+
+            // The process is as it was, its descriptors included.
+            // SAFETY: as_proc set up the current process.
+            let open = unsafe { (*Fake::up()).fds().with(|fds| fds.iter().flatten().count()) };
+            assert_eq!(open, 3, "the console's three");
+        });
     }
 
     #[test]

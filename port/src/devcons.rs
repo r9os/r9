@@ -6,7 +6,7 @@ use alloc::string::String;
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicI64, Ordering};
 
-use crate::chan::{Chan, OREAD, Qid, QTDIR, QTFILE};
+use crate::chan::{Chan, OREAD, Qid, QTDIR, QTFILE, openmode};
 use crate::clock;
 use crate::console::{self, putstrn};
 use crate::dev::{self, Dev, readstr};
@@ -163,7 +163,7 @@ impl Dev for Cons {
         if c.qid().kind == QTDIR && omode != OREAD {
             return Err(EPERM);
         }
-        Ok(Chan::opened(&CONS, *c.qid(), omode, length))
+        Ok(Chan::opened(&CONS, *c.qid(), openmode(omode)?, length))
     }
 
     fn read(&self, c: &Arc<Chan>, buf: &mut [u8], offset: u64) -> crate::Result<u64> {

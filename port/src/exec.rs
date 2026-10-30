@@ -1,35 +1,161 @@
-//! Loading a program into the current process, as Plan 9's sysexec does.
-//! There's no exec syscall yet: a start function calls exec, then enters the
-//! program with the registers it returns.
+//! Loading a program into the current process, as Plan 9's sysexec does:
+//! from a file, for the EXEC syscall, or from an image in the kernel, for a
+//! process the kernel starts, whose start function enters the program with
+//! the registers exec returns.
 
+use alloc::sync::Arc;
+use alloc::vec;
 use alloc::vec::Vec;
 
-use crate::dat::{KNAMELEN, MMU, Perm, ProcArch, PutError, UserSegment};
+use crate::chan::{Chan, NOPEN, OEXEC};
+use crate::dat::{Access, KNAMELEN, MMU, Perm, ProcArch, PutError, UserRegs, UserSegment};
+use crate::dev::open_name;
 use crate::elf::{self, Elf, Segment};
-use crate::error::{EBADARG, EBADEXEC, ENOVMEM};
+use crate::error::{EBADARG, EBADEXEC, ENOVMEM, Error};
 use crate::mem::{PAGE_SIZE_4K, VirtRange};
 use crate::pagealloc::{allocate_physpage, free_physpage};
+use crate::proc::pexit;
 use crate::segment::{map_zeroed, set_bss, set_segments};
-use crate::uaccess::copy_to_user;
+use crate::uaccess::{
+    bad_address, copy_from_user, copy_to_user, try_copy_str_from_user, user_range_ok,
+};
 
-/// What a program starts with: its pc and stack pointer, and argc and argv,
-/// which each architecture puts in its own registers.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct UserRegs {
-    pub pc: usize,
-    pub sp: usize,
-    pub argc: usize,
-    pub argv: usize,
+/// How much more of a file the EXEC syscall reads at a time, once it has
+/// read the file's length, for a file that's longer or has none.
+const CHUNK: usize = 64 * 1024;
+
+/// Exec the file `name`, with the arguments in the null-terminated array of
+/// pointers at user address `argv`, as Plan 9's sysexec, and return the
+/// registers to enter it with.  Before the point of no return, the file is
+/// opened OEXEC, read whole and its layout checked, and the arguments copied
+/// in, and a failure returns, leaving the process as it was.  Past it, the descriptors opened
+/// OCEXEC are closed, and the image loaded into a new address space, which
+/// replaces the old.  Plan 9 can't fail there, as it pages on demand, but
+/// r9 maps eagerly, so a failure there exits the process with the error.
+pub(crate) fn sysexec<A: ProcArch>(name: &str, argv: usize) -> Result<UserRegs, Error> {
+    let c = open_name(name, OEXEC)?;
+    let image = read_image(&c, A::USTKTOP - A::USTKSIZE - PAGE_SIZE_4K - A::UTZERO)?;
+    drop(c);
+    layout::<A>(&elf::parse(&image).map_err(|_| EBADEXEC)?)?;
+    let Some(args) = copy_argv::<A>(argv) else {
+        drop(image);
+        bad_address::<A>()
+    };
+    let args = args?;
+    let pmmu = A::newpmmu().map_err(|_| ENOVMEM)?;
+    close_cexec::<A>();
+    replace_pmmu::<A>(pmmu);
+    // What's left in the kernel is freed before a failure exits.
+    let r = {
+        let argv: Vec<&[u8]> = args.iter().map(Vec::as_slice).collect();
+        exec::<A>(&image, name.as_bytes(), &argv)
+    };
+    drop((args, image));
+    match r {
+        Ok(regs) => Ok(regs),
+        Err(err) => pexit::<A>(err.as_bytes()),
+    }
+}
+
+/// The file `c` holds, read whole through its device, at most `max` bytes:
+/// a bigger file, by its length or by what's read, is Ebadexec, as
+/// sysexec's check of the header's text size against the user address
+/// space.  The buffer is the file's length, as its device set it on open,
+/// and a byte more, so the read that finds the end doesn't grow it: an image
+/// is most of a megabyte, and copying one as it grows could exhaust the
+/// heap.  The heap is the bound that matters, as `max` is most of the
+/// address space: an image that won't fit is Enovmem.
+fn read_image(c: &Arc<Chan>, max: usize) -> crate::Result<Vec<u8>> {
+    let length = usize::try_from(c.length()).unwrap_or(usize::MAX);
+    if length > max {
+        return Err(EBADEXEC);
+    }
+    let mut image = Vec::new();
+    loop {
+        let len = image.len();
+        if len > max {
+            return Err(EBADEXEC);
+        }
+        let want = if len <= length { (length - len).saturating_add(1) } else { CHUNK };
+        let want = want.min(max + 1 - len);
+        image.try_reserve_exact(want).map_err(|_| ENOVMEM)?;
+        image.resize(len + want, 0);
+        let n = c.dev().read(c, &mut image[len..], len as u64)? as usize;
+        image.truncate(len + n);
+        if n == 0 {
+            return Ok(image);
+        }
+    }
+}
+
+/// The strings the null-terminated array of pointers at user address `argv`
+/// points to, copied in, as sysexec's passes over it, but stopping with
+/// Enovmem as soon as they won't fit on the new stack, as args_size checks.
+/// None for a bad address, which kills the process, as sysexec's validaddr,
+/// once the caller has freed what it holds.
+fn copy_argv<A: ProcArch>(argv: usize) -> Option<crate::Result<Vec<Vec<u8>>>> {
+    let limit = A::USTKSIZE / 4;
+    let mut buf = vec![0; limit];
+    let mut args: Vec<Vec<u8>> = Vec::new();
+    let mut strings = 0;
+    loop {
+        let at = argv.saturating_add(8 * args.len());
+        if !user_range_ok::<A>(at, 8, Access::Read) {
+            return None;
+        }
+        let mut p = [0; 8];
+        copy_from_user::<A>(&mut p, at);
+        let s = u64::from_le_bytes(p) as usize;
+        if s == 0 {
+            return Some(Ok(args));
+        }
+        let n = try_copy_str_from_user::<A>(&mut buf, s)?;
+        strings += n + 1;
+        if n == limit || stack_size(strings, args.len() + 1) > limit {
+            return Some(Err(ENOVMEM));
+        }
+        args.push(buf[..n].to_vec());
+    }
+}
+
+/// Close the current process's descriptors opened OCEXEC, as sysexec's
+/// fdclose of each CCEXEC channel, dropping them once the table's unlocked.
+fn close_cexec<A: ProcArch>() {
+    let up = A::up();
+    assert!(!up.is_null(), "exec: no current process");
+    // SAFETY: up is the running process, and only its own syscalls, one at a
+    // time, replace its table.
+    let closed: [Option<Arc<Chan>>; NOPEN] = unsafe { (*up).fds() }.with(|fds| {
+        core::array::from_fn(|i| fds[i].take_if(|c| c.cexec()))
+    });
+    drop(closed);
+}
+
+/// Make `pmmu` the current process's address space, with no segments, and
+/// release the old one and every page in it, which the process owns, as
+/// nothing shares a segment yet.
+fn replace_pmmu<A: ProcArch>(pmmu: A::Pmmu) {
+    let up = A::up();
+    assert!(!up.is_null(), "exec: no current process");
+    // SAFETY: up is the running process, and only its own syscalls, one at a
+    // time, change its address space and segments.  Nothing refers to memory
+    // through the old address space: what exec needs from it is copied in.
+    unsafe {
+        let old = core::mem::replace(&mut (*up).pmmu, pmmu);
+        (*up).segments.clear();
+        (*up).bss = None;
+        A::switch(&(*up).pmmu);
+        A::release(old, |pa| free_physpage(pa).expect("exec: couldn't free a process page"));
+    }
 }
 
 /// Load the ELF executable `image` into the current process, map its stack,
-/// and push `argv` onto it, as Plan 9's sysexec does.  Return the registers to
-/// enter it with.  The arguments are checked first, as in sysexec, so bad
-/// ones map nothing.  As with load, a failure after that isn't undone: the
-/// caller must exit the process.  Once it's loaded, the process's text is
-/// the last element of argv[0], where sysexec takes the file's, once it
-/// can't fail, which a caller passing an image doesn't have.
-pub fn exec<A: ProcArch>(image: &[u8], argv: &[&[u8]]) -> crate::Result<UserRegs> {
+/// and push `argv` onto it, as Plan 9's sysexec does, and set the process's
+/// text to the last element of `name`.  Return the registers to enter it
+/// with.  The arguments are checked first, as in sysexec, so bad ones map
+/// nothing.  As with load, a failure after that isn't undone: the caller
+/// must exit the process.
+pub fn exec<A: ProcArch>(image: &[u8], name: &[u8], argv: &[&[u8]]) -> crate::Result<UserRegs> {
     args_size::<A>(argv)?;
     let (pc, mut segments) = load::<A>(image)?;
     map_zeroed::<A>(stack::<A>()).map_err(
@@ -41,7 +167,7 @@ pub fn exec<A: ProcArch>(image: &[u8], argv: &[&[u8]]) -> crate::Result<UserRegs
     let regs = push_args::<A>(pc, A::USTKTOP, argv)?;
     segments.push(UserSegment { range: stack::<A>(), perm: Perm::Data });
     set_segments::<A>(segments);
-    set_text::<A>(argv.first().copied().unwrap_or_default());
+    set_text::<A>(name);
     Ok(regs)
 }
 
@@ -66,12 +192,17 @@ fn args_size<A: MMU>(argv: &[&[u8]]) -> crate::Result<usize> {
     let Some(strings) = argv.iter().try_fold(0usize, |n, a| n.checked_add(a.len() + 1)) else {
         return Err(ENOVMEM);
     };
-    // A 16-byte aligned top leaves at most 8 bytes of padding below argv.
-    let size = strings.next_multiple_of(8).saturating_add(8 * (argv.len() + 1) + 8);
-    if size > A::USTKSIZE / 4 {
+    if stack_size(strings, argv.len()) > A::USTKSIZE / 4 {
         return Err(ENOVMEM);
     }
     Ok(strings)
+}
+
+/// The stack `nargs` arguments take, given their strings' size, NULs
+/// included: the strings, their pointers and the null after them, and 8
+/// bytes of padding, the most a 16-byte aligned top leaves below them.
+fn stack_size(strings: usize, nargs: usize) -> usize {
+    strings.next_multiple_of(8).saturating_add(8 * (nargs + 1) + 8)
 }
 
 /// Push `argv` below `top` in the current user address space: its strings,
@@ -188,6 +319,7 @@ fn load_segment<A: MMU>(seg: &Segment) -> crate::Result<()> {
 mod tests {
     use super::*;
     use crate::fake::{Fake, USTKTOP, mapped, user_mem};
+    use crate::dat::ProcArch;
 
     /// The ELF loader's test program, built by xtask (user/elftest).
     static ELFTEST: &[u8] = include_bytes!(concat!(env!("R9_USER_BIN"), "/elftest"));
@@ -314,8 +446,101 @@ mod tests {
     fn exec_checks_args_before_loading() {
         // A bad argument is refused before load, which would fail for want of
         // memory on the host.
-        assert_eq!(exec::<Fake>(ELFTEST, &[b"a\0b"]), Err(EBADARG));
+        assert_eq!(exec::<Fake>(ELFTEST, b"elftest", &[b"a\0b"]), Err(EBADARG));
         assert!(mapped().is_empty());
+    }
+
+    /// A device whose one file is `LEN` bytes of 'x'.
+    struct Big;
+    const LEN: u64 = 100;
+
+    impl crate::dev::Dev for Big {
+        fn dc(&self) -> char {
+            'B'
+        }
+        fn attach(&self) -> crate::Result<Arc<Chan>> {
+            unreachable!()
+        }
+        fn walk(&self, _c: &Arc<Chan>, _elems: &[&str]) -> crate::Result<Arc<Chan>> {
+            unreachable!()
+        }
+        fn open(&self, _c: &Arc<Chan>, _omode: u32) -> crate::Result<Arc<Chan>> {
+            unreachable!()
+        }
+        fn read(&self, _c: &Arc<Chan>, buf: &mut [u8], offset: u64) -> crate::Result<u64> {
+            let n = (LEN.saturating_sub(offset) as usize).min(buf.len()).min(7);
+            buf[..n].fill(b'x');
+            Ok(n as u64)
+        }
+        fn write(&self, _c: &Arc<Chan>, _buf: &[u8], _offset: u64) -> crate::Result<u64> {
+            unreachable!()
+        }
+        fn close(&self, _c: &Chan) {}
+    }
+
+    #[test]
+    fn read_image_reads_whole_but_bounded() {
+        let qid = crate::chan::Qid { path: 0, kind: 0 };
+        let c = Chan::opened(&Big, qid, 0, LEN);
+        let image = read_image(&c, 100).expect("the image");
+        assert_eq!(image, vec![b'x'; 100], "short reads, to the end");
+        assert_eq!(image.capacity(), 101, "sized by the file's length");
+        assert_eq!(read_image(&c, 99), Err(EBADEXEC), "a byte too many");
+        // A file longer than its length, or without one, is read anyway.
+        for length in [0, 10] {
+            let c = Chan::opened(&Big, qid, 0, length);
+            assert_eq!(read_image(&c, 100), Ok(vec![b'x'; 100]), "a length of {length}");
+        }
+    }
+
+    #[test]
+    fn copy_argv_copies_or_reports_a_bad_address() {
+        let mut mem = user_mem();
+        let base = mem.base();
+        let unmapped = base + 2 * PAGE_SIZE_4K;
+        let put = |mem: &mut crate::fake::Mem, at: usize, p: usize| {
+            mem.0[at..at + 8].copy_from_slice(&(p as u64).to_le_bytes())
+        };
+        mem.0[256..259].copy_from_slice(b"ab\0");
+        mem.0[260..261].copy_from_slice(b"\0");
+        put(&mut mem, 0, base + 256);
+        put(&mut mem, 8, base + 260);
+        put(&mut mem, 16, 0);
+        assert_eq!(copy_argv::<Fake>(base), Some(Ok(vec![b"ab".to_vec(), vec![]])));
+        assert_eq!(copy_argv::<Fake>(unmapped), None, "an unmapped array");
+        put(&mut mem, 8, unmapped);
+        assert_eq!(copy_argv::<Fake>(base), None, "an unmapped string");
+        // A string that runs off its page into the unmapped one.
+        mem.0[PAGE_SIZE_4K..2 * PAGE_SIZE_4K].fill(b'x');
+        put(&mut mem, 8, base + PAGE_SIZE_4K);
+        assert_eq!(copy_argv::<Fake>(base), None, "a string reaching an unmapped page");
+        // Too many: the same string, a quarter of the stack.
+        mem.0[2 * PAGE_SIZE_4K - 1] = 0;
+        for i in 0..5 {
+            put(&mut mem, 8 * i, base + PAGE_SIZE_4K);
+        }
+        put(&mut mem, 40, 0);
+        assert_eq!(copy_argv::<Fake>(base), Some(Err(ENOVMEM)), "too many");
+    }
+
+    #[test]
+    fn close_cexec_closes_only_ocexec() {
+        use crate::chan::{OCEXEC, OWRITE};
+        let mut p = crate::proc::newproc::<Fake>(|| {}).expect("newproc");
+        Fake::set_up(&mut *p);
+        let cexec = open_name("#c/cons", OWRITE | OCEXEC).expect("an OCEXEC open");
+        assert!(cexec.cexec(), "OCEXEC is recorded");
+        p.fds().with(|fds| {
+            fds[3] = Some(cexec.clone());
+            fds[4] = fds[1].clone();
+            fds[5] = Some(cexec);
+        });
+        close_cexec::<Fake>();
+        let open: Vec<bool> = p.fds().with(|fds| fds.iter().map(Option::is_some).collect());
+        assert_eq!(&open[..6], [true, true, true, false, true, false], "both of OCEXEC's dups");
+        Fake::set_up(core::ptr::null_mut());
+        // SAFETY: nothing runs in the fake process.
+        unsafe { crate::proc::reap(*p) };
     }
 
     #[test]
