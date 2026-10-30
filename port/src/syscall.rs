@@ -9,7 +9,7 @@ use core::time::Duration;
 use crate::chan::{fdtochan, freefd, openmode, Chan, NOPEN, OREAD, OWRITE, QTDIR};
 use crate::dat::{Access, ProcArch};
 use crate::dev::open_name;
-use crate::error::{EBADARG, EBADFD, EISDIR, ENAMETOOLONG, ENEGOFF};
+use crate::error::{EBADARG, EBADFD, EISDIR, ENAMETOOLONG, ENEGOFF, Error};
 use crate::println;
 use crate::proc::{pexit, pwait, rfork, tsleep, yield_now};
 use crate::segment::ibrk;
@@ -49,7 +49,7 @@ pub fn syscall<A: ProcArch>(nr: u64, args: [u64; 6]) -> u64 {
         }
     };
     r.unwrap_or_else(|err| {
-        set_errstr::<A>(err);
+        set_errstr::<A>(&err);
         u64::MAX
     })
 }
@@ -64,11 +64,10 @@ fn with_errstr<A: ProcArch, R>(f: impl FnOnce(&mut [u8; ERRMAX]) -> R) -> R {
 }
 
 /// Record `err` as the current process's error string, truncated to ERRMAX - 1
-/// bytes.
-fn set_errstr<A: ProcArch>(err: &str) {
+/// bytes, ending on a character.
+fn set_errstr<A: ProcArch>(err: &Error) {
     with_errstr::<A, _>(|errstr| {
-        let n = err.len().min(ERRMAX - 1);
-        errstr[..n].copy_from_slice(&err.as_bytes()[..n]);
+        let n = err.text(&mut errstr[..ERRMAX - 1]);
         errstr[n] = 0;
     });
 }
@@ -84,7 +83,7 @@ fn with_fds<A: ProcArch, R>(f: impl FnOnce(&mut [Option<Arc<Chan>>; NOPEN]) -> R
 
 /// rfork(flags).  A new child runs first, as Plan 9's sysrfork calls sched
 /// once it's ready.
-fn sysrfork<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
+fn sysrfork<A: ProcArch>(args: &[u64; 6]) -> Result<u64, Error> {
     let pid = rfork::<A>(args[0] as u32)?;
     if pid != 0 {
         yield_now::<A>();
@@ -95,10 +94,10 @@ fn sysrfork<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
 /// errstr(buf, nbuf): swap the current process's error string with the
 /// NUL-terminated string in `buf`, as Plan 9's generrstr.  Both are truncated
 /// to fit, and NUL-terminated, in min(nbuf, ERRMAX) bytes.
-fn syserrstr<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
+fn syserrstr<A: ProcArch>(args: &[u64; 6]) -> Result<u64, Error> {
     let (buf, nbuf) = (args[0] as usize, args[1] as usize);
     if nbuf == 0 {
-        return Err(EBADARG);
+        return Err(EBADARG.into());
     }
     validate_user_range::<A>(buf, nbuf, Access::Write);
     let n = nbuf.min(ERRMAX);
@@ -120,7 +119,7 @@ fn syserrstr<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
 /// Return the length written, or for n of 0, -1 with the error string as it
 /// was, as snprint returns -1 for no room, and the exit is still taken.  r9
 /// doesn't account for time, so the times are 0.
-fn sysawait<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
+fn sysawait<A: ProcArch>(args: &[u64; 6]) -> Result<u64, Error> {
     let (buf, n) = (args[0] as usize, args[1] as usize);
     validate_user_range::<A>(buf, n, Access::Write);
     let w = pwait::<A>()?;
@@ -153,7 +152,7 @@ fn quote(s: &[u8], out: &mut Vec<u8>) {
     out.push(b'\'');
 }
 
-fn sysr1(_args: &[u64; 6]) -> crate::Result<u64> {
+fn sysr1(_args: &[u64; 6]) -> Result<u64, Error> {
     Ok(0)
 }
 
@@ -161,12 +160,12 @@ fn sysexits<A: ProcArch>(args: &[u64; 6]) -> ! {
     pexit::<A>(&exits_status::<A>(args[0] as usize))
 }
 
-fn sysbrk_<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
+fn sysbrk_<A: ProcArch>(args: &[u64; 6]) -> Result<u64, Error> {
     let up = A::up();
     assert!(!up.is_null(), "sysbrk_: no current process");
     // SAFETY: up is the running process, and nothing else refers to its bss
     // while it's in a syscall.
-    ibrk::<A>(unsafe { &mut (*up).bss }, args[0] as usize)
+    Ok(ibrk::<A>(unsafe { &mut (*up).bss }, args[0] as usize)?)
 }
 
 /// The kernel chunk a pread or pwrite copies the user buffer through, as the
@@ -193,7 +192,7 @@ fn offset(c: &Chan, off: u64) -> crate::Result<(u64, bool)> {
 /// open(name, mode): the mode checked, as openmode, the name copied out of
 /// user memory, the #c/... name resolved to an open channel, and the lowest
 /// free descriptor, else Enofd.
-fn sysopen<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
+fn sysopen<A: ProcArch>(args: &[u64; 6]) -> Result<u64, Error> {
     let (name, mode) = (args[0] as usize, args[1] as u32);
     let omode = openmode(mode)?;
     let mut buf = [0u8; 256];
@@ -202,7 +201,7 @@ fn sysopen<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
     // isn't mapped; a mapped byte past it is a longer name, which Plan 9's
     // validname refuses with "name too long" rather than truncating.
     if n == buf.len() && peek_user_byte::<A>(name + n).is_some_and(|b| b != 0) {
-        return Err(ENAMETOOLONG);
+        return Err(ENAMETOOLONG.into());
     }
     let name = core::str::from_utf8(&buf[..n]).map_err(|_| EBADARG)?;
     let c = open_name(name, omode)?;
@@ -215,9 +214,9 @@ fn sysopen<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
 
 /// close(fd): the descriptor's channel, of any mode, taken from the table and
 /// dropped, as Plan 9's close.
-fn sysclose<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
+fn sysclose<A: ProcArch>(args: &[u64; 6]) -> Result<u64, Error> {
     let fd = args[0];
-    let c = with_fds::<A, _>(|fds| {
+    let c = with_fds::<A, crate::Result<_>>(|fds| {
         fdtochan(fds, fd, None)?;
         Ok(fds[fd as usize].take())
     })?;
@@ -229,9 +228,9 @@ fn sysclose<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
 /// Plan 9's sysdup.  A `new` of -1 is the lowest free descriptor, else Enofd;
 /// any other must be in range, and whatever it held is dropped after the
 /// copy, so a dup over an open fd closes the old occupant.
-fn sysdup<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
+fn sysdup<A: ProcArch>(args: &[u64; 6]) -> Result<u64, Error> {
     let (old, new) = (args[0], args[1]);
-    let (new, oc) = with_fds::<A, _>(|fds| {
+    let (new, oc) = with_fds::<A, crate::Result<_>>(|fds| {
         let c = fdtochan(fds, old, None)?;
         let new = if new == u64::MAX { freefd(fds)? } else { new as usize };
         let slot = fds.get_mut(new).ok_or(EBADFD)?;
@@ -246,7 +245,7 @@ fn sysdup<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
 /// most a chunk, copied out.  On a successful read, the channel's offset
 /// advances by the bytes read, at an explicit offset too, as Plan 9's read
 /// does, though its read(2) and its write don't.
-fn syspread<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
+fn syspread<A: ProcArch>(args: &[u64; 6]) -> Result<u64, Error> {
     let (fd, buf, len) = (args[0], args[1] as usize, args[2] as usize);
     validate_user_range::<A>(buf, len, Access::Write);
     let c = with_fds::<A, _>(|fds| fdtochan(fds, fd, Some(OREAD)))?;
@@ -266,12 +265,12 @@ fn syspread<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
 /// bytes copied through the kernel chunk.  At the -1 offset, the channel's
 /// offset advances by the bytes requested before the write, and a short write
 /// or a device error rewinds it, as Plan 9's write does.
-fn syspwrite<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
+fn syspwrite<A: ProcArch>(args: &[u64; 6]) -> Result<u64, Error> {
     let (fd, buf, len) = (args[0], args[1] as usize, args[2] as usize);
     validate_user_range::<A>(buf, len, Access::Read);
     let c = with_fds::<A, _>(|fds| fdtochan(fds, fd, Some(OWRITE)))?;
     if c.qid().kind == QTDIR {
-        return Err(EISDIR);
+        return Err(EISDIR.into());
     }
     let (off, maintain) = offset(&c, args[3])?;
     if maintain {
@@ -304,13 +303,13 @@ fn syspwrite<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
         match err {
             Some(e) => {
                 c.set_offset(off);
-                return Err(e);
+                return Err(e.into());
             }
             None if total < len => c.set_offset(off + total as u64),
             None => {}
         }
     } else if let Some(e) = err {
-        return Err(e);
+        return Err(e.into());
     }
     Ok(total as u64)
 }
@@ -321,14 +320,14 @@ fn syspwrite<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
 /// Offsets are signed, as Plan 9's vlong, so a result below 0 or past
 /// i64::MAX is Enegoff, and the result can't be the -1 of a failed syscall.
 /// A bad whence is Ebadarg.
-fn sysseek<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
+fn sysseek<A: ProcArch>(args: &[u64; 6]) -> Result<u64, Error> {
     let (fd, off, whence) = (args[0], args[1], args[2]);
     let c = with_fds::<A, _>(|fds| fdtochan(fds, fd, None))?;
     let base = match whence {
         0 => 0,
         1 => c.offset() as i64,
         2 => c.length() as i64,
-        _ => return Err(EBADARG),
+        _ => return Err(EBADARG.into()),
     };
     let r = base.checked_add(off as i64).filter(|r| *r >= 0).ok_or(ENEGOFF)? as u64;
     c.set_offset(r);
@@ -348,7 +347,7 @@ fn exits_status<A: ProcArch>(ptr: usize) -> Vec<u8> {
 
 /// sleep(ms): yield if zero or negative, else sleep at least one tick, as
 /// Plan 9's syssleep.  Only its timeout wakes it, and it returns 0.
-fn syssleep<A: ProcArch>(args: &[u64; 6]) -> crate::Result<u64> {
+fn syssleep<A: ProcArch>(args: &[u64; 6]) -> Result<u64, Error> {
     let up = A::up();
     assert!(!up.is_null(), "syssleep: no current process");
     let n = args[0] as i64;
@@ -486,12 +485,14 @@ mod tests {
 
             // "#c/" plus 253 a's: 256 bytes, the buffer's length, then the
             // terminator.  It copies whole and resolves to the walk, whose
-            // own error the open reports.
+            // own error the open reports, showing the end of the name, as
+            // Plan 9's namelenerror shortens an element too long to show.
             mem.0[..3].copy_from_slice(b"#c/");
             mem.0[3..256].fill(b'a');
             mem.0[256] = 0;
             assert_eq!(open(), u64::MAX, "256 bytes, the buffer's length");
-            assert_eq!(current_errstr(), ENONEXIST.as_bytes());
+            let shown = alloc::format!("'...{}' {ENONEXIST}", "a".repeat(ERRMAX / 4));
+            assert_eq!(current_errstr(), shown.as_bytes());
 
             // One byte longer, and no terminator: Plan 9's "name too long",
             // not a truncated open.
