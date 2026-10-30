@@ -83,7 +83,7 @@ impl BumpAlloc {
     /// satisfied, otherwise returns `Some` of a pair of blocks:
     /// the first contains the prefix before the (aligned) block
     /// and the second is the requested block itself.
-    pub fn try_alloc(&self, align: usize, size: usize) -> Option<(Block, Block)> {
+    pub fn try_alloc(&self, size: usize, align: usize) -> Option<(Block, Block)> {
         let base = self.arena.as_ptr();
         let mut first = ptr::null_mut();
         let mut adjust = 0;
@@ -390,19 +390,16 @@ impl QuickFit {
         let mut header = self
             .unlink_allocated_misc(block)
             .or_else(|| {
-                let hblock = self.malloc(Layout::new::<Header>()).cast::<Header>();
-                let hblock = hblock
-                    .is_null()
-                    .then(|| {
-                        let offset = block.align_offset(MIN_ALLOC_SIZE);
-                        let hblock = block.as_ptr().wrapping_add(offset);
-                        let next = hblock.wrapping_add(MIN_ALLOC_SIZE);
-                        block = unsafe { NonNull::new_unchecked(next) };
-                        size -= offset + MIN_ALLOC_SIZE;
-                        align = MIN_ALLOC_SIZE;
-                        hblock.cast()
-                    })
-                    .expect("allocated header block");
+                let mut hblock = self.malloc(Layout::new::<Header>()).cast::<Header>();
+                if hblock.is_null() {
+                    let offset = block.align_offset(MIN_ALLOC_SIZE);
+                    let h = block.as_ptr().wrapping_add(offset);
+                    let next = h.wrapping_add(MIN_ALLOC_SIZE);
+                    block = unsafe { NonNull::new_unchecked(next) };
+                    size -= offset + MIN_ALLOC_SIZE;
+                    align = MIN_ALLOC_SIZE;
+                    hblock = h.cast();
+                }
                 let header = Header::new(block, size, align, None);
                 unsafe {
                     ptr::write(hblock, header);
@@ -531,5 +528,41 @@ pub mod global {
         unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
             self.with_allocator(|quick| unsafe { quick.realloc(ptr, layout, new_size) })
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::boxed::Box;
+
+    #[repr(C, align(4096))]
+    struct Arena([u8; 1 << 17]);
+
+    #[test]
+    fn a_large_block_from_the_tail_is_freed_to_the_misc_list() {
+        let mut arena = Box::new(Arena([0; 1 << 17]));
+        // SAFETY: the arena is owned here, and outlives the allocator.
+        let block = unsafe { Block::new_from_raw_parts(arena.0.as_mut_ptr(), arena.0.len()) };
+        let mut q = QuickFit::new(BumpAlloc::new(block));
+        let layout = Layout::from_size_align(MAX_QUICK_SIZE + 1, 8).unwrap();
+        let p = q.malloc(layout);
+        assert!(!p.is_null());
+        // Its first free gives it a header from the quick lists.
+        q.free(p, layout);
+        assert_eq!(q.malloc(layout), p, "reused from the misc list");
+    }
+
+    #[test]
+    fn the_tail_gives_the_size_and_alignment_asked() {
+        let mut arena = Box::new(Arena([0; 1 << 17]));
+        // SAFETY: as above.
+        let block = unsafe { Block::new_from_raw_parts(arena.0.as_mut_ptr(), arena.0.len()) };
+        let tail = BumpAlloc::new(block);
+        let (_, a) = tail.try_alloc(8, 8).expect("a small block");
+        let (prefix, b) = tail.try_alloc(3 * 4096, 4096).expect("a page-aligned block");
+        assert_eq!(a.len(), 8);
+        assert_eq!((b.len(), b.as_ptr().align_offset(4096)), (3 * 4096, 0));
+        assert_eq!(prefix.len(), 4096 - 8, "the prefix up to the alignment");
     }
 }
