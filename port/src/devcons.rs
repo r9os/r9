@@ -142,6 +142,12 @@ impl Dev for Cons {
             if c.qid().kind != QTDIR {
                 return Err(ENOTDIR);
             }
+            // The root is the only directory, so .. from it is itself, as
+            // Plan 9's devgen gives for DEVDOTDOT.
+            if *elem == ".." {
+                c = Chan::new(&CONS, Qid { path: ROOT, kind: QTDIR });
+                continue;
+            }
             let f = FILES.iter().find(|f| f.name == *elem).ok_or(ENONEXIST)?;
             c = Chan::new(&CONS, Qid { path: f.path, kind: QTFILE });
         }

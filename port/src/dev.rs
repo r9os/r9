@@ -356,7 +356,6 @@ mod tests {
         // the name up to the element that failed, or up to the file walked
         // past, as namec does.
         assert_eq!(err("#c/nope", OREAD), "'#c/nope' file does not exist", "a missing name");
-        assert_eq!(err("#c/..", OREAD), "'#c/..' file does not exist", "no ..");
         assert_eq!(err("#c/cons/extra", OREAD), "'#c/cons' not a directory", "past the file");
 
         // A trailing slash or . must name a directory, as Plan 9's namec
@@ -432,6 +431,21 @@ mod tests {
         assert_eq!(err("/dev/nope/x", OWRITE), "'/dev/nope' file does not exist", "up to the element");
         assert_eq!(err("/dev/cons/x", OWRITE), "'/dev/cons' not a directory", "past the file");
         assert_eq!(err("cons", OWRITE), "'cons' file does not exist", "no current directory");
+    }
+
+    #[test]
+    fn dotdot_walks_up_a_devices_table() {
+        // .. is a no-op at a device's root, as Plan 9's devgen gives it.
+        assert_eq!(open_name("#c/..", OREAD).expect("#c/..").qid().path, 0, "the root");
+        let c = open_name("#c/../cons", OWRITE).expect("#c/../cons");
+        assert_eq!(c.qid().path, 1, "cons, from the root's ..");
+        assert_eq!(open_name("/dev/../time", OREAD).expect("/dev/../time").qid().path, 2);
+        // From #/'s boot, it's #/'s root, and from there, the root again.
+        for name in ["#//boot/..", "#//boot/../..", "/bin/.."] {
+            let c = open_name(name, OREAD).expect(name);
+            assert_eq!((c.dev().dc(), c.qid().path, c.qid().kind), ('/', 0, QTDIR), "{name}");
+        }
+        assert!(open_name("#//boot/../boot", OREAD).is_ok(), "boot, back down");
     }
 
     #[test]
