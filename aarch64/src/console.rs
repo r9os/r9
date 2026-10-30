@@ -66,6 +66,6 @@ fn interrupt() {
         return;
     }
     let mut buf = [0; RX_FIFO];
-    let (n, overrun) = uart.drain(&mut buf);
-    port::console::put_input(&buf[..n], overrun);
+    let n = uart.drain(&mut buf);
+    port::console::put_input(&buf[..n]);
 }

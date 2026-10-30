@@ -711,7 +711,7 @@ fn test_user_processes() {
 /// waits for its QLock.
 fn test_console_readers() {
     static TYPE: Timer = Timer::new(Mode::Relative(Duration::from_millis(20)), |_| {
-        port::console::put_input(b"first\rsecond\r", false)
+        port::console::put_input(b"first\rsecond\r")
     });
     let (used_before, _) = port::pagealloc::usage_bytes();
     let reader = || run_user(usertext!(usertest_readcons, usertest_readcons_end));
