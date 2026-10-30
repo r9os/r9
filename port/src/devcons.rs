@@ -106,16 +106,38 @@ fn time_text() -> crate::Result<String> {
     ))
 }
 
+/// The number at the start of `text`, as Plan 9's strtol with base 0: blanks
+/// skipped, then a sign, then hex after 0x, octal after a 0, or decimal, up
+/// to the first byte that isn't one of its digits.  None is 0.
+fn strtol0(text: &[u8]) -> i128 {
+    let start = text.iter().position(|b| !b" \t\n\r\x0b\x0c".contains(b)).unwrap_or(text.len());
+    let text = &text[start..];
+    let (neg, text) = match text.first() {
+        Some(b'-') => (true, &text[1..]),
+        Some(b'+') => (false, &text[1..]),
+        _ => (false, text),
+    };
+    let (base, digits) = match text {
+        [b'0', b'x' | b'X', rest @ ..] => (16, rest),
+        [b'0', ..] => (8, text),
+        _ => (10, text),
+    };
+    let n = digits
+        .iter()
+        .map_while(|&b| char::from(b).to_digit(base))
+        .fold(0i128, |n, d| n.saturating_mul(base.into()).saturating_add(d.into()));
+    if neg { -n } else { n }
+}
+
 /// Set the time to the seconds written, as Plan 9's writetime: fewer than 13
-/// bytes, holding a positive decimal number, with anything after its digits,
-/// such as a newline, ignored.  Plan 9's strtol also takes hex and octal.
+/// bytes, holding a positive number as strtol reads it with base 0, decimal,
+/// hex after 0x or octal after a 0, with anything after its digits, such as
+/// a newline, ignored.
 fn set_time(buf: &[u8]) -> crate::Result<()> {
     if buf.len() >= 13 {
         return Err(EBADTIMECTL);
     }
-    let text = core::str::from_utf8(buf).map_err(|_| EBADTIMECTL)?.trim_start();
-    let digits = text.find(|c: char| !c.is_ascii_digit()).unwrap_or(text.len());
-    let secs: i128 = text[..digits].parse().map_err(|_| EBADTIMECTL)?;
+    let secs = strtol0(buf);
     if secs <= 0 {
         return Err(EBADTIMECTL);
     }
@@ -263,9 +285,21 @@ mod tests {
 
         // What Plan 9's writetime refuses, and what i64 nanoseconds can't
         // hold.
-        for bad in [&b"0"[..], b"-5", b"abc", b"", b"1234567890123", b"999999999999"] {
+        for bad in [&b"0"[..], b"-5", b"abc", b"", b"0x", b"1234567890123", b"999999999999"] {
             assert_eq!(c.dev().write(&c, bad, 0), Err(EBADTIMECTL), "{bad:?}");
         }
+    }
+
+    #[test]
+    fn seconds_are_read_as_strtols_base_0() {
+        assert_eq!(strtol0(b"1000\n"), 1000, "decimal, to its end");
+        assert_eq!(strtol0(b"0x3e8"), 1000, "hex");
+        assert_eq!(strtol0(b"0X3E8"), 1000, "hex, in capitals");
+        assert_eq!(strtol0(b"01750"), 1000, "octal");
+        assert_eq!(strtol0(b"019"), 1, "octal, to its last octal digit");
+        assert_eq!(strtol0(b" \t+1000"), 1000, "blanks and a sign");
+        assert_eq!(strtol0(b"-1000"), -1000);
+        assert_eq!(strtol0(b"x1"), 0, "no digits");
     }
 
     #[test]
