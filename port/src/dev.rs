@@ -20,8 +20,11 @@ pub trait Dev: Sync {
     fn dc(&self) -> char;
 
     /// A fresh channel on the device's root directory, unopened, as Plan 9's
-    /// attach.
-    fn attach(&self) -> crate::Result<Arc<Chan>>;
+    /// attach, given the spec that followed the device's letter in its #
+    /// name.  Plan 9's devattach records it in the channel's name, which
+    /// r9's channels don't have, so a device that has no use for it ignores
+    /// it.
+    fn attach(&self, spec: &str) -> crate::Result<Arc<Chan>>;
 
     /// Descend the name elements and return a fresh channel on the file they
     /// name, unopened, as Plan 9's namec makes a channel at each step of its
@@ -62,19 +65,17 @@ fn devno(dc: char) -> Option<&'static dyn Dev> {
 /// bind yet, so every process sees this one table.
 static BINDS: &[(&str, &str)] = &[("bin", "#//boot"), ("dev", "#c")];
 
-/// The device and path a # name names, from what follows its #, as the #
-/// branch of Plan 9's namec: a device's letter, then either nothing or a /
-/// and the path from the device's root; anything else is EBADSHARP, as the
-/// device is unknown.
-fn devpath(name: &str) -> crate::Result<(&'static dyn Dev, &str)> {
+/// The device, attach spec and path a # name names, from what follows its
+/// #, as the # branch of Plan 9's namec: a device's letter, then the spec,
+/// up to the next /, then the path from the device's root after it.  An
+/// unknown letter, or none, is EBADSHARP.
+fn devpath(name: &str) -> crate::Result<(&'static dyn Dev, &str, &str)> {
     let Some(dc) = name.chars().next() else {
         return Err(EBADSHARP);
     };
-    let path = match &name[dc.len_utf8()..] {
-        "" => "",
-        p => p.strip_prefix('/').ok_or(EBADSHARP)?,
-    };
-    devno(dc).ok_or(EBADSHARP).map(|d| (d, path))
+    let rest = &name[dc.len_utf8()..];
+    let (spec, path) = rest.split_once('/').unwrap_or((rest, ""));
+    devno(dc).ok_or(EBADSHARP).map(|d| (d, spec, path))
 }
 
 /// The elements of a path, and whether it must name a directory, as Plan 9's
@@ -122,9 +123,9 @@ fn resolve(name: &str) -> Result<Start<'_>, Error> {
 /// The root of the device a # name names, from what follows its #, the
 /// elements of its path, and whether they must name a directory.
 fn sharp(rest: &str) -> crate::Result<(Arc<Chan>, Vec<&str>, bool)> {
-    let (dev, path) = devpath(rest)?;
+    let (dev, spec, path) = devpath(rest)?;
     let (elems, mustbedir) = parse(path);
-    Ok((dev.attach()?, elems, mustbedir))
+    Ok((dev.attach(spec)?, elems, mustbedir))
 }
 
 /// The end of `elem`, a slice of `name`, as an offset in `name`, as Plan 9's
@@ -244,8 +245,8 @@ mod tests {
     use crate::fake::{cons_output, fake_cons};
 
     /// The device and path what follows a # names, as devpath does.
-    fn path_of(name: &str) -> Result<(char, &str), &'static str> {
-        devpath(name).map(|(d, p)| (d.dc(), p))
+    fn path_of(name: &str) -> Result<(char, &str, &str), &'static str> {
+        devpath(name).map(|(d, s, p)| (d.dc(), s, p))
     }
 
     /// The text of the error a name's open fails with.
@@ -262,15 +263,18 @@ mod tests {
 
     #[test]
     fn devpaths() {
-        assert_eq!(path_of("c"), Ok(('c', "")), "bare");
-        assert_eq!(path_of("c/cons"), Ok(('c', "cons")));
-        assert_eq!(path_of("c/cons/"), Ok(('c', "cons/")));
-        assert_eq!(path_of("c//cons"), Ok(('c', "/cons")));
-        assert_eq!(path_of("c/"), Ok(('c', "")));
-        assert_eq!(path_of("/"), Ok(('/', "")), "the root device");
-        assert_eq!(path_of("//boot"), Ok(('/', "boot")));
+        assert_eq!(path_of("c"), Ok(('c', "", "")), "bare");
+        assert_eq!(path_of("c/cons"), Ok(('c', "", "cons")));
+        assert_eq!(path_of("c/cons/"), Ok(('c', "", "cons/")));
+        assert_eq!(path_of("c//cons"), Ok(('c', "", "/cons")));
+        assert_eq!(path_of("c/"), Ok(('c', "", "")));
+        assert_eq!(path_of("/"), Ok(('/', "", "")), "the root device");
+        assert_eq!(path_of("//boot"), Ok(('/', "", "boot")));
+        // What follows the letter, up to a /, is the attach spec.
+        assert_eq!(path_of("ccons"), Ok(('c', "cons", "")), "a spec");
+        assert_eq!(path_of("cspec/time"), Ok(('c', "spec", "time")), "a spec and a path");
+        assert_eq!(path_of("/boot"), Ok(('/', "boot", "")), "#/'s spec");
         assert_eq!(path_of("x"), Err(EBADSHARP), "an unknown device");
-        assert_eq!(path_of("ccons"), Err(EBADSHARP), "no slash after the letter");
         assert_eq!(path_of(""), Err(EBADSHARP), "no letter");
     }
 
@@ -391,8 +395,9 @@ mod tests {
         assert_eq!(resolved("/bin/echo"), Ok(('/', vec!["echo"])), "bound below a device's root");
         assert_eq!(resolved("#//boot/echo"), Ok(('/', vec!["boot", "echo"])), "the root device");
         // namec takes what follows #/ up to the next slash as an attach
-        // spec, which isn't passed yet.
-        assert_eq!(resolved("#/boot"), badsharp(), "a spec");
+        // spec, which #/ ignores, as Plan 9's rootattach: #/boot is #/.
+        assert_eq!(resolved("#/boot"), Ok(('/', vec![])), "a spec");
+        assert_eq!(resolved("#ccons/time"), Ok(('c', vec!["time"])), "#c's");
         // A name that isn't bound fails at its first element, which is
         // shown; one with no elements shows nothing.
         let missing = |n: &str| Err(alloc::format!("'{n}' file does not exist"));
