@@ -680,7 +680,7 @@ mod tests {
         fn dc(&self) -> char {
             's'
         }
-        fn attach(&self) -> crate::Result<Arc<Chan>> {
+        fn attach(&self, _spec: &str) -> crate::Result<Arc<Chan>> {
             Err(ENOTSUP)
         }
         fn walk(&self, _c: &Arc<Chan>, _elems: &[&str]) -> crate::Result<Arc<Chan>> {
@@ -737,7 +737,7 @@ mod tests {
         fn dc(&self) -> char {
             'w'
         }
-        fn attach(&self) -> crate::Result<Arc<Chan>> {
+        fn attach(&self, _spec: &str) -> crate::Result<Arc<Chan>> {
             Err(ENOTSUP)
         }
         fn walk(&self, _c: &Arc<Chan>, _elems: &[&str]) -> crate::Result<Arc<Chan>> {

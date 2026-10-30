@@ -459,7 +459,7 @@ mod tests {
         fn dc(&self) -> char {
             'B'
         }
-        fn attach(&self) -> crate::Result<Arc<Chan>> {
+        fn attach(&self, _spec: &str) -> crate::Result<Arc<Chan>> {
             unreachable!()
         }
         fn walk(&self, _c: &Arc<Chan>, _elems: &[&str]) -> crate::Result<Arc<Chan>> {

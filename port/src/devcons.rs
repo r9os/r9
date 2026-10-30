@@ -132,7 +132,7 @@ impl Dev for Cons {
         'c'
     }
 
-    fn attach(&self) -> crate::Result<Arc<Chan>> {
+    fn attach(&self, _spec: &str) -> crate::Result<Arc<Chan>> {
         Ok(Chan::new(&CONS, Qid { path: ROOT, kind: QTDIR }))
     }
 

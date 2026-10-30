@@ -71,7 +71,7 @@ impl Dev for Root {
         '/'
     }
 
-    fn attach(&self) -> crate::Result<Arc<Chan>> {
+    fn attach(&self, _spec: &str) -> crate::Result<Arc<Chan>> {
         Ok(Chan::new(&ROOT, Qid { path: QDIR, kind: QTDIR }))
     }
 
