@@ -2,7 +2,7 @@ use crate::config::Configuration;
 use config::{apply_to_build_step, apply_to_clippy_step, apply_to_qemu_step};
 use std::{
     env, fmt,
-    io::{BufRead, BufReader, Write},
+    io::{Read, Write},
     path::{Path, PathBuf},
     process::{self, Command, Stdio},
     str::FromStr,
@@ -635,11 +635,53 @@ impl QemuStep {
 /// How long the smoke test waits for the user programs to exit.
 const SMOKE_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// What the smoke test types at the console for cat, then for factor: a line
-/// each, ended by a return, as a terminal sends it, then ^D, the end of the
-/// file.
-const CAT_INPUT: &[u8] = b"typed at the console\r\x04";
-const FACTOR_INPUT: &[u8] = b"1001\r\x04";
+/// What the smoke test types at the shell, each at its next prompt, with a
+/// return ending a line, as a terminal sends it: factor 21; cat, a line for
+/// it, and ^D, cat's end of file; a command that doesn't exist; echo, so the
+/// last command succeeds and so does the shell, which exits with its
+/// status; and ^D, the shell's end of file.
+const SHELL_INPUT: [&[u8]; 5] = [
+    b"factor 21\r",
+    // At once, as the console's read returns at most a line: the shell reads
+    // "cat", and cat the rest, each line echoed as it arrives, before cat
+    // prints it.
+    b"cat\rtyped at the console\r\x04",
+    b"nosuch\r",
+    b"echo typed at the shell\r",
+    b"\x04",
+];
+
+/// What the shell's session prints, prompts and the console's echo of what's
+/// typed included, ^D's echo dropped: factor's number, its factors and a
+/// blank line; the line typed for cat, echoed, then printed; rc's error for
+/// the missing command; echo's words; and the kernel's report of the shell's
+/// exit after its last prompt.
+const SHELL_OUTPUT: [&str; 13] = [
+    "% factor 21",
+    "21",
+    "     3",
+    "     7",
+    "",
+    "% cat",
+    "typed at the console",
+    "typed at the console",
+    "% nosuch",
+    "nosuch: '/bin/nosuch' file does not exist",
+    "% echo typed at the shell",
+    "typed at the shell",
+    "% sh: exited",
+];
+
+/// The shell's prompt, at the start of a line.
+const PROMPT: &str = "% ";
+
+/// A line of QEMU's output, as the smoke test checks it: lossily, so a byte
+/// that isn't UTF-8 doesn't end the capture, without its return, and without
+/// the ^Ds the console echoes as they're typed, which a terminal doesn't
+/// show.
+fn smoke_line(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).trim_end_matches('\r').replace('\x04', "")
+}
 
 /// The four numbers of `line`, if it's cat's output of /dev/time: Plan 9's
 /// time text, each number right-aligned in its width and followed by a
@@ -656,10 +698,12 @@ fn time_line(line: &str) -> Option<Vec<u64>> {
 
 /// Boot r9 under QEMU, and check that the user programs run: factor's output
 /// must be exactly right, sleep and factor must both exit, cat must print the
-/// time, and echo must run after, all with no panic.  QEMU doesn't exit by
-/// itself, so it's killed once echo has exited, the kernel has panicked, or
-/// SMOKE_TIMEOUT has passed.  With semihosting, the kernel makes QEMU exit,
-/// with status 0 only if all four succeeded, and that status must be 0 too.
+/// time, echo must run after, and the shell last, printing exactly what
+/// SHELL_OUTPUT says for what's typed at it, all with no panic.  QEMU doesn't
+/// exit by itself, so it's killed once the shell has exited, a program has
+/// failed, the kernel has panicked, or SMOKE_TIMEOUT has passed.  With
+/// semihosting, the kernel makes QEMU exit, with status 0 only if all
+/// succeeded, and that status must be 0 too.
 struct SmokeStep {
     qemu: QemuStep,
 }
@@ -691,54 +735,53 @@ impl SmokeStep {
         let mut stdin = child.stdin.take().ok_or("smoke test: no stdin to QEMU")?;
 
         // Read QEMU's output on another thread, so the wait can time out.
+        // It's sent as it comes, not a line at a time, as the shell's prompt
+        // ends without a newline.
         let (tx, rx) = mpsc::channel();
         thread::spawn(move || {
-            // Lossily, so a byte that isn't UTF-8 doesn't end the capture.
-            let mut r = BufReader::new(stdout);
-            let mut buf = Vec::new();
-            while matches!(r.read_until(b'\n', &mut buf), Ok(n) if n > 0) {
-                // The console echoes the ^Ds typed at it, which a terminal
-                // doesn't show, so they're dropped.
-                let line = String::from_utf8_lossy(&buf)
-                    .trim_end_matches(['\n', '\r'])
-                    .replace('\x04', "");
-                if tx.send(line).is_err() {
+            let mut r = stdout;
+            let mut buf = [0; 4096];
+            while let Ok(n @ 1..) = r.read(&mut buf) {
+                if tx.send(buf[..n].to_vec()).is_err() {
                     break;
                 }
-                buf.clear();
             }
         });
 
         let deadline = Instant::now() + SMOKE_TIMEOUT;
         let mut lines: Vec<String> = Vec::new();
+        // What's come since the last newline.
+        let mut partial: Vec<u8> = Vec::new();
         let mut timed_out = false;
         let mut exited = false;
         let mut typed = 0;
         loop {
             match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
-                Ok(line) => {
-                    // Type cat's input once cat has printed the time, and
-                    // factor's once cat has exited, so that the echo doesn't
-                    // land in the middle of other output.  Errors are
-                    // ignored: QEMU may have exited, which is reported below.
-                    let input = match typed {
-                        0 if time_line(&line).is_some() => Some(CAT_INPUT),
-                        1 if line == "cat: exited" => Some(FACTOR_INPUT),
-                        _ => None,
-                    };
-                    if let Some(input) = input {
-                        let _ = stdin.write_all(input).and_then(|_| stdin.flush());
+                Ok(bytes) => {
+                    partial.extend_from_slice(&bytes);
+                    let mut done = false;
+                    while let Some(i) = partial.iter().position(|&b| b == b'\n') {
+                        let line = smoke_line(&partial[..i]);
+                        partial.drain(..=i);
+                        // The shell has exited, successfully or not, a
+                        // program has failed, which stops the rest running,
+                        // or the kernel has panicked: there's nothing more to
+                        // wait for, unless the kernel will make QEMU exit.
+                        done |= !self.qemu.semihosting
+                            && (line.contains("sh: exited")
+                                || line.contains(": exited with status")
+                                || line.contains("panicked"));
+                        lines.push(line);
+                    }
+                    // Type at each prompt the shell prints, once it's printed,
+                    // so the console's echo follows it.  Errors are ignored:
+                    // QEMU may have exited, which is reported below.
+                    let prompts = lines.iter().filter(|l| l.starts_with(PROMPT)).count()
+                        + usize::from(smoke_line(&partial).starts_with(PROMPT));
+                    if typed < SHELL_INPUT.len() && prompts > typed {
+                        let _ = stdin.write_all(SHELL_INPUT[typed]).and_then(|_| stdin.flush());
                         typed += 1;
                     }
-                    // echo has exited, successfully or not, a program has
-                    // failed, which stops the rest running, or the kernel has
-                    // panicked: there's nothing more to wait for, unless the
-                    // kernel will make QEMU exit.
-                    let done = !self.qemu.semihosting
-                        && (line.starts_with("echo: exited")
-                            || line.contains(": exited with status")
-                            || line.contains("panicked"));
-                    lines.push(line);
                     if done {
                         break;
                     }
@@ -778,24 +821,8 @@ impl SmokeStep {
             l.strip_prefix("Counter frequency: ")?.strip_suffix(" Hz")?.parse::<u64>().ok()
         });
         let time_at = lines.iter().position(|l| time_line(l).is_some_and(|f| Some(f[3]) == hz));
-        // Then cat and factor on what was typed: each line is echoed as it's
-        // typed, then read and printed, and factor's output is its number,
-        // 1001's factors and a blank line.
-        const TYPED: [&str; 10] = [
-            "typed at the console",
-            "typed at the console",
-            "cat: exited",
-            "1001",
-            "1001",
-            "     7",
-            "     11",
-            "     13",
-            "",
-            "factor: exited",
-        ];
-        let typed_read = time_at.is_some_and(|i| {
-            lines.len() > i + TYPED.len() && lines[i + 1..=i + TYPED.len()] == TYPED
-        });
+        // Then the shell's session, exactly.
+        let shell_at = lines.windows(SHELL_OUTPUT.len()).position(|w| w == SHELL_OUTPUT);
         let qemu_exited = |status: &std::io::Result<process::ExitStatus>| match status {
             Ok(s) => format!("QEMU exited with {s}"),
             Err(e) => format!("QEMU exited: {e}"),
@@ -816,8 +843,6 @@ impl SmokeStep {
             Some("sleep didn't exit successfully".to_string())
         } else if time_at.is_none() {
             Some("cat didn't print the time, or didn't exit successfully".to_string())
-        } else if !typed_read {
-            Some("cat and factor didn't read what was typed at the console".to_string())
         } else if !has("hello world") {
             Some("echo didn't print \"hello world\"".to_string())
         } else if !has("echo: exited") {
@@ -828,6 +853,14 @@ impl SmokeStep {
             })
         } else if !before("factor: exited", "echo: exited") {
             Some("echo didn't run after factor".to_string())
+        } else if shell_at.is_none() {
+            Some(if timed_out {
+                "timed out before the shell exited".to_string()
+            } else {
+                "the shell's session isn't exactly right".to_string()
+            })
+        } else if !before("echo: exited", SHELL_OUTPUT[0]) {
+            Some("the shell didn't run after echo".to_string())
         } else {
             None
         };
