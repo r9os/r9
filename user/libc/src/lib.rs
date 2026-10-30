@@ -25,9 +25,9 @@ pub use math::{modf, sqrt};
 pub use parse::{atof, strtol};
 #[cfg(target_os = "none")]
 pub use runtime::{
-    Errstr, OCEXEC, OEXEC, OREAD, ORCLOSE, ORDWR, OTRUNC, OWRITE, RFCENVG, RFCFDG, RFCNAMEG,
-    RFENVG, RFFDG, RFMEM, RFNAMEG, RFNOMNT, RFNOTEG, RFNOWAIT, RFPROC, RFREND, r#await, brk,
-    brk_, close, dup, errstr, exec, exits, fork, fprint, open, pread, pwrite, read, rerrstr,
-    rfork, sbrk, seek, sleep, wait, werrstr, write,
+    ERRMAX, Errstr, OCEXEC, OEXEC, OREAD, ORCLOSE, ORDWR, OTRUNC, OWRITE, RFCENVG, RFCFDG, RFCNAMEG,
+    RFENVG, RFFDG, RFMEM, RFNAMEG, RFNOMNT, RFNOTEG, RFNOWAIT, RFPROC, RFREND, r#await, brk, brk_,
+    close, dup, errstr, exec, exits, fork, fprint, open, pread, pwrite, read, rerrstr, rfork, sbrk,
+    seek, sleep, wait, werrstr, write,
 };
 pub use wait::{Waitmsg, parse_waitmsg, tokenize};

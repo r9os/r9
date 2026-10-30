@@ -1,0 +1,10 @@
+cargo-features = ["per-package-target"]
+
+[package]
+name = "sh"
+version = "0.1.0"
+edition = "2024"
+default-target = "aarch64-unknown-none"
+
+[dependencies]
+r9-libc = { path = "../libc" }
