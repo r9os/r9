@@ -348,11 +348,16 @@ fn syspwrite<A: ProcArch>(args: &[u64; 6]) -> Result<u64, Error> {
 /// Plan 9's sseek, and the result stored on the channel and returned.
 /// Offsets are signed, as Plan 9's vlong, so a result below 0 or past
 /// i64::MAX is Enegoff, and the result can't be the -1 of a failed syscall.
-/// A bad whence is Ebadarg.
+/// A directory can only be sought to its start, whence 0 and offset 0, and
+/// anything else is Eisdir, as sseek checks before the offset.  A bad whence
+/// is Ebadarg.
 fn sysseek<A: ProcArch>(args: &[u64; 6]) -> Result<u64, Error> {
     let (fd, off, whence) = (args[0], args[1], args[2]);
     let c = with_fds::<A, _>(|fds| fdtochan(fds, fd, None))?;
+    let dir = c.qid().kind == QTDIR;
     let base = match whence {
+        0 if dir && off != 0 => return Err(EISDIR.into()),
+        1 | 2 if dir => return Err(EISDIR.into()),
         0 => 0,
         1 => c.offset() as i64,
         2 => c.length() as i64,
@@ -748,6 +753,25 @@ mod tests {
     }
 
     #[test]
+    fn a_directory_is_sought_only_to_its_start() {
+        as_proc(|| {
+            let mut mem = user_mem();
+            let base = mem.base();
+            mem.0[..3].copy_from_slice(b"#c\0");
+            let fd = syscall::<Fake>(OPEN, [base as u64, OREAD as u64, 0, 0, 0, 0]);
+            assert_eq!(fd, 3, "#c, the console's root");
+            let seek = |off: i64, whence| syscall::<Fake>(SEEK, [fd, off as u64, whence, 0, 0, 0]);
+            assert_eq!(seek(0, 0), 0, "to its start");
+            for (off, whence) in [(5, 0), (-1, 0), (0, 1), (0, 2)] {
+                assert_eq!(seek(off, whence), u64::MAX, "whence {whence} to {off}");
+                assert_eq!(current_errstr(), EISDIR.as_bytes(), "whence {whence} to {off}");
+            }
+            assert_eq!(seek(0, 3), u64::MAX, "a bad whence");
+            assert_eq!(current_errstr(), EBADARG.as_bytes());
+        });
+    }
+
+    #[test]
     fn a_dup_onto_minus_1_takes_the_lowest_free_fd() {
         as_proc(|| {
             let dup = |old, new| syscall::<Fake>(DUP, [old, new, 0, 0, 0, 0]);
@@ -784,7 +808,9 @@ mod tests {
             assert_eq!(fd, 3, "the first free fd");
             assert_eq!(pread(3, 6), u64::MAX, "a directory read");
             assert_eq!(current_errstr(), ENOTSUP.as_bytes());
-            assert_eq!(syscall::<Fake>(SEEK, [3, 0, 1, 0, 0, 0]), 0, "an unchanged offset");
+            // SAFETY: as_proc set up the current process.
+            let c = unsafe { (*Fake::up()).fds().with(|fds| fds[3].clone()) }.expect("fd 3");
+            assert_eq!(c.offset(), 0, "an unchanged offset");
         });
     }
 
