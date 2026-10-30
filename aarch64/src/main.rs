@@ -310,11 +310,15 @@ static CAT: &[u8] = include_bytes!(concat!(env!("R9_USER_BIN"), "/cat"));
 static SLEEP: &[u8] = include_bytes!(concat!(env!("R9_USER_BIN"), "/sleep"));
 static FACTOR: &[u8] = include_bytes!(concat!(env!("R9_USER_BIN"), "/factor"));
 
+/// The shell, built by xtask (user/sh).
+static SH: &[u8] = include_bytes!(concat!(env!("R9_USER_BIN"), "/sh"));
+
 /// The programs in #/boot, and so in /bin.
 static BOOT: &[BootFile] = &[
     BootFile { name: "cat", data: CAT },
     BootFile { name: "echo", data: ECHO },
     BootFile { name: "factor", data: FACTOR },
+    BootFile { name: "sh", data: SH },
     BootFile { name: "sleep", data: SLEEP },
 ];
 
@@ -323,14 +327,14 @@ static BOOT: &[BootFile] = &[
 /// argument keeps factor dividing longest.
 const FACTOR_ARG: &[u8] = b"9007195909437503";
 
-/// Run sleep and factor together, then cat on the time, cat and factor on
-/// the console's input, and echo, and return whether all exited
-/// successfully.  sleep and factor are readied before either runs, so sleep
-/// sleeps its second while factor divides: the scheduler must put sleep to
-/// sleep and wake it on its tick, and keep factor's FP state across the
-/// switches of its long run.  Each exit status is printed as it's collected.
-/// A failure is reported rather than asserted: this is the system running
-/// its programs, not a test.
+/// Run sleep and factor together, then cat on the time, echo, and last the
+/// shell, on the console, and return whether all exited successfully.
+/// sleep and factor are readied before either runs, so sleep sleeps its
+/// second while factor divides: the scheduler must put sleep to sleep and
+/// wake it on its tick, and keep factor's FP state across the switches of
+/// its long run.  Each exit status is printed as it's collected.  A failure
+/// is reported rather than asserted: this is the system running its
+/// programs, not a test.
 fn run_user() -> bool {
     let sleep = match port::proc::newproc::<Aarch64>(sleep_start) {
         Ok(p) => p,
@@ -364,9 +368,8 @@ fn run_user() -> bool {
         }
     }
     ok && run_program("cat", cat_time_start)
-        && run_program("cat", cat_start)
-        && run_program("factor", factor_input_start)
         && run_program("echo", echo_start)
+        && run_program("sh", sh_start)
 }
 
 /// Run the program `start` starts, as `name`, print how it exited, and
@@ -413,15 +416,11 @@ fn cat_time_start() {
     exec(CAT, &[b"cat", b"/dev/time"])
 }
 
-/// cat and factor with no arguments, reading the console.
-fn cat_start() {
-    exec(CAT, &[b"cat"])
-}
-
-fn factor_input_start() {
-    exec(FACTOR, &[b"factor"])
-}
-
 fn echo_start() {
     exec(ECHO, &[b"echo", b"hello", b"world"])
+}
+
+/// The shell, reading commands typed at the console until ^D.
+fn sh_start() {
+    exec(SH, &[b"sh"])
 }
