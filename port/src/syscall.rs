@@ -10,7 +10,7 @@ use crate::chan::{fdtochan, freefd, openmode, Chan, NOPEN, OREAD, OWRITE, QTDIR}
 use crate::dat::{Access, ProcArch};
 use crate::dev::open_name;
 use crate::exec;
-use crate::error::{EBADARG, EBADFD, EISDIR, ENAMETOOLONG, ENEGOFF, Error};
+use crate::error::{EBADARG, EBADFD, EISDIR, ENAMETOOLONG, ENEGOFF, ENOVMEM, Error};
 use crate::println;
 use crate::proc::{pexit, pwait, rfork, tsleep, yield_now};
 use crate::segment::ibrk;
@@ -170,13 +170,16 @@ fn sysbrk_<A: ProcArch>(args: &[u64; 6]) -> Result<u64, Error> {
     Ok(ibrk::<A>(unsafe { &mut (*up).bss }, args[0] as usize)?)
 }
 
-/// The kernel chunk a pread or pwrite copies the user buffer through, as the
-/// 256-byte chunk of Plan 9's conswrite: the device sees only kernel memory,
-/// so no user access happens while the console is locked.  A pread is one
-/// device read of at most a chunk, as Plan 9's read is one device read: a
-/// device that waits, such as cons for a line, mustn't be read again in the
-/// same call.
+/// The kernel chunk a pwrite copies the user buffer through, as the 256-byte
+/// chunk of Plan 9's conswrite: the device sees only kernel memory, so no
+/// user access happens while the console is locked.
 const CHUNK: usize = 256;
+
+/// The most a pread asks of a device at once, as the kernel buffer it reads
+/// through is bounded.  Plan 9 reads a kernel device for the whole count, and
+/// limits only a mounted channel's read, to its iounit; this is that
+/// iounit's default, devmnt's MAXRPC less IOHDRSZ.
+const IOUNIT: usize = 8192;
 
 /// The offset a pread or pwrite uses, and whether it's the channel's, as
 /// Plan 9's offp: the -1 sentinel, u64::MAX, resolves to the channel's
@@ -263,19 +266,23 @@ fn sysdup<A: ProcArch>(args: &[u64; 6]) -> Result<u64, Error> {
 }
 
 /// pread(fd, buf, len, offset): the buffer checked first, as Plan 9's read,
-/// the channel for OREAD, the offset resolved, and one device read, of at
-/// most a chunk, copied out.  On a successful read, the channel's offset
-/// advances by the bytes read, at an explicit offset too, as Plan 9's read
-/// does, though its read(2) and its write don't.
+/// the channel for OREAD, the offset resolved, and one device read of the
+/// whole count, as Plan 9's read is, though of IOUNIT at most, as r9's is
+/// through a kernel buffer, copied out: a device that waits, such as cons
+/// for a line, mustn't be read again in the same call.  On a successful read, the
+/// channel's offset advances by the bytes read, at an explicit offset too,
+/// as Plan 9's read does, though its read(2) and its write don't.
 fn syspread<A: ProcArch>(args: &[u64; 6]) -> Result<u64, Error> {
     let (fd, buf, len) = (args[0], args[1] as usize, args[2] as usize);
     validate_user_range::<A>(buf, len, Access::Write);
     let c = with_fds::<A, _>(|fds| fdtochan(fds, fd, Some(OREAD)))?;
     let (off, _) = offset(&c, args[3])?;
-    let mut chunk = [0u8; CHUNK];
-    let n = CHUNK.min(len);
-    let m = c.dev().read(&c, &mut chunk[..n], off)? as usize;
-    copy_to_user::<A>(buf, &chunk[..m]);
+    let n = IOUNIT.min(len);
+    let mut kbuf = Vec::new();
+    kbuf.try_reserve_exact(n).map_err(|_| ENOVMEM)?;
+    kbuf.resize(n, 0);
+    let m = c.dev().read(&c, &mut kbuf, off)? as usize;
+    copy_to_user::<A>(buf, &kbuf[..m]);
     // At an explicit offset, the channel's offset wasn't checked, so the add
     // wraps, as Plan 9's vlong does, and a later use of it is Enegoff.
     c.set_offset(c.offset().wrapping_add(m as u64));
@@ -677,8 +684,8 @@ mod tests {
             unsafe { (*Fake::up()).fds().with(|fds| fds[3] = Some(Chan::opened(&ShortDev, qid, ORDWR, 0))) };
             let seek = |off, whence| syscall::<Fake>(SEEK, [3, off, whence, 0, 0, 0]);
 
-            // A read longer than a chunk gets what the device's one short
-            // read gave, and nothing after it is touched.
+            // A read gets what the device's one short read gave, and nothing
+            // after it is touched.
             mem.0[..600].fill(0);
             assert_eq!(syscall::<Fake>(PREAD, [3, base as u64, 600, u64::MAX, 0, 0]), 5);
             assert_eq!(&mem.0[..5], b"sssss");
@@ -688,6 +695,55 @@ mod tests {
             // A write the same: the offset is where the short write left it.
             assert_eq!(syscall::<Fake>(PWRITE, [3, base as u64, 600, u64::MAX, 0, 0]), 5);
             assert_eq!(seek(0, 1), 10, "the offset, by the bytes written");
+        });
+    }
+
+    /// A device whose file is all 'w', recording how much each read asked.
+    struct WideDev;
+
+    thread_local! {
+        static ASKED: core::cell::RefCell<Vec<usize>> =
+            const { core::cell::RefCell::new(Vec::new()) };
+    }
+
+    impl crate::dev::Dev for WideDev {
+        fn dc(&self) -> char {
+            'w'
+        }
+        fn attach(&self) -> crate::Result<Arc<Chan>> {
+            Err(ENOTSUP)
+        }
+        fn walk(&self, _c: &Arc<Chan>, _elems: &[&str]) -> crate::Result<Arc<Chan>> {
+            Err(ENOTSUP)
+        }
+        fn open(&self, _c: &Arc<Chan>, _omode: u32) -> crate::Result<Arc<Chan>> {
+            Err(ENOTSUP)
+        }
+        fn read(&self, _c: &Arc<Chan>, buf: &mut [u8], _offset: u64) -> crate::Result<u64> {
+            ASKED.with(|a| a.borrow_mut().push(buf.len()));
+            buf.fill(b'w');
+            Ok(buf.len() as u64)
+        }
+        fn write(&self, _c: &Arc<Chan>, _buf: &[u8], _offset: u64) -> crate::Result<u64> {
+            Err(ENOTSUP)
+        }
+        fn close(&self, _c: &Chan) {}
+    }
+
+    #[test]
+    fn a_pread_is_one_device_read_of_the_whole_count() {
+        as_proc(|| {
+            let mem = user_mem();
+            let base = mem.base();
+            let qid = crate::chan::Qid { path: 0, kind: crate::chan::QTFILE };
+            let c = Chan::opened(&WideDev, qid, OREAD, 0);
+            // SAFETY: as_proc set up the current process, and its syscalls
+            // run one at a time.
+            unsafe { (*Fake::up()).fds().with(|fds| fds[3] = Some(c)) };
+            let n = PAGE_SIZE_4K as u64;
+            assert_eq!(syscall::<Fake>(PREAD, [3, base as u64, n, u64::MAX, 0, 0]), n);
+            assert_eq!(ASKED.with(|a| a.take()), [PAGE_SIZE_4K], "one read, of all of it");
+            assert!(mem.0[..PAGE_SIZE_4K].iter().all(|&b| b == b'w'));
         });
     }
 
