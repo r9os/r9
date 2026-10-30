@@ -2,6 +2,7 @@
 //! architecture's trap handler takes the number and arguments from its
 //! registers, and calls syscall.
 
+use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::time::Duration;
@@ -15,7 +16,10 @@ use crate::println;
 use crate::proc::{pexit, pwait, rfork, tsleep, yield_now};
 use crate::segment::ibrk;
 use crate::timer;
-use crate::uaccess::{copy_from_user, copy_str_from_user, copy_to_user, peek_user_byte, validate_user_range};
+use crate::uaccess::{
+    bad_address, copy_from_user, copy_str_from_user, copy_to_user, try_copy_str_from_user,
+    validate_user_range,
+};
 
 use sys::{
     AWAIT, BRK_, CLOSE, DUP, ERRMAX, ERRSTR, EXEC, EXITS, OPEN, PREAD, PWRITE, RFORK, SEEK, SLEEP,
@@ -200,9 +204,8 @@ fn offset(c: &Chan, off: u64) -> crate::Result<(u64, bool)> {
 fn sysopen<A: ProcArch>(args: &[u64; 6]) -> Result<u64, Error> {
     let (name, mode) = (args[0] as usize, args[1] as u32);
     openmode(mode)?;
-    let mut buf = [0u8; 256];
-    let name = user_name::<A>(&mut buf, name)?;
-    let c = open_name(name, mode)?;
+    let name = user_name::<A>(name)?;
+    let c = open_name(&name, mode)?;
     with_fds::<A, _>(|fds| {
         let fd = freefd(fds)?;
         fds[fd] = Some(c);
@@ -210,17 +213,31 @@ fn sysopen<A: ProcArch>(args: &[u64; 6]) -> Result<u64, Error> {
     })
 }
 
-/// The name at user address `name`, copied into `buf`, as Plan 9's
-/// validnamedup: at most 256 bytes, and UTF-8.
-fn user_name<A: ProcArch>(buf: &mut [u8; 256], name: usize) -> crate::Result<&str> {
-    let n = copy_str_from_user::<A>(buf, name);
-    // A full buffer ends at 256 only if the 257th byte is the terminator or
-    // isn't mapped; a mapped byte past it is a longer name, which Plan 9's
-    // validname refuses with "name too long" rather than truncating.
-    if n == buf.len() && peek_user_byte::<A>(name + n).is_some_and(|b| b != 0) {
-        return Err(ENAMETOOLONG);
+/// The longest name, with its NUL, as the 64 KiB Plan 9's validname0 scans.
+const NAMEMAX: usize = 1 << 16;
+
+/// The name at user address `name`, copied into the kernel, as Plan 9's
+/// validnamedup: the NUL found within NAMEMAX bytes, else "name too long",
+/// and UTF-8.  It's copied a piece at a time, so the copy is only as long
+/// as the name.  An unmapped byte before the NUL kills the process, as
+/// validname0's scan of user memory faults, with what was copied freed first.
+fn user_name<A: ProcArch>(name: usize) -> Result<String, Error> {
+    let mut s = Vec::new();
+    loop {
+        let mut piece = [0u8; 256];
+        let Some(n) = try_copy_str_from_user::<A>(&mut piece, name.saturating_add(s.len())) else {
+            drop(s);
+            bad_address::<A>()
+        };
+        s.try_reserve(n).map_err(|_| ENOVMEM)?;
+        s.extend_from_slice(&piece[..n]);
+        if s.len() >= NAMEMAX {
+            return Err(ENAMETOOLONG.into());
+        }
+        if n < piece.len() {
+            return String::from_utf8(s).map_err(|_| EBADARG.into());
+        }
     }
-    core::str::from_utf8(&buf[..n]).map_err(|_| EBADARG)
 }
 
 /// exec(name, argv): as Plan 9's sysexec, with exec::sysexec.  On success,
@@ -228,8 +245,7 @@ fn user_name<A: ProcArch>(buf: &mut [u8; 256], name: usize) -> crate::Result<&st
 /// zero, as procsetup's FPinit, and every other register but its arguments
 /// zero, as the dispatcher's write of the result is replaced.
 fn sysexec<A: ProcArch>(args: &[u64; 6]) -> Result<u64, Error> {
-    let mut buf = [0u8; 256];
-    let name = user_name::<A>(&mut buf, args[0] as usize)?;
+    let name = user_name::<A>(args[0] as usize)?;
     let regs = exec::sysexec::<A>(name, args[1] as usize)?;
     A::fp_restore(&A::Fp::default());
     // SAFETY: this is the process's syscall, which holds nothing, and exec
@@ -563,27 +579,33 @@ mod tests {
     }
 
     #[test]
-    fn an_over_long_name_is_refused() {
+    fn names_are_up_to_64k() {
         as_proc(|| {
-            let mut mem = user_mem();
-            let base = mem.base();
+            let mut pages = crate::fake::user_pages(NAMEMAX / PAGE_SIZE_4K + 1);
+            let base = pages.as_ptr().addr();
+            // SAFETY: the pages are contiguous, and nothing else refers to
+            // them while this slice lives.
+            let len = pages.len() * PAGE_SIZE_4K;
+            let mem = unsafe { core::slice::from_raw_parts_mut(pages.as_mut_ptr().cast::<u8>(), len) };
             let open = || syscall::<Fake>(OPEN, [base as u64, OWRITE as u64, 0, 0, 0, 0]);
+            mem[..3].copy_from_slice(b"#c/");
 
-            // "#c/" plus 253 a's: 256 bytes, the buffer's length, then the
-            // terminator.  It copies whole and resolves to the walk, whose
-            // own error the open reports, showing the end of the name, as
-            // Plan 9's namelenerror shortens an element too long to show.
-            mem.0[..3].copy_from_slice(b"#c/");
-            mem.0[3..256].fill(b'a');
-            mem.0[256] = 0;
-            assert_eq!(open(), u64::MAX, "256 bytes, the buffer's length");
+            // "#c/" and a's, up to NAMEMAX - 1 bytes, then the terminator:
+            // it copies whole and resolves to the walk, whose own error the
+            // open reports, showing the end of the name, as Plan 9's
+            // namelenerror shortens an element too long to show.
             let shown = alloc::format!("'...{}' {ENONEXIST}", "a".repeat(ERRMAX / 4));
-            assert_eq!(current_errstr(), shown.as_bytes());
+            for len in [300, NAMEMAX - 1] {
+                mem[3..len].fill(b'a');
+                mem[len] = 0;
+                assert_eq!(open(), u64::MAX, "{len} bytes");
+                assert_eq!(current_errstr(), shown.as_bytes(), "{len} bytes");
+            }
 
-            // One byte longer, and no terminator: Plan 9's "name too long",
+            // No terminator within NAMEMAX bytes: Plan 9's "name too long",
             // not a truncated open.
-            mem.0[256] = b'a';
-            assert_eq!(open(), u64::MAX, "257 bytes");
+            mem[NAMEMAX - 1] = b'a';
+            assert_eq!(open(), u64::MAX, "NAMEMAX bytes");
             assert_eq!(current_errstr(), ENAMETOOLONG.as_bytes());
         });
     }
