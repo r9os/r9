@@ -7,6 +7,7 @@
 pub const SYSR1: u64 = 0;
 pub const CLOSE: u64 = 4;
 pub const DUP: u64 = 5;
+pub const EXEC: u64 = 7;
 pub const EXITS: u64 = 8;
 pub const OPEN: u64 = 14;
 pub const SLEEP: u64 = 17;

@@ -11,8 +11,7 @@ use crate::vm::{
     VaMapping, VmTraitImpl,
 };
 use port::dat::RunQueue;
-use port::dat::{Access, MMU, Perm, Proc, ProcArch, PutError};
-use port::exec::UserRegs;
+use port::dat::{Access, MMU, Perm, Proc, ProcArch, PutError, UserRegs};
 use port::mcslock::Lock;
 use port::mem::{PAGE_SIZE_4K, PhysAddr, PhysRange};
 use port::pagealloc::PageAllocError;
@@ -139,6 +138,15 @@ impl ProcArch for Aarch64 {
         Self::new_context(fork_return, child)
     }
 
+    unsafe fn enter_user(regs: &UserRegs) -> ! {
+        // SAFETY: up is this process, which is running.
+        let kstack_top = unsafe { (*Aarch64::up()).kstack().top() };
+        // SAFETY: its context started below the space to_user uses at the
+        // top of its stack, or it's in a syscall, whose frame there to_user
+        // replaces, as the caller guarantees, with the text and stack mapped.
+        unsafe { trap::to_user(kstack_top, regs) }
+    }
+
     unsafe fn swtch(save: *mut Label, next: *const Label) {
         // SAFETY: the caller's guarantee.
         unsafe { swtch::swtch(save, next) };
@@ -253,14 +261,4 @@ extern "C" fn fork_return() -> ! {
     let kstack_top = unsafe { (*Aarch64::up()).kstack().top() };
     // SAFETY: as above.
     unsafe { trap::return_through(kstack_top) }
-}
-
-/// Enter the current process with `regs`.  Call it only from a process's start
-/// function, after its text and stack are mapped.
-pub fn enter_user(regs: UserRegs) -> ! {
-    // SAFETY: up is this process, which is running, and its context started
-    // below the space to_user uses at the top of its stack.
-    let kstack_top = unsafe { (*Aarch64::up()).kstack().top() };
-    // SAFETY: as above, and the caller mapped the text and stack.
-    unsafe { trap::to_user(kstack_top, &regs) }
 }

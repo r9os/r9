@@ -44,8 +44,14 @@ pub(crate) fn peek_user_byte<A: ProcArch>(addr: usize) -> Option<u8> {
 /// byte of [addr, addr + len).
 pub fn validate_user_range<A: ProcArch>(addr: usize, len: usize, access: Access) {
     if !user_range_ok::<A>(addr, len, access) {
-        pexit::<A>(b"sys: bad address in syscall");
+        bad_address::<A>();
     }
+}
+
+/// Kill the current process for a bad address in a syscall, as Plan 9's
+/// validaddr does with its note.
+pub(crate) fn bad_address<A: ProcArch>() -> ! {
+    pexit::<A>(b"sys: bad address in syscall")
 }
 
 /// Copy `dst.len()` bytes from user address `src` into `dst`, or kill the
@@ -72,24 +78,32 @@ pub fn copy_to_user<A: ProcArch>(dst: usize, src: &[u8]) {
 /// Each page is checked before it's read, so a string may end just before an
 /// unmapped page.  Kill the current process if a byte it needs can't be read.
 pub fn copy_str_from_user<A: ProcArch>(dst: &mut [u8], src: usize) -> usize {
+    try_copy_str_from_user::<A>(dst, src).unwrap_or_else(|| bad_address::<A>())
+}
+
+/// As copy_str_from_user, but None for a byte it can't read, for a caller
+/// with something to free before the process is killed.
+pub(crate) fn try_copy_str_from_user<A: ProcArch>(dst: &mut [u8], src: usize) -> Option<usize> {
     let mut n = 0;
     while n < dst.len() {
         // The first check puts src below UADDRTOP, so this can't overflow.
         let va = src + n;
-        validate_user_range::<A>(va, 1, Access::Read);
+        if !user_range_ok::<A>(va, 1, Access::Read) {
+            return None;
+        }
         let page_end = (va & !(PAGE_SIZE_4K - 1)) + PAGE_SIZE_4K;
         let chunk = (page_end - va).min(dst.len() - n);
         for i in 0..chunk {
             // SAFETY: the page containing va..va + chunk is mapped readable.
             let b = unsafe { core::ptr::read((va + i) as *const u8) };
             if b == 0 {
-                return n + i;
+                return Some(n + i);
             }
             dst[n + i] = b;
         }
         n += chunk;
     }
-    n
+    Some(n)
 }
 
 #[cfg(test)]

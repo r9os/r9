@@ -6,7 +6,7 @@ use alloc::sync::Arc;
 use core::ptr;
 use core::sync::atomic::{AtomicPtr, Ordering};
 
-use crate::chan::{Chan, OREAD, Qid, QTDIR, QTFILE};
+use crate::chan::{Chan, OREAD, Qid, QTDIR, QTFILE, openmode};
 use crate::dev::{self, Dev};
 use crate::error::{EGREG, ENONEXIST, ENOTDIR, ENOTSUP, EPERM};
 
@@ -100,7 +100,7 @@ impl Dev for Root {
             return Err(EPERM);
         }
         let length = file(c.qid().path).map_or(0, |f| f.data.len() as u64);
-        Ok(Chan::opened(&ROOT, *c.qid(), omode, length))
+        Ok(Chan::opened(&ROOT, *c.qid(), openmode(omode)?, length))
     }
 
     fn read(&self, c: &Arc<Chan>, buf: &mut [u8], offset: u64) -> crate::Result<u64> {

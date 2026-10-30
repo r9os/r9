@@ -4,7 +4,7 @@
 //! parallel threads, so its state is per thread.
 
 use crate::dat::RunQueue;
-use crate::dat::{Access, MMU, Perm, Proc, ProcArch, PutError};
+use crate::dat::{Access, MMU, Perm, Proc, ProcArch, PutError, UserRegs};
 use crate::console::{self, Uart};
 use crate::mcslock::Lock;
 use crate::mem::{PAGE_SIZE_4K, PhysAddr};
@@ -183,6 +183,10 @@ impl ProcArch for Fake {
     fn new_context(_entry: extern "C" fn() -> !, _stack: &u32) {}
 
     fn fork_context(_parent: &u32, _child: &u32) {}
+
+    unsafe fn enter_user(_regs: &UserRegs) -> ! {
+        unreachable!("host tests don't enter user mode")
+    }
 
     unsafe fn swtch(_save: *mut (), _next: *const ()) {
         unreachable!("host tests don't switch contexts")

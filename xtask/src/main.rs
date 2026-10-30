@@ -1225,7 +1225,7 @@ fn workspace() -> PathBuf {
 /// The user libraries and programs, which are aarch64-only.  The programs are
 /// what the kernel and port's tests embed.
 const USER_LIBS: [&str; 1] = ["r9-libc"];
-const USER_PROGRAMS: [&str; 5] = ["cat", "echo", "elftest", "factor", "sleep"];
+const USER_PROGRAMS: [&str; 6] = ["cat", "echo", "elftest", "exectest", "factor", "sleep"];
 
 /// The target user programs are built for.
 const USER_TARGET: &str = "aarch64-unknown-none";

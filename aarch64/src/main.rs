@@ -38,11 +38,12 @@ mod vmdebug;
 extern crate alloc;
 
 use core::cell::SyncUnsafeCell;
+use port::dat::ProcArch;
 use port::devroot::BootFile;
 use port::fdt::DeviceTree;
 use port::mem::{PhysAddr, PhysRange, VirtRange};
 use port::println;
-use proc::{Aarch64, enter_user};
+use proc::Aarch64;
 use reg::midr_el1::MidrEl1;
 use swtch::Label;
 use vm::RootPageTableType;
@@ -390,11 +391,13 @@ fn run_program(name: &str, start: fn()) -> bool {
 
 /// Exec `image` with `args`, and enter it, or exit with exec's error.
 fn exec(image: &[u8], args: &[&[u8]]) -> ! {
-    let regs = match port::exec::exec::<Aarch64>(image, args) {
+    let regs = match port::exec::exec::<Aarch64>(image, args[0], args) {
         Ok(regs) => regs,
         Err(err) => port::proc::pexit::<Aarch64>(err.as_bytes()),
     };
-    enter_user(regs)
+    // SAFETY: this is the process's start function, which holds nothing,
+    // and exec mapped the program's text and stack.
+    unsafe { Aarch64::enter_user(&regs) }
 }
 
 fn sleep_start() {
