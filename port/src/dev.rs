@@ -6,7 +6,7 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use crate::chan::{self, Chan, OREAD, QTDIR};
-use crate::devcons;
+use crate::{devcons, devroot};
 use crate::error::{EBADSHARP, ENONEXIST, ENOTDIR, Error};
 use sys::ERRMAX;
 
@@ -49,17 +49,17 @@ pub trait Dev: Sync {
 
 /// The devices, as Plan 9's devtab: one static each, looked up by dc, as
 /// devno does.
-static DEVS: &[&dyn Dev] = &[&devcons::CONS];
+static DEVS: &[&dyn Dev] = &[&devroot::ROOT, &devcons::CONS];
 
 /// The device with dc `dc`, as Plan 9's devno scans its table.
 fn devno(dc: char) -> Option<&'static dyn Dev> {
     DEVS.iter().find(|d| d.dc() == dc).copied()
 }
 
-/// The names in the root that stand for a device's root, as Plan 9's
-/// /lib/namespace binds #c on /dev.  There's no bind yet, so every process
-/// sees this one table.
-static BINDS: &[(&str, &dyn Dev)] = &[("dev", &devcons::CONS)];
+/// The names in the root and the # names they stand for, as Plan 9's
+/// /lib/namespace binds #c on /dev, and its boot binds /bin.  There's no
+/// bind yet, so every process sees this one table.
+static BINDS: &[(&str, &str)] = &[("bin", "#//boot"), ("dev", "#c")];
 
 /// The device and path a # name names, from what follows its #, as the #
 /// branch of Plan 9's namec: a device's letter, then either nothing or a /
@@ -86,25 +86,24 @@ fn parse(path: &str) -> (Vec<&str>, bool) {
     (elems, mustbedir)
 }
 
-/// A name's start, as resolve finds it: the device, the elements to walk
-/// from its root, whether they must name a directory, and the length, in
+/// A name's start, as resolve finds it: the channel to walk from, the
+/// elements to walk, whether they must name a directory, and the length, in
 /// bytes, of the part of the name walked to reach it.
 struct Start<'a> {
-    dev: &'static dyn Dev,
+    c: Arc<Chan>,
     elems: Vec<&'a str>,
     mustbedir: bool,
     walked: usize,
 }
 
-/// Where a name starts: a # name's device, or for a name from the root, the
-/// device bound on its first element.  Any other name is ENONEXIST at its
-/// first element, as there's nothing else in the root, and no current
-/// directory.
+/// Where a name starts: a # name's device's root, or for a name from the
+/// root, the directory bound on its first element.  Any other name is
+/// ENONEXIST at its first element, as there's nothing else in the root, and
+/// no current directory.
 fn resolve(name: &str) -> Result<Start<'_>, Error> {
     if let Some(rest) = name.strip_prefix('#') {
-        let (dev, path) = devpath(rest)?;
-        let (elems, mustbedir) = parse(path);
-        return Ok(Start { dev, elems, mustbedir, walked: 0 });
+        let (c, elems, mustbedir) = sharp(rest)?;
+        return Ok(Start { c, elems, mustbedir, walked: 0 });
     }
     let (mut elems, mustbedir) = parse(name);
     let Some(&first) = elems.first() else {
@@ -112,9 +111,19 @@ fn resolve(name: &str) -> Result<Start<'_>, Error> {
     };
     let walked = end(name, first);
     let bound = if name.starts_with('/') { BINDS.iter().find(|(n, _)| *n == first) } else { None };
-    let dev = bound.ok_or_else(|| nameerror(name, walked, ENONEXIST))?.1;
+    let (_, target) = bound.ok_or_else(|| nameerror(name, walked, ENONEXIST))?;
+    let (c, under, _) = sharp(target.strip_prefix('#').ok_or(EBADSHARP)?)?;
+    let c = c.dev().walk(&c, &under)?;
     elems.remove(0);
-    Ok(Start { dev, elems, mustbedir, walked })
+    Ok(Start { c, elems, mustbedir, walked })
+}
+
+/// The root of the device a # name names, from what follows its #, the
+/// elements of its path, and whether they must name a directory.
+fn sharp(rest: &str) -> crate::Result<(Arc<Chan>, Vec<&str>, bool)> {
+    let (dev, path) = devpath(rest)?;
+    let (elems, mustbedir) = parse(path);
+    Ok((dev.attach()?, elems, mustbedir))
 }
 
 /// The end of `elem`, a slice of `name`, as an offset in `name`, as Plan 9's
@@ -134,8 +143,8 @@ fn end(name: &str, elem: &str) -> usize {
 /// the name has no elements.
 pub(crate) fn open_name(name: &str, omode: u32) -> Result<Arc<Chan>, Error> {
     let omode = chan::openmode(omode)?;
-    let Start { dev, elems, mustbedir, mut walked } = resolve(name)?;
-    let mut c = dev.attach()?;
+    let Start { mut c, elems, mustbedir, mut walked } = resolve(name)?;
+    let dev = c.dev();
     for elem in elems {
         if c.qid().kind != QTDIR {
             return Err(nameerror(name, walked, ENOTDIR));
@@ -179,6 +188,15 @@ fn nameerror(name: &str, len: usize, err: &'static str) -> Error {
         start = name.ceil_char_boundary(len - ERRMAX / 4);
     }
     Error::Name(format!("...{}", &name[start..]), err)
+}
+
+/// Copy the part of `s` from `off` that fits into `buf`, and return its
+/// length, as Plan 9's readstr: nothing at or past its end.
+pub(crate) fn readstr(off: u64, buf: &mut [u8], s: &[u8]) -> u64 {
+    let rest = usize::try_from(off).ok().and_then(|o| s.get(o..)).unwrap_or_default();
+    let n = rest.len().min(buf.len());
+    buf[..n].copy_from_slice(&rest[..n]);
+    n as u64
 }
 
 /// The group slot of a file mode, as the bits of it the permission check
@@ -240,6 +258,8 @@ mod tests {
         assert_eq!(path_of("c/cons/"), Ok(('c', "cons/")));
         assert_eq!(path_of("c//cons"), Ok(('c', "/cons")));
         assert_eq!(path_of("c/"), Ok(('c', "")));
+        assert_eq!(path_of("/"), Ok(('/', "")), "the root device");
+        assert_eq!(path_of("//boot"), Ok(('/', "boot")));
         assert_eq!(path_of("x"), Err(EBADSHARP), "an unknown device");
         assert_eq!(path_of("ccons"), Err(EBADSHARP), "no slash after the letter");
         assert_eq!(path_of(""), Err(EBADSHARP), "no letter");
@@ -334,7 +354,7 @@ mod tests {
     /// The device and elements a name resolves to, as resolve does, or its
     /// error's text.
     fn resolved(name: &str) -> Result<(char, Vec<&str>), String> {
-        resolve(name).map(|s| (s.dev.dc(), s.elems)).map_err(|e| text(&e))
+        resolve(name).map(|s| (s.c.dev().dc(), s.elems)).map_err(|e| text(&e))
     }
 
     #[test]
@@ -348,6 +368,11 @@ mod tests {
         assert_eq!(resolved("/dev/cons"), Ok(('c', vec!["cons"])));
         assert_eq!(resolved("//dev//cons"), Ok(('c', vec!["cons"])), "doubled slashes");
         assert_eq!(resolved("/./dev/./cons"), Ok(('c', vec!["cons"])), "dots");
+        assert_eq!(resolved("/bin/echo"), Ok(('/', vec!["echo"])), "bound below a device's root");
+        assert_eq!(resolved("#//boot/echo"), Ok(('/', vec!["boot", "echo"])), "the root device");
+        // namec takes what follows #/ up to the next slash as an attach
+        // spec, which isn't passed yet.
+        assert_eq!(resolved("#/boot"), badsharp(), "a spec");
         // A name that isn't bound fails at its first element, which is
         // shown; one with no elements shows nothing.
         let missing = |n: &str| Err(alloc::format!("'{n}' file does not exist"));
@@ -356,6 +381,17 @@ mod tests {
         assert_eq!(resolved("cons"), missing("cons"), "no current directory");
         assert_eq!(resolved("/"), Err(ENONEXIST.into()), "no root");
         assert_eq!(resolved(""), Err(ENONEXIST.into()), "nothing");
+    }
+
+    #[test]
+    fn binds_resolve() {
+        for (name, target) in BINDS {
+            let path = alloc::format!("/{name}");
+            let bound = resolve(&path).expect("a bound name");
+            let c = open_name(target, OREAD).expect("its target");
+            assert_eq!(bound.c.dev().dc(), c.dev().dc(), "{name}'s device");
+            assert_eq!(bound.c.qid(), c.qid(), "{name}'s directory");
+        }
     }
 
     #[test]

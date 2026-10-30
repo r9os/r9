@@ -9,15 +9,14 @@ use core::sync::atomic::{AtomicI64, Ordering};
 use crate::chan::{Chan, OREAD, Qid, QTDIR, QTFILE};
 use crate::clock;
 use crate::console::{self, putstrn};
-use crate::dev::{self, Dev};
+use crate::dev::{self, Dev, readstr};
 use crate::error::{EBADTIMECTL, ENONEXIST, ENOTDIR, ENOTSUP, EPERM};
 use crate::proc;
 
-/// The console device, as Plan 9's devcons: the only device, reached as #c,
-/// with the root directory and the files in FILES.
+/// The console device, as Plan 9's devcons, reached as #c, with the root
+/// directory and the files in FILES.
 pub struct Cons;
 
-/// The console device, the only member of the device table.
 pub static CONS: Cons = Cons;
 
 /// A file of the console device, as an entry of Plan 9's Dirtab.
@@ -126,15 +125,6 @@ fn set_time(buf: &[u8]) -> crate::Result<()> {
     let offset = i64::try_from(secs * NS_PER_SEC - nsec).map_err(|_| EBADTIMECTL)?;
     set_time_offset(offset);
     Ok(())
-}
-
-/// Copy the part of `s` from `off` that fits into `buf`, and return its
-/// length, as Plan 9's readstr: nothing at or past its end.
-fn readstr(off: u64, buf: &mut [u8], s: &[u8]) -> u64 {
-    let rest = usize::try_from(off).ok().and_then(|o| s.get(o..)).unwrap_or_default();
-    let n = rest.len().min(buf.len());
-    buf[..n].copy_from_slice(&rest[..n]);
-    n as u64
 }
 
 impl Dev for Cons {
