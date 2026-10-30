@@ -7,8 +7,7 @@ use core::time::Duration;
 use core::{fmt, hint};
 
 use crate::clock;
-use crate::dat::Rendez;
-use crate::error::EINUSE;
+use crate::dat::{QLock, Rendez};
 use crate::irq;
 use crate::mcslock::{Lock, LockGuard, LockNode};
 
@@ -187,9 +186,6 @@ struct Input {
     x: usize,
     pos: usize,
     sent: bool,
-    /// Whether a process is reading, as Plan 9's qlock(&kbd): one at a time,
-    /// since a Rendez has one sleeper.
-    reading: bool,
 }
 
 impl Input {
@@ -204,7 +200,6 @@ impl Input {
             x: 0,
             pos: 0,
             sent: false,
-            reading: false,
         }
     }
 
@@ -294,6 +289,23 @@ fn input() -> &'static Lock<Input> {
 /// Where a reader waits for a line.
 static READER: Rendez = Rendez::new();
 
+/// Held by the process reading, as Plan 9's qlock(&kbd): one reads at a
+/// time, as READER has one sleeper, and another waits its turn.
+#[cfg(not(test))]
+static KBD: QLock = QLock::new();
+
+#[cfg(test)]
+std::thread_local! {
+    static KBD: &'static QLock = Box::leak(Box::new(QLock::new()));
+}
+
+fn kbd() -> &'static QLock {
+    core::cfg_select! {
+        test => KBD.with(|k| *k),
+        _ => &KBD,
+    }
+}
+
 /// Put the bytes the UART has received, as Plan 9's kbdcr2nl: a return
 /// becomes a newline, and a delete, which terminals send for the backspace
 /// key, a backspace.  Each byte kept is echoed, and a reader is woken when a
@@ -350,19 +362,12 @@ fn echo(b: u8) {
 /// how much of it fits, as Plan 9's consread of cons: at most one line a
 /// read, and what doesn't fit is the next read's.  0 is the end of the file,
 /// typed as ^D at the start of a line.  One process reads at a time; another
-/// gets Einuse, rather than waiting, since there's no sleeping lock.
+/// waits its turn, as Plan 9's does on kbd's qlock.
 pub fn read(buf: &mut [u8]) -> crate::Result<usize> {
     if buf.is_empty() {
         return Ok(0);
     }
-    {
-        let node = LockNode::new();
-        let mut input = input().ilock(&node);
-        if input.reading {
-            return Err(EINUSE);
-        }
-        input.reading = true;
-    }
+    kbd().qlock();
     let n = loop {
         READER.sleep(|| {
             let node = LockNode::new();
@@ -375,8 +380,7 @@ pub fn read(buf: &mut [u8]) -> crate::Result<usize> {
             break input.take(buf);
         }
     };
-    let node = LockNode::new();
-    input().ilock(&node).reading = false;
+    kbd().qunlock();
     Ok(n)
 }
 
@@ -534,10 +538,12 @@ mod tests {
     }
 
     #[test]
-    fn one_reader_at_a_time() {
+    fn a_read_gives_up_the_reader_lock() {
         reader();
-        let node = LockNode::new();
-        input().ilock(&node).reading = true;
-        assert_eq!(read_n(100), Err(EINUSE));
+        fake_cons();
+        put_input(b"a\r", false);
+        assert_eq!(read_n(100), Ok(b"a\n".to_vec()));
+        assert!(kbd().canqlock(), "the reader's lock is free");
+        kbd().qunlock();
     }
 }
