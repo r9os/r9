@@ -15,6 +15,7 @@ use crate::chan::{Fds, NOPEN, OREAD, OWRITE};
 use crate::dat::{MAXWAIT, Proc, ProcArch, QLock, QState, Rendez, State, WaitQueue, Waitmsg};
 use crate::dev::open_name;
 use crate::error::{EBADARG, EINUSE, ENOCHILD, ENOVMEM};
+use crate::fixedstring::FixedString;
 use crate::segment::copy_segments;
 use sys::{RFCENVG, RFCFDG, RFCNAMEG, RFENVG, RFFDG, RFMEM, RFNAMEG, RFNOMNT, RFNOWAIT, RFPROC};
 use crate::irq;
@@ -224,7 +225,7 @@ fn alloc<A: ProcArch>(
         sleep: Rendez::new(),
         timer: Timer::new(Mode::Relative(Duration::from_millis(1)), |_| {}),
         trend: ptr::null(),
-        text: Vec::new(),
+        text: FixedString::empty(),
         waitq: Arc::new(WaitQueue::new()),
         parent: None,
     }))
@@ -288,7 +289,7 @@ pub fn rfork<A: ProcArch>(flags: u32) -> crate::Result<u64> {
     }
     child.segments = parent.segments.clone();
     child.bss = parent.bss;
-    child.text = parent.text.clone();
+    child.text = parent.text;
     A::fp_save(&mut child.fp);
     if flags & RFNOWAIT == 0 {
         adopt(parent, &mut child);
@@ -619,8 +620,7 @@ fn tell_parent<A: ProcArch>(p: &Proc<A>, status: &[u8]) {
     };
     let mut msg = Vec::new();
     if !status.is_empty() {
-        msg.extend_from_slice(&p.text);
-        msg.extend_from_slice(alloc::format!(" {}: ", p.pid).as_bytes());
+        msg.extend_from_slice(alloc::format!("{} {}: ", p.text, p.pid).as_bytes());
         msg.extend_from_slice(status);
         // As snprint does, cut it to fit ERRMAX with its NUL, but not in the
         // middle of a UTF-8 character: back up over its continuation bytes.
@@ -852,7 +852,7 @@ mod tests {
         let parent = newproc::<Fake>(start).expect("newproc failed");
         let mut child = newproc::<Fake>(start).expect("newproc failed");
         adopt(&parent, &mut child);
-        child.text = b"factor".to_vec();
+        child.text = FixedString::new("factor");
         (parent, child)
     }
 
@@ -1049,7 +1049,7 @@ mod tests {
     #[test]
     fn rfork_starts_a_child() {
         let mut p = newproc::<Fake>(start).unwrap();
-        p.text = b"sh".to_vec();
+        p.text = FixedString::new("sh");
 
         // RFFDG: a copy of the table, sharing its channels, and a child.
         let pid = rfork_from(&mut p, RFPROC | RFFDG).expect("rfork");
@@ -1058,7 +1058,7 @@ mod tests {
         assert!(!Arc::ptr_eq(child.fds(), p.fds()), "its own table");
         let (c1, p1) = (child.fds().with(|f| f[1].clone()), p.fds().with(|f| f[1].clone()));
         assert!(Arc::ptr_eq(&c1.unwrap(), &p1.unwrap()), "sharing the channels");
-        assert_eq!(child.text, b"sh", "the parent's text");
+        assert_eq!(child.text.as_str(), "sh", "the parent's text");
         assert_eq!(state(&p).1, 1, "a living child");
         assert!(child.parent.is_some());
 
