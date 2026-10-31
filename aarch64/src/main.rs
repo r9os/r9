@@ -394,7 +394,8 @@ fn run_program(name: &str, start: fn()) -> bool {
 
 /// Exec `image` with `args`, and enter it, or exit with exec's error.
 fn exec(image: &[u8], args: &[&[u8]]) -> ! {
-    let regs = match port::exec::exec::<Aarch64>(image, args[0], args) {
+    let name = core::str::from_utf8(args[0]).expect("a program's name is UTF-8");
+    let regs = match port::exec::exec::<Aarch64>(image, name, args) {
         Ok(regs) => regs,
         Err(err) => port::proc::pexit::<Aarch64>(err.as_bytes()),
     };

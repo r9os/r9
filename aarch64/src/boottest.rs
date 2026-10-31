@@ -895,7 +895,7 @@ fn elf_start() {
         Perm,
     };
     dirty_free_pages();
-    let regs = match port::exec::exec::<Aarch64>(ELFTEST, b"elftest", &[b"elftest", b"ok"]) {
+    let regs = match port::exec::exec::<Aarch64>(ELFTEST, "elftest", &[b"elftest", b"ok"]) {
         Ok(regs) => regs,
         Err(err) => port::proc::pexit::<Aarch64>(err.as_bytes()),
     };
@@ -949,7 +949,7 @@ fn test_exec() {
     let (used_before, _) = port::pagealloc::usage_bytes();
     let p = port::proc::newproc::<Aarch64>(|| {
         let args: &[&[u8]] = &[b"exectest"];
-        let regs = match port::exec::exec::<Aarch64>(EXECTEST, b"exectest", args) {
+        let regs = match port::exec::exec::<Aarch64>(EXECTEST, "exectest", args) {
             Ok(regs) => regs,
             Err(err) => port::proc::pexit::<Aarch64>(err.as_bytes()),
         };

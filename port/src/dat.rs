@@ -8,6 +8,7 @@ use core::ptr;
 use core::result::Result;
 
 use crate::chan::Fds;
+use crate::fixedstring::FixedString;
 use crate::mcslock::Lock;
 use crate::mem::{PhysAddr, VirtRange};
 use crate::pagealloc::PageAllocError;
@@ -232,9 +233,8 @@ pub struct Proc<A: ProcArch> {
     /// The Rendez its tsleep's timeout should wake, cleared when the timeout
     /// fires, as Plan 9's up->trend.
     pub(crate) trend: *const Rendez,
-    /// Its program's name, as Plan 9's up->text: at most KNAMELEN - 1 bytes,
-    /// set by exec.
-    pub(crate) text: Vec<u8>,
+    /// Its program's name
+    pub(crate) text: FixedString<{ KNAMELEN - 1 }>,
     /// Its children's exits, which its children share.
     pub(crate) waitq: Arc<WaitQueue>,
     /// Its parent's wait queue, which its exit goes to, or None for a
@@ -242,7 +242,8 @@ pub struct Proc<A: ProcArch> {
     pub(crate) parent: Option<Arc<WaitQueue>>,
 }
 
-/// The longest process text, with its NUL, as Plan 9's KNAMELEN.
+/// The longest name the kernel holds in a fixed array, with its NUL, as
+/// Plan 9's KNAMELEN.
 pub const KNAMELEN: usize = 28;
 
 /// A child's exit, as Plan 9's Waitmsg: its pid, and its message, empty if
@@ -285,10 +286,7 @@ pub(crate) struct WaitState {
 impl WaitQueue {
     pub(crate) fn new() -> WaitQueue {
         WaitQueue {
-            state: Lock::new(
-                "waitq",
-                WaitState { exits: VecDeque::new(), nchild: 0, alive: true },
-            ),
+            state: Lock::new("waitq", WaitState { exits: VecDeque::new(), nchild: 0, alive: true }),
             waitr: Rendez::new(),
             qwaitr: QLock::new(),
         }

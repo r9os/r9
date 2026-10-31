@@ -21,6 +21,7 @@ pub mod exec;
 #[cfg(test)]
 mod fake;
 pub mod fdt;
+pub mod fixedstring;
 pub mod irq;
 pub mod maths;
 pub mod mcslock;
