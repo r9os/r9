@@ -9,10 +9,11 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use crate::chan::{Chan, NOPEN, OEXEC};
-use crate::dat::{Access, KNAMELEN, MMU, Perm, ProcArch, PutError, UserRegs, UserSegment};
+use crate::dat::{Access, MMU, Perm, ProcArch, PutError, UserRegs, UserSegment};
 use crate::dev::open_name;
 use crate::elf::{self, Elf, Segment};
 use crate::error::{EBADARG, EBADEXEC, ENOVMEM, Error};
+use crate::fixedstring::FixedString;
 use crate::mem::{PAGE_SIZE_4K, VirtRange};
 use crate::pagealloc::{allocate_physpage, free_physpage};
 use crate::proc::pexit;
@@ -49,7 +50,7 @@ pub(crate) fn sysexec<A: ProcArch>(name: String, argv: usize) -> Result<UserRegs
     // What's left in the kernel is freed before a failure exits.
     let r = {
         let argv: Vec<&[u8]> = args.iter().map(Vec::as_slice).collect();
-        exec::<A>(&image, name.as_bytes(), &argv)
+        exec::<A>(&image, &name, &argv)
     };
     drop((args, image, name));
     match r {
@@ -126,9 +127,8 @@ fn close_cexec<A: ProcArch>() {
     assert!(!up.is_null(), "exec: no current process");
     // SAFETY: up is the running process, and only its own syscalls, one at a
     // time, replace its table.
-    let closed: [Option<Arc<Chan>>; NOPEN] = unsafe { (*up).fds() }.with(|fds| {
-        core::array::from_fn(|i| fds[i].take_if(|c| c.cexec()))
-    });
+    let closed: [Option<Arc<Chan>>; NOPEN] =
+        unsafe { (*up).fds() }.with(|fds| core::array::from_fn(|i| fds[i].take_if(|c| c.cexec())));
     drop(closed);
 }
 
@@ -156,15 +156,13 @@ fn replace_pmmu<A: ProcArch>(pmmu: A::Pmmu) {
 /// with.  The arguments are checked first, as in sysexec, so bad ones map
 /// nothing.  As with load, a failure after that isn't undone: the caller
 /// must exit the process.
-pub fn exec<A: ProcArch>(image: &[u8], name: &[u8], argv: &[&[u8]]) -> crate::Result<UserRegs> {
+pub fn exec<A: ProcArch>(image: &[u8], name: &str, argv: &[&[u8]]) -> crate::Result<UserRegs> {
     args_size::<A>(argv)?;
     let (pc, mut segments) = load::<A>(image)?;
-    map_zeroed::<A>(stack::<A>()).map_err(
-        |err| match err {
-            PutError::AlreadyMapped => EBADEXEC,
-            PutError::NoMemory => ENOVMEM,
-        },
-    )?;
+    map_zeroed::<A>(stack::<A>()).map_err(|err| match err {
+        PutError::AlreadyMapped => EBADEXEC,
+        PutError::NoMemory => ENOVMEM,
+    })?;
     let regs = push_args::<A>(pc, A::USTKTOP, argv)?;
     segments.push(UserSegment { range: stack::<A>(), perm: Perm::Data });
     set_segments::<A>(segments);
@@ -172,15 +170,15 @@ pub fn exec<A: ProcArch>(image: &[u8], name: &[u8], argv: &[&[u8]]) -> crate::Re
     Ok(regs)
 }
 
-/// Set the current process's text to the last element of `name`, truncated
-/// to KNAMELEN - 1 bytes, as Plan 9's sysexec copies elem into up->text.
-fn set_text<A: ProcArch>(name: &[u8]) {
-    let elem = name.rsplit(|&b| b == b'/').next().unwrap_or_default();
+/// Set the current process's text to the last element of `name`, as Plan
+/// 9's sysexec sets up->text to elem.
+fn set_text<A: ProcArch>(name: &str) {
+    let elem = name.rsplit('/').next().unwrap_or_default();
     let up = A::up();
     assert!(!up.is_null(), "exec: no current process");
     // SAFETY: up is the running process, and only its own syscalls, one at a
     // time, change its text.
-    unsafe { (*up).text = elem[..elem.len().min(KNAMELEN - 1)].to_vec() };
+    unsafe { (*up).text = FixedString::with_truncation_suffix(elem, "...") };
 }
 
 /// Check that `argv` can be pushed onto a stack, and return the size of its
@@ -319,8 +317,8 @@ fn load_segment<A: MMU>(seg: &Segment) -> crate::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fake::{Fake, USTKTOP, mapped, user_mem};
     use crate::dat::ProcArch;
+    use crate::fake::{Fake, USTKTOP, mapped, user_mem};
 
     /// The ELF loader's test program, built by xtask (user/elftest).
     static ELFTEST: &[u8] = include_bytes!(concat!(env!("R9_USER_BIN"), "/elftest"));
@@ -447,7 +445,7 @@ mod tests {
     fn exec_checks_args_before_loading() {
         // A bad argument is refused before load, which would fail for want of
         // memory on the host.
-        assert_eq!(exec::<Fake>(ELFTEST, b"elftest", &[b"a\0b"]), Err(EBADARG));
+        assert_eq!(exec::<Fake>(ELFTEST, "elftest", &[b"a\0b"]), Err(EBADARG));
         assert!(mapped().is_empty());
     }
 
