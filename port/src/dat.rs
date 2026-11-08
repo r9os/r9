@@ -8,7 +8,6 @@ use core::ptr;
 use core::result::Result;
 
 use crate::chan::Fds;
-use crate::fixedstring::FixedString;
 use crate::mcslock::Lock;
 use crate::mem::{PhysAddr, VirtRange};
 use crate::pagealloc::PageAllocError;
@@ -233,8 +232,8 @@ pub struct Proc<A: ProcArch> {
     /// The Rendez its tsleep's timeout should wake, cleared when the timeout
     /// fires, as Plan 9's up->trend.
     pub(crate) trend: *const Rendez,
-    /// Its program's name
-    pub(crate) text: FixedString<{ KNAMELEN - 1 }>,
+    /// Program name
+    pub(crate) text: [u8; KNAMELEN],
     /// Its children's exits, which its children share.
     pub(crate) waitq: Arc<WaitQueue>,
     /// Its parent's wait queue, which its exit goes to, or None for a

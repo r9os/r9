@@ -9,11 +9,10 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use crate::chan::{Chan, NOPEN, OEXEC};
-use crate::dat::{Access, MMU, Perm, ProcArch, PutError, UserRegs, UserSegment};
+use crate::dat::{Access, KNAMELEN, MMU, Perm, ProcArch, PutError, UserRegs, UserSegment};
 use crate::dev::open_name;
 use crate::elf::{self, Elf, Segment};
 use crate::error::{EBADARG, EBADEXEC, ENOVMEM, Error};
-use crate::fixedstring::FixedString;
 use crate::mem::{PAGE_SIZE_4K, VirtRange};
 use crate::pagealloc::{allocate_physpage, free_physpage};
 use crate::proc::pexit;
@@ -178,7 +177,22 @@ fn set_text<A: ProcArch>(name: &str) {
     assert!(!up.is_null(), "exec: no current process");
     // SAFETY: up is the running process, and only its own syscalls, one at a
     // time, change its text.
-    unsafe { (*up).text = FixedString::with_truncation_suffix(elem, "...") };
+    unsafe { (*up).text = text(elem) };
+}
+
+/// `elem` as a process's text, NUL-terminated in KNAMELEN bytes: if it's
+/// longer than KNAMELEN - 1, as much of it as fits with "...", cut at a
+/// character boundary.
+pub(crate) fn text(elem: &str) -> [u8; KNAMELEN] {
+    let mut text = [0; KNAMELEN];
+    if elem.len() < KNAMELEN {
+        text[..elem.len()].copy_from_slice(elem.as_bytes());
+    } else {
+        let n = elem.floor_char_boundary(KNAMELEN - 1 - 3);
+        text[..n].copy_from_slice(&elem.as_bytes()[..n]);
+        text[n..n + 3].copy_from_slice(b"...");
+    }
+    text
 }
 
 /// Check that `argv` can be pushed onto a stack, and return the size of its
@@ -447,6 +461,24 @@ mod tests {
         // memory on the host.
         assert_eq!(exec::<Fake>(ELFTEST, "elftest", &[b"a\0b"]), Err(EBADARG));
         assert!(mapped().is_empty());
+    }
+
+    #[test]
+    fn text_is_nul_terminated() {
+        assert_eq!(&text("factor")[..7], b"factor\0");
+        let longest = "a".repeat(KNAMELEN - 1);
+        assert_eq!(&text(&longest)[..KNAMELEN - 1], longest.as_bytes());
+        assert_eq!(text(&longest)[KNAMELEN - 1], 0);
+    }
+
+    #[test]
+    fn a_longer_text_is_cut_with_dots() {
+        let cut = text(&"a".repeat(KNAMELEN));
+        assert_eq!(&cut[..KNAMELEN - 4], "a".repeat(KNAMELEN - 4).as_bytes());
+        assert_eq!(&cut[KNAMELEN - 4..], b"...\0");
+        // "é" is two bytes, and straddles the cut: it goes whole.
+        let cut = text(&("a".repeat(KNAMELEN - 5) + "é" + "aaaa"));
+        assert_eq!(&cut[KNAMELEN - 5..KNAMELEN], b"...\0\0");
     }
 
     /// A device whose one file is `LEN` bytes of 'x'.
