@@ -853,7 +853,7 @@ mod tests {
         let parent = newproc::<Fake>(start).expect("newproc failed");
         let mut child = newproc::<Fake>(start).expect("newproc failed");
         adopt(&parent, &mut child);
-        child.text = crate::exec::text("factor");
+        crate::str::kstrcpy(&mut child.text, "factor");
         (parent, child)
     }
 
@@ -1050,7 +1050,7 @@ mod tests {
     #[test]
     fn rfork_starts_a_child() {
         let mut p = newproc::<Fake>(start).unwrap();
-        p.text = crate::exec::text("sh");
+        crate::str::kstrcpy(&mut p.text, "sh");
 
         // RFFDG: a copy of the table, sharing its channels, and a child.
         let pid = rfork_from(&mut p, RFPROC | RFFDG).expect("rfork");

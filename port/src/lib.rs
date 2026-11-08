@@ -28,6 +28,7 @@ pub mod mem;
 pub mod pagealloc;
 pub mod proc;
 pub mod segment;
+pub mod str;
 pub mod syscall;
 pub mod timer;
 pub mod uaccess;

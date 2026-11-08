@@ -232,7 +232,7 @@ pub struct Proc<A: ProcArch> {
     /// The Rendez its tsleep's timeout should wake, cleared when the timeout
     /// fires, as Plan 9's up->trend.
     pub(crate) trend: *const Rendez,
-    /// Program name
+    /// Program name, NUL-terminated
     pub(crate) text: [u8; KNAMELEN],
     /// Its children's exits, which its children share.
     pub(crate) waitq: Arc<WaitQueue>,
